@@ -1,0 +1,111 @@
+# =============================================================================
+# Go CLI Project - .gitignore
+# =============================================================================
+
+# Internal documentation (not for GitHub)
+docs-internal/
+TODO
+TEST_PLAN.md
+
+# Test applications (sample apps for development)
+testapps/
+testdata/
+
+# Generated output from dorgu runs
+k8s/
+PERSONA.md
+.github/workflows/deploy.yaml
+
+# Binaries
+/build/
+/dist/
+/bin/
+/dorgu
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test & Coverage
+coverage.out
+coverage.html
+coverage.txt
+*.coverprofile
+*.test
+*.prof
+*.pprof
+cpu.out
+mem.out
+trace.out
+
+# Go
+vendor/
+go.work
+go.work.sum
+
+# Dependency directories (if using dep or other tools)
+Godeps/
+
+# IDE & Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+.project
+.settings/
+*.iml
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+.envrc
+*.pem
+*.key
+secrets.yaml
+secrets.json
+
+# Debug
+debug
+*.log
+__debug_bin*
+
+# Air (hot reload)
+tmp/
+temp/
+
+# Goreleaser
+/release/
+
+# golangci-lint
+.golangci-lint/
+
+# Generated files
+*.generated.go
+
+# Local configuration (keep examples)
+.dorgu.yaml
+!.dorgu.yaml.example
+
+# Fuzzing
+testdata/fuzz/
+
+# Benchmarks output
+*.bench
+
+# Documentation build artifacts
+site/
