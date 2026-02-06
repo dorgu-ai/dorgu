@@ -11,10 +11,9 @@ TEST_PLAN.md
 testapps/
 testdata/
 
-# Generated output from dorgu runs
+# Generated output from dorgu runs (by dorgu generate)
 k8s/
 PERSONA.md
-.github/workflows/deploy.yaml
 
 # Binaries
 /build/

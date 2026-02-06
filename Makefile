@@ -94,6 +94,11 @@ release:
 	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/release/$(BINARY_NAME)-windows-amd64.exe $(CMD_DIR)
 	@echo "Release binaries built in $(BUILD_DIR)/release/"
 
+## goreleaser: Run goreleaser locally (dry run)
+goreleaser:
+	@which goreleaser > /dev/null || (echo "Install goreleaser: https://goreleaser.com/install/" && exit 1)
+	goreleaser release --snapshot --clean
+
 ## dev: Run with hot reload (requires air)
 dev:
 	@which air > /dev/null || (echo "Installing air..." && go install github.com/cosmtrek/air@latest)

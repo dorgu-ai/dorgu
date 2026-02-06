@@ -1,0 +1,90 @@
+# GoReleaser config for Dorgu
+# Docs: https://goreleaser.com
+# Triggered on git tag: git tag -a v0.1.0 -m "Release v0.1.0" && git push --tags
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: dorgu
+    main: ./cmd/dorgu
+    binary: dorgu
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: dorgu
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      dorgu_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - .dorgu.yaml.example
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  github:
+    owner: dorgu-ai
+    name: dorgu
+  draft: false
+  prerelease: auto
+  name_template: "Dorgu {{.Version}}"
+  header: |
+    ## What's New
+
+    AI-powered Kubernetes manifest generator.
+  footer: |
+    ## Installation
+
+    ```bash
+    # Go install
+    go install github.com/dorgu-ai/dorgu/cmd/dorgu@{{.Tag}}
+
+    # Or download binary from assets below
+    ```
+
+brews:
+  - repository:
+      owner: dorgu-ai
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/dorgu-ai/dorgu"
+    description: "AI-powered Kubernetes manifest generator"
+    license: "Apache-2.0"
+    skip_upload: auto
+    test: |
+      system "#{bin}/dorgu", "version"

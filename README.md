@@ -17,13 +17,16 @@ Dorgu analyzes your containerized applications and generates production-ready Ku
 ### Installation
 
 ```bash
-# Clone and build
+# Install via go (requires Go 1.21+)
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
+
+# Or download a binary from GitHub Releases
+# https://github.com/dorgu-ai/dorgu/releases
+
+# Or build from source
 git clone https://github.com/dorgu-ai/dorgu.git
 cd dorgu
 make build
-
-# Or install directly
-go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
 ```
 
 ### Generate Manifests
