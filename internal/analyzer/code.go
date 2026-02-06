@@ -111,18 +111,18 @@ func detectNodeFramework(packageJSON string) string {
 
 	// Check dependencies for known frameworks
 	frameworks := map[string]string{
-		"next":           "nextjs",
-		"express":        "express",
-		"fastify":        "fastify",
-		"@nestjs/core":   "nestjs",
-		"koa":            "koa",
-		"hapi":           "hapi",
-		"@hapi/hapi":     "hapi",
-		"nuxt":           "nuxt",
-		"gatsby":         "gatsby",
-		"react":          "react",
-		"vue":            "vue",
-		"@angular/core":  "angular",
+		"next":          "nextjs",
+		"express":       "express",
+		"fastify":       "fastify",
+		"@nestjs/core":  "nestjs",
+		"koa":           "koa",
+		"hapi":          "hapi",
+		"@hapi/hapi":    "hapi",
+		"nuxt":          "nuxt",
+		"gatsby":        "gatsby",
+		"react":         "react",
+		"vue":           "vue",
+		"@angular/core": "angular",
 	}
 
 	for dep, framework := range frameworks {
@@ -152,15 +152,15 @@ func extractNodeDependencies(packageJSON string) []string {
 	// Look for common external service dependencies
 	externalDeps := []string{}
 	serviceDeps := map[string]string{
-		"pg":           "postgresql",
-		"mysql":        "mysql",
-		"mysql2":       "mysql",
-		"mongodb":      "mongodb",
-		"mongoose":     "mongodb",
-		"redis":        "redis",
-		"ioredis":      "redis",
-		"kafkajs":      "kafka",
-		"amqplib":      "rabbitmq",
+		"pg":            "postgresql",
+		"mysql":         "mysql",
+		"mysql2":        "mysql",
+		"mongodb":       "mongodb",
+		"mongoose":      "mongodb",
+		"redis":         "redis",
+		"ioredis":       "redis",
+		"kafkajs":       "kafka",
+		"amqplib":       "rabbitmq",
 		"elasticsearch": "elasticsearch",
 	}
 
@@ -183,12 +183,12 @@ func detectPythonFramework(path string) string {
 
 	content := strings.ToLower(string(data))
 	frameworks := map[string]string{
-		"fastapi":  "fastapi",
-		"flask":    "flask",
-		"django":   "django",
+		"fastapi":   "fastapi",
+		"flask":     "flask",
+		"django":    "django",
 		"starlette": "starlette",
-		"tornado":  "tornado",
-		"aiohttp":  "aiohttp",
+		"tornado":   "tornado",
+		"aiohttp":   "aiohttp",
 	}
 
 	for dep, framework := range frameworks {
@@ -211,15 +211,15 @@ func extractPythonDependencies(path string) []string {
 	content := strings.ToLower(string(data))
 	externalDeps := []string{}
 	serviceDeps := map[string]string{
-		"psycopg2":     "postgresql",
-		"asyncpg":      "postgresql",
-		"pymysql":      "mysql",
-		"pymongo":      "mongodb",
-		"redis":        "redis",
-		"kafka-python": "kafka",
-		"pika":         "rabbitmq",
+		"psycopg2":      "postgresql",
+		"asyncpg":       "postgresql",
+		"pymysql":       "mysql",
+		"pymongo":       "mongodb",
+		"redis":         "redis",
+		"kafka-python":  "kafka",
+		"pika":          "rabbitmq",
 		"elasticsearch": "elasticsearch",
-		"celery":       "redis", // Celery typically uses Redis
+		"celery":        "redis", // Celery typically uses Redis
 	}
 
 	for dep, service := range serviceDeps {
@@ -240,12 +240,12 @@ func detectGoFramework(goMod string) string {
 
 	content := string(data)
 	frameworks := map[string]string{
-		"github.com/gin-gonic/gin":    "gin",
-		"github.com/labstack/echo":    "echo",
-		"github.com/gofiber/fiber":    "fiber",
-		"github.com/gorilla/mux":      "gorilla",
-		"github.com/go-chi/chi":       "chi",
-		"github.com/beego/beego":      "beego",
+		"github.com/gin-gonic/gin": "gin",
+		"github.com/labstack/echo": "echo",
+		"github.com/gofiber/fiber": "fiber",
+		"github.com/gorilla/mux":   "gorilla",
+		"github.com/go-chi/chi":    "chi",
+		"github.com/beego/beego":   "beego",
 	}
 
 	for dep, framework := range frameworks {
@@ -267,13 +267,13 @@ func extractGoDependencies(goMod string) []string {
 	content := string(data)
 	externalDeps := []string{}
 	serviceDeps := map[string]string{
-		"github.com/lib/pq":         "postgresql",
-		"github.com/jackc/pgx":      "postgresql",
+		"github.com/lib/pq":              "postgresql",
+		"github.com/jackc/pgx":           "postgresql",
 		"github.com/go-sql-driver/mysql": "mysql",
-		"go.mongodb.org/mongo-driver": "mongodb",
-		"github.com/go-redis/redis": "redis",
-		"github.com/segmentio/kafka-go": "kafka",
-		"github.com/streadway/amqp": "rabbitmq",
+		"go.mongodb.org/mongo-driver":    "mongodb",
+		"github.com/go-redis/redis":      "redis",
+		"github.com/segmentio/kafka-go":  "kafka",
+		"github.com/streadway/amqp":      "rabbitmq",
 	}
 
 	for dep, service := range serviceDeps {

@@ -23,7 +23,7 @@ type OllamaClient struct {
 func NewOllamaClient(host string) *OllamaClient {
 	return &OllamaClient{
 		host:   host,
-		model:  "llama2", // Default model, can be configured
+		model:  "llama2",                                 // Default model, can be configured
 		client: &http.Client{Timeout: 120 * time.Second}, // Longer timeout for local inference
 	}
 }

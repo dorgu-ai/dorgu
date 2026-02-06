@@ -49,7 +49,7 @@ func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is .dorgu.yaml)")
 	rootCmd.PersistentFlags().Bool("no-color", false, "disable colored output")
-	
+
 	// Bind to viper
 	viper.BindPFlag("no-color", rootCmd.PersistentFlags().Lookup("no-color"))
 

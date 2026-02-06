@@ -23,7 +23,7 @@ func Success(msg string) {
 
 // Error prints an error message
 func Error(msg string) {
-	fmt.Fprintln(os.Stderr, errorStyle.Render("✗ " + msg))
+	fmt.Fprintln(os.Stderr, errorStyle.Render("✗ "+msg))
 }
 
 // Warn prints a warning message

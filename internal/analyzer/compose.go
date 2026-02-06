@@ -12,20 +12,20 @@ import (
 
 // ComposeFile represents a docker-compose.yml structure
 type ComposeFile struct {
-	Version  string                    `yaml:"version"`
+	Version  string                       `yaml:"version"`
 	Services map[string]ComposeServiceDef `yaml:"services"`
 }
 
 // ComposeServiceDef represents a service definition in docker-compose
 type ComposeServiceDef struct {
-	Image       string            `yaml:"image"`
-	Build       interface{}       `yaml:"build"` // Can be string or object
-	Ports       []string          `yaml:"ports"`
-	Environment interface{}       `yaml:"environment"` // Can be list or map
-	Volumes     []string          `yaml:"volumes"`
-	DependsOn   interface{}       `yaml:"depends_on"` // Can be list or map
+	Image       string              `yaml:"image"`
+	Build       interface{}         `yaml:"build"` // Can be string or object
+	Ports       []string            `yaml:"ports"`
+	Environment interface{}         `yaml:"environment"` // Can be list or map
+	Volumes     []string            `yaml:"volumes"`
+	DependsOn   interface{}         `yaml:"depends_on"` // Can be list or map
 	Healthcheck *ComposeHealthcheck `yaml:"healthcheck"`
-	Command     interface{}       `yaml:"command"`
+	Command     interface{}         `yaml:"command"`
 }
 
 // ComposeHealthcheck represents a healthcheck in docker-compose
