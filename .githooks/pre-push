@@ -1,0 +1,8 @@
+#!/bin/sh
+# Pre-push hook: run the same checks as CI so you catch failures before pushing.
+# Install: cp .githooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# Or: make install-hooks (if that target exists)
+
+set -e
+echo "Running pre-push checks (gofmt, vet, test)..."
+make check

@@ -171,8 +171,11 @@ cd dorgu
 make build    # build binary
 make test     # run tests
 make fmt      # format code
+make check    # run same checks as CI (gofmt, vet, test) — run before pushing
 make lint     # run linter
 ```
+
+Before pushing, run `make check` to catch formatting and test failures locally. Optional: `make install-hooks` to run checks automatically on every `git push` (see [CONTRIBUTING](CONTRIBUTING.md)).
 
 ---
 

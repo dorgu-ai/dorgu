@@ -112,6 +112,26 @@ Optional: set `OPENAI_API_KEY` or `GEMINI_API_KEY` (or use `dorgu config set llm
 - **Tests:** Run `make test`. New code should include or extend tests where appropriate (e.g. parsers, config, validation).
 - **Style:** Follow existing patterns in the codebase; keep functions focused and names clear.
 
+## Before you push (pre-checks)
+
+CI runs **gofmt** (check only), **go vet**, and **tests**. You can run the same checks locally so you don’t rely on CI to catch failures:
+
+```bash
+make check
+```
+
+This runs the same steps as CI: fails if any file needs formatting (then run `make fmt`), runs `go vet ./...`, then `go test ./...`. Fix any failure before pushing.
+
+**Optional: run checks automatically before every push**
+
+Install the project’s git hook so `make check` runs before each `git push`:
+
+```bash
+make install-hooks
+```
+
+This copies `.githooks/pre-push` to `.git/hooks/pre-push`. If `make check` fails, the push is blocked until you fix formatting, vet, or tests. You can still push with `git push --no-verify` if you need to bypass the hook (use sparingly).
+
 ---
 
 ## Pull request process
@@ -126,7 +146,7 @@ Optional: set `OPENAI_API_KEY` or `GEMINI_API_KEY` (or use `dorgu config set llm
 
 ## Releasing (maintainers)
 
-Releases are **tag-driven**. Pushing a tag matching `v*` (e.g. `v0.2.0`) triggers the Release workflow, which runs tests and [GoReleaser](https://goreleaser.com) to build binaries and publish a [GitHub Release](https://github.com/dorgu-ai/dorgu/releases) with assets.
+Releases are **tag-driven** and **manual**: nothing in the repo automatically creates or pushes tags. You decide when to cut a release and push the tag; the Release workflow then runs and publishes assets.
 
 **To cut a release:**
 
@@ -135,9 +155,24 @@ Releases are **tag-driven**. Pushing a tag matching `v*` (e.g. `v0.2.0`) trigger
    `git tag -a v0.2.0 -m "Release v0.2.0"`
 3. Push the tag:  
    `git push origin v0.2.0`
-4. The [Release workflow](.github/workflows/release.yaml) runs automatically; when it finishes, the release and download assets appear on the repo’s Releases page. No separate “update” of the tag is needed—the tag is the release.
+4. The [Release workflow](.github/workflows/release.yaml) runs automatically; when it finishes, the release and download assets appear on the repo’s Releases page.
 
 `go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest` will then point at the latest release.
+
+**Versioning:** Prefer [semver](https://semver.org) (e.g. `v0.2.0`, `v1.0.0`). Use `v0.x` while the API and behavior are still evolving.
+
+---
+
+## Project management (overview)
+
+| Aspect | How it works |
+|--------|----------------|
+| **Pre-push checks** | Optional but recommended: run `make check` before pushing (or install hooks with `make install-hooks`). CI runs the same checks; fixing locally avoids failed runs and back-and-forth. |
+| **When CI fails** | Fix the failure (e.g. `make fmt`, fix tests), commit, push again. Relying only on CI is fine, but local `make check` saves time. |
+| **Tags and releases** | **Manual only.** No bot or workflow creates tags. A maintainer creates the tag and pushes it when the team is ready to release. |
+| **Who releases** | Maintainers (people with write access). Typically one person cuts the release after review/approval on `main`. |
+| **When to release** | After a batch of fixes/features is merged and you want a new version for users. There’s no required schedule; release when it makes sense. |
+| **Changelog** | GoReleaser can generate a changelog from commits. For more control, maintain a `CHANGELOG.md` and update it before tagging. |
 
 ---
 

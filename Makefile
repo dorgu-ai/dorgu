@@ -18,7 +18,7 @@ GOFMT=gofmt
 CMD_DIR=./cmd/dorgu
 BUILD_DIR=./build
 
-.PHONY: all build clean test fmt lint run help install tidy
+.PHONY: all build clean test fmt lint check install install-hooks tidy
 
 # Default target
 all: build
@@ -55,6 +55,16 @@ test-coverage:
 fmt:
 	@echo "Formatting code..."
 	$(GOFMT) -s -w .
+
+## check: Run same checks as CI (gofmt, vet, test). Run before pushing.
+check:
+	@echo "Checking formatting..."
+	@test -z "$$(gofmt -l .)" || (echo "Run 'make fmt' to fix formatting. Files needing change:" && gofmt -l . && exit 1)
+	@echo "Running go vet..."
+	$(GO) vet ./...
+	@echo "Running tests..."
+	$(GOTEST) ./...
+	@echo "Check passed (matches CI)."
 
 ## lint: Run linter
 lint:
@@ -103,6 +113,13 @@ goreleaser:
 dev:
 	@which air > /dev/null || (echo "Installing air..." && go install github.com/cosmtrek/air@latest)
 	air
+
+## install-hooks: Install git hooks (run 'make check' before each push)
+install-hooks:
+	@mkdir -p .git/hooks
+	@cp .githooks/pre-push .git/hooks/pre-push
+	@chmod +x .git/hooks/pre-push
+	@echo "Installed pre-push hook. Run 'make check' before every push."
 
 ## help: Show this help
 help:
