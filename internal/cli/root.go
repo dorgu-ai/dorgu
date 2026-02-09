@@ -57,6 +57,7 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(generateCmd)
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(configCmd)
 }
 
 // initConfig reads in config file and ENV variables if set.

@@ -16,14 +16,15 @@ import (
 )
 
 var generateFlags struct {
-	output      string
-	name        string
-	namespace   string
-	dryRun      bool
-	skipArgoCD  bool
-	skipCI      bool
-	skipPersona bool
-	llmProvider string
+	output         string
+	name           string
+	namespace      string
+	dryRun         bool
+	skipArgoCD     bool
+	skipCI         bool
+	skipPersona    bool
+	llmProvider    string
+	skipValidation bool
 }
 
 var generateCmd = &cobra.Command{
@@ -35,82 +36,103 @@ Kubernetes manifests, ArgoCD configuration, CI/CD pipelines, and documentation.
 The path should point to a directory containing a Dockerfile or docker-compose.yml.
 
 Examples:
-  # Generate manifests for current directory
   dorgu generate .
-
-  # Generate manifests for a specific app
   dorgu generate ./my-app
-
-  # Generate with custom output directory
   dorgu generate ./my-app --output ./manifests
-
-  # Preview without writing files
-  dorgu generate ./my-app --dry-run`,
+  dorgu generate ./my-app --dry-run
+  dorgu generate ./my-app --skip-validation`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runGenerate,
 }
 
 func init() {
-	// generateCmd is added to rootCmd in root.go init()
-
-	// Flags
 	generateCmd.Flags().StringVarP(&generateFlags.output, "output", "o", "./k8s", "output directory for generated files")
 	generateCmd.Flags().StringVarP(&generateFlags.name, "name", "n", "", "override application name")
-	generateCmd.Flags().StringVar(&generateFlags.namespace, "namespace", "default", "target Kubernetes namespace")
+	generateCmd.Flags().StringVar(&generateFlags.namespace, "namespace", "", "target Kubernetes namespace (overrides config)")
 	generateCmd.Flags().BoolVar(&generateFlags.dryRun, "dry-run", false, "print to stdout without writing files")
 	generateCmd.Flags().BoolVar(&generateFlags.skipArgoCD, "skip-argocd", false, "skip ArgoCD Application generation")
 	generateCmd.Flags().BoolVar(&generateFlags.skipCI, "skip-ci", false, "skip CI/CD workflow generation")
 	generateCmd.Flags().BoolVar(&generateFlags.skipPersona, "skip-persona", false, "skip persona document generation")
-	generateCmd.Flags().StringVar(&generateFlags.llmProvider, "llm-provider", "openai", "LLM provider: openai, anthropic, gemini, ollama")
+	generateCmd.Flags().StringVar(&generateFlags.llmProvider, "llm-provider", "", "LLM provider: openai, anthropic, gemini, ollama (default from config)")
+	generateCmd.Flags().BoolVar(&generateFlags.skipValidation, "skip-validation", false, "skip post-generation validation checks")
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
-	// Determine target path
 	targetPath := "."
 	if len(args) > 0 {
 		targetPath = args[0]
 	}
-
-	// Resolve to absolute path
 	absPath, err := filepath.Abs(targetPath)
 	if err != nil {
 		return fmt.Errorf("failed to resolve path: %w", err)
 	}
-
-	// Validate path exists
 	if _, err := os.Stat(absPath); os.IsNotExist(err) {
 		return fmt.Errorf("path does not exist: %s", absPath)
 	}
 
-	// Load configuration
+	// Config merge order: CLI flags > App .dorgu.yaml > Workspace .dorgu.yaml > Global > Defaults
+	globalCfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		printWarn(fmt.Sprintf("Failed to load global config: %v", err))
+		globalCfg = config.DefaultGlobalConfig()
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
-		printWarn(fmt.Sprintf("No config file found, using defaults: %v", err))
+		printWarn(fmt.Sprintf("No config file found: %v", err))
 		cfg = config.Default()
 	}
 
-	// Start spinner
+	// Apply global defaults where workspace/app did not set
+	if cfg.CI.Registry == "" && globalCfg.Defaults.Registry != "" {
+		cfg.CI.Registry = globalCfg.Defaults.Registry
+	}
+	if cfg.Org.Name == "" && globalCfg.Defaults.OrgName != "" {
+		cfg.Org.Name = globalCfg.Defaults.OrgName
+	}
+
+	// CLI flag > global config > workspace config > default
+	effectiveProvider := globalCfg.GetEffectiveProvider(generateFlags.llmProvider)
+	if effectiveProvider == "" {
+		effectiveProvider = cfg.LLM.Provider
+	}
+	if effectiveProvider == "" {
+		effectiveProvider = "openai"
+	}
+
+	effectiveNamespace := generateFlags.namespace
+	if effectiveNamespace == "" {
+		effectiveNamespace = globalCfg.Defaults.Namespace
+	}
+	if effectiveNamespace == "" {
+		effectiveNamespace = "default"
+	}
+
 	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
 	s.Suffix = " Analyzing application..."
 	s.Start()
 
-	// Phase 1: Analyze the application
-	analysis, err := analyzer.Analyze(absPath, generateFlags.llmProvider)
+	analysis, err := analyzer.Analyze(absPath, effectiveProvider)
 	if err != nil {
 		s.Stop()
 		return fmt.Errorf("analysis failed: %w", err)
 	}
 
-	// Override name if provided
+	// Git repo auto-detect: if repository not set, try git remote
+	if analysis.Repository == "" {
+		if gitURL := analyzer.DetectGitRemoteURL(absPath); gitURL != "" {
+			analysis.Repository = gitURL
+		}
+	}
+
 	if generateFlags.name != "" {
 		analysis.Name = generateFlags.name
 	}
 
 	s.Suffix = " Generating manifests..."
 
-	// Phase 2: Generate manifests
 	genOpts := generator.Options{
-		Namespace:   generateFlags.namespace,
+		Namespace:   effectiveNamespace,
 		SkipArgoCD:  generateFlags.skipArgoCD,
 		SkipCI:      generateFlags.skipCI,
 		SkipPersona: generateFlags.skipPersona,
@@ -125,20 +147,28 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	s.Stop()
 
-	// Phase 3: Output files
+	// Post-generation validation
+	if !generateFlags.skipValidation {
+		validation := generator.ValidateGenerated(analysis, files, genOpts)
+		fmt.Println()
+		if validation.Passed {
+			printSuccess("Validation passed")
+		} else {
+			printWarn("Validation found issues")
+		}
+		fmt.Println(generator.FormatValidationReport(validation))
+	}
+
 	if generateFlags.dryRun {
-		// Print to stdout
 		for _, f := range files {
 			fmt.Printf("--- %s ---\n", f.Path)
 			fmt.Println(f.Content)
 			fmt.Println()
 		}
 	} else {
-		// Write to disk
 		if err := output.WriteFiles(generateFlags.output, files); err != nil {
 			return fmt.Errorf("failed to write files: %w", err)
 		}
-
 		printSuccess("Generated manifests successfully!")
 		fmt.Println()
 		fmt.Println("Files created:")
