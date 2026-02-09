@@ -76,15 +76,16 @@ release:
     # Or download binary from assets below
     ```
 
-brews:
-  - repository:
-      owner: dorgu-ai
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
-    homepage: "https://github.com/dorgu-ai/dorgu"
-    description: "AI-powered Kubernetes manifest generator"
-    license: "Apache-2.0"
-    skip_upload: auto
-    test: |
-      system "#{bin}/dorgu", "version"
+# Homebrew: uncomment and set repo secret HOMEBREW_TAP_GITHUB_TOKEN when you have dorgu-ai/homebrew-tap
+# brews:
+#   - repository:
+#       owner: dorgu-ai
+#       name: homebrew-tap
+#       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+#     directory: Formula
+#     homepage: "https://github.com/dorgu-ai/dorgu"
+#     description: "AI-powered Kubernetes manifest generator"
+#     license: "Apache-2.0"
+#     skip_upload: auto
+#     test: |
+#       system "#{bin}/dorgu", "version"
