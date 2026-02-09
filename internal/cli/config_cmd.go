@@ -146,4 +146,3 @@ func runConfigReset(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Config file: %s\n", config.GlobalConfigPath())
 	return nil
 }
-

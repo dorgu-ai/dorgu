@@ -24,15 +24,15 @@ type GlobalConfig struct {
 // GlobalLLMConfig contains LLM provider settings
 type GlobalLLMConfig struct {
 	Provider string `yaml:"provider"` // openai, anthropic, gemini, ollama
-	APIKey   string `yaml:"api_key"` // stored here; env var takes precedence
-	Model    string `yaml:"model"`   // optional model override
+	APIKey   string `yaml:"api_key"`  // stored here; env var takes precedence
+	Model    string `yaml:"model"`    // optional model override
 }
 
 // GlobalDefaults contains default generation settings
 type GlobalDefaults struct {
 	Namespace string `yaml:"namespace"` // default k8s namespace
 	Registry  string `yaml:"registry"`  // default container registry
-	OrgName   string `yaml:"org_name"`   // organization name
+	OrgName   string `yaml:"org_name"`  // organization name
 }
 
 // GlobalConfigDir returns the path to the dorgu config directory

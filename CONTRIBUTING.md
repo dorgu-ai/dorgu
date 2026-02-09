@@ -124,6 +124,23 @@ Optional: set `OPENAI_API_KEY` or `GEMINI_API_KEY` (or use `dorgu config set llm
 
 ---
 
+## Releasing (maintainers)
+
+Releases are **tag-driven**. Pushing a tag matching `v*` (e.g. `v0.2.0`) triggers the Release workflow, which runs tests and [GoReleaser](https://goreleaser.com) to build binaries and publish a [GitHub Release](https://github.com/dorgu-ai/dorgu/releases) with assets.
+
+**To cut a release:**
+
+1. Ensure `main` has all changes you want in the release.
+2. Create an annotated tag:  
+   `git tag -a v0.2.0 -m "Release v0.2.0"`
+3. Push the tag:  
+   `git push origin v0.2.0`
+4. The [Release workflow](.github/workflows/release.yaml) runs automatically; when it finishes, the release and download assets appear on the repo’s Releases page. No separate “update” of the tag is needed—the tag is the release.
+
+`go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest` will then point at the latest release.
+
+---
+
 ## Questions
 
 If something is unclear, open a [Discussion](https://github.com/dorgu-ai/dorgu/discussions) or add a comment on the relevant issue or PR.
