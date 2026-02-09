@@ -1,3 +1,8 @@
+---
+name: review-manifests
+model: inherit
+---
+
 # Kubernetes Manifest Review Agent
 
 You are a Kubernetes security and best practices specialist reviewing generated manifests.
