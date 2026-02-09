@@ -1,7 +1,9 @@
 package generator
 
 import (
+	"bytes"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/dorgu-ai/dorgu/internal/types"
@@ -32,6 +34,14 @@ type ValidationResult struct {
 	Summary string
 }
 
+// K8s manifest file names we run through kubectl dry-run (core types only; no CRDs)
+var kubectlManifestPaths = map[string]bool{
+	"deployment.yaml": true,
+	"service.yaml":    true,
+	"ingress.yaml":    true,
+	"hpa.yaml":        true,
+}
+
 // ValidateGenerated runs post-generation validation and returns a report
 func ValidateGenerated(analysis *types.AppAnalysis, files []GeneratedFile, opts Options) *ValidationResult {
 	result := &ValidationResult{Passed: true}
@@ -43,6 +53,7 @@ func ValidateGenerated(analysis *types.AppAnalysis, files []GeneratedFile, opts 
 	validateIngressHost(analysis, opts, result)
 	validateHealthProbes(analysis, result)
 	validateMissingRequiredFields(analysis, result)
+	validateKubectlDryRun(files, opts, result)
 
 	for _, issue := range result.Issues {
 		if issue.Severity == SeverityError {
@@ -227,6 +238,57 @@ func validateMissingRequiredFields(analysis *types.AppAnalysis, result *Validati
 			Suggestion: "Set app.repository in .dorgu.yaml or ensure git remote origin is configured",
 		})
 	}
+}
+
+// validateKubectlDryRun runs kubectl apply --dry-run=client on generated K8s manifests.
+// If kubectl is not available, this step is skipped (no issue added).
+func validateKubectlDryRun(files []GeneratedFile, opts Options, result *ValidationResult) {
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		return // kubectl not available, skip
+	}
+
+	var parts []string
+	for _, f := range files {
+		if kubectlManifestPaths[f.Path] {
+			parts = append(parts, strings.TrimSpace(f.Content))
+		}
+	}
+	if len(parts) == 0 {
+		return
+	}
+	combined := strings.Join(parts, "\n---\n")
+
+	cmd := exec.Command("kubectl", "apply", "-f", "-", "--dry-run=client", "-n", opts.Namespace)
+	cmd.Stdin = bytes.NewBufferString(combined)
+	out, err := cmd.CombinedOutput()
+	output := strings.TrimSpace(string(out))
+
+	if err != nil {
+		result.Passed = false
+		msg := "kubectl apply --dry-run=client failed"
+		if output != "" {
+			if len(output) > 300 {
+				output = output[:297] + "..."
+			}
+			msg = msg + ": " + strings.ReplaceAll(output, "\n", " ")
+		}
+		result.Issues = append(result.Issues, ValidationIssue{
+			Severity:   SeverityError,
+			Category:   "kubectl",
+			File:       "manifests",
+			Message:    msg,
+			Suggestion: "Fix the manifest errors above and re-run dorgu generate.",
+		})
+		return
+	}
+
+	result.Issues = append(result.Issues, ValidationIssue{
+		Severity:   SeverityInfo,
+		Category:   "kubectl",
+		File:       "manifests",
+		Message:    "kubectl apply --dry-run=client passed (manifests are valid for apply)",
+		Suggestion: "",
+	})
 }
 
 func parseCPUMillis(cpu string) int64 {
