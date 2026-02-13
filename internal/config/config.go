@@ -291,6 +291,9 @@ type AppConfig struct {
 
 	// Operational notes
 	Operations *AppOperations `yaml:"operations"`
+
+	// Deployment strategy
+	DeploymentPolicy *AppDeploymentPolicy `yaml:"deployment_policy"`
 }
 
 // AppMetadata contains application metadata
@@ -301,6 +304,7 @@ type AppMetadata struct {
 	Owner        string `yaml:"owner"`
 	Repository   string `yaml:"repository"`
 	Type         string `yaml:"type"`         // api, web, worker, cron, daemon
+	Tier         string `yaml:"tier"`         // critical, standard, best-effort
 	Instructions string `yaml:"instructions"` // Custom instructions for AI analysis
 }
 
@@ -312,10 +316,11 @@ type AppResources struct {
 
 // AppScaling contains app-specific scaling configuration
 type AppScaling struct {
-	MinReplicas  int `yaml:"min_replicas"`
-	MaxReplicas  int `yaml:"max_replicas"`
-	TargetCPU    int `yaml:"target_cpu"`
-	TargetMemory int `yaml:"target_memory"`
+	MinReplicas  int    `yaml:"min_replicas"`
+	MaxReplicas  int    `yaml:"max_replicas"`
+	TargetCPU    int    `yaml:"target_cpu"`
+	TargetMemory int    `yaml:"target_memory"`
+	Behavior     string `yaml:"behavior"` // conservative, balanced, aggressive
 }
 
 // AppIngress contains app-specific ingress configuration
@@ -340,8 +345,9 @@ type AppTLS struct {
 
 // AppHealth contains health check configuration
 type AppHealth struct {
-	Liveness  *HealthProbe `yaml:"liveness"`
-	Readiness *HealthProbe `yaml:"readiness"`
+	Liveness           *HealthProbe `yaml:"liveness"`
+	Readiness          *HealthProbe `yaml:"readiness"`
+	StartupGracePeriod string       `yaml:"startup_grace_period"` // e.g., "30s", "60s"
 }
 
 // HealthProbe defines a health check probe
@@ -354,9 +360,10 @@ type HealthProbe struct {
 
 // AppDependency describes an application dependency
 type AppDependency struct {
-	Name     string `yaml:"name"`
-	Type     string `yaml:"type"` // database, cache, service, external
-	Required bool   `yaml:"required"`
+	Name        string `yaml:"name"`
+	Type        string `yaml:"type"` // database, cache, service, external
+	Required    bool   `yaml:"required"`
+	HealthCheck string `yaml:"health_check"` // e.g., "SELECT 1" for DB deps
 }
 
 // AppOperations contains operational information
@@ -365,6 +372,14 @@ type AppOperations struct {
 	Alerts            []string `yaml:"alerts"`
 	MaintenanceWindow string   `yaml:"maintenance_window"`
 	OnCall            string   `yaml:"on_call"`
+	AutoRestart       bool     `yaml:"auto_restart"`
+}
+
+// AppDeploymentPolicy contains deployment strategy configuration
+type AppDeploymentPolicy struct {
+	Strategy       string `yaml:"strategy"`        // RollingUpdate, Recreate, BlueGreen, Canary
+	MaxSurge       string `yaml:"max_surge"`       // e.g., "25%"
+	MaxUnavailable string `yaml:"max_unavailable"` // e.g., "25%"
 }
 
 // LoadAppConfig loads the application-specific .dorgu.yaml from the given path

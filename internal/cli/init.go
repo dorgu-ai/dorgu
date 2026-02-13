@@ -11,6 +11,7 @@ import (
 
 	"github.com/dorgu-ai/dorgu/internal/analyzer"
 	"github.com/dorgu-ai/dorgu/internal/config"
+	"github.com/dorgu-ai/dorgu/internal/output"
 )
 
 var initCmd = &cobra.Command{
@@ -55,8 +56,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 func runGlobalInit() error {
 	configPath := config.GlobalConfigPath()
 	if _, err := os.Stat(configPath); err == nil && !initForce {
-		printWarn(fmt.Sprintf("Global config already exists at %s", configPath))
-		printInfo("Use --force to overwrite, or 'dorgu config set <key> <value>' to update")
+		output.Warn(fmt.Sprintf("Global config already exists at %s", configPath))
+		output.Info("Use --force to overwrite, or 'dorgu config set <key> <value>' to update")
 		return nil
 	}
 
@@ -103,7 +104,7 @@ func runGlobalInit() error {
 		return fmt.Errorf("failed to save global config: %w", err)
 	}
 	fmt.Println()
-	printSuccess(fmt.Sprintf("Global config saved to %s", configPath))
+	output.Success(fmt.Sprintf("Global config saved to %s", configPath))
 	fmt.Println("Next: run 'dorgu init' in your app directory, or 'dorgu config list'")
 	return nil
 }
@@ -142,7 +143,7 @@ func runAppInit(args []string) error {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
 	fmt.Println()
-	printSuccess(fmt.Sprintf("Created %s", configPath))
+	output.Success(fmt.Sprintf("Created %s", configPath))
 	fmt.Println("Next: dorgu generate " + targetPath)
 	return nil
 }
@@ -158,10 +159,10 @@ func interactiveAppInit(appPath string) (string, error) {
 	detectedRepo := analyzer.DetectGitRemoteURL(appPath)
 	detectedLang := detectLanguageHint(appPath)
 	if detectedRepo != "" {
-		printInfo("Detected git remote: " + detectedRepo)
+		output.Info("Detected git remote: " + detectedRepo)
 	}
 	if detectedLang != "" {
-		printInfo("Detected language: " + detectedLang)
+		output.Info("Detected language: " + detectedLang)
 	}
 	fmt.Println()
 

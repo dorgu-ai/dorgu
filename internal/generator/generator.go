@@ -111,6 +111,18 @@ func Generate(analysis *types.AppAnalysis, opts Options) ([]GeneratedFile, error
 			Path:    "../PERSONA.md",
 			Content: persona,
 		})
+
+		// Generate structured Persona YAML (ApplicationPersona CRD format)
+		personaYAML, err := GeneratePersonaYAML(analysis, opts.Namespace, opts.Config)
+		if err != nil {
+			// Non-fatal: skip persona YAML if generation fails
+			fmt.Printf("Warning: failed to generate persona YAML: %v\n", err)
+		} else {
+			files = append(files, GeneratedFile{
+				Path:    "persona.yaml",
+				Content: personaYAML,
+			})
+		}
 	}
 
 	return files, nil

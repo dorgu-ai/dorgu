@@ -271,6 +271,9 @@ func applyAppConfig(analysis *types.AppAnalysis, appConfig *config.AppConfig) {
 		analysis.Type = appConfig.App.Type
 		analysis.ResourceProfile = appConfig.App.Type
 	}
+	if appConfig.App.Tier != "" {
+		ctx.Tier = appConfig.App.Tier
+	}
 	if appConfig.App.Instructions != "" {
 		ctx.Instructions = appConfig.App.Instructions
 	}
@@ -298,6 +301,7 @@ func applyAppConfig(analysis *types.AppAnalysis, appConfig *config.AppConfig) {
 			MaxReplicas:  appConfig.Scaling.MaxReplicas,
 			TargetCPU:    appConfig.Scaling.TargetCPU,
 			TargetMemory: appConfig.Scaling.TargetMemory,
+			Behavior:     appConfig.Scaling.Behavior,
 		}
 		// Also set on analysis for immediate use
 		analysis.Scaling = ctx.Scaling
@@ -344,6 +348,9 @@ func applyAppConfig(analysis *types.AppAnalysis, appConfig *config.AppConfig) {
 			ctx.Health.ReadinessPath = appConfig.Health.Readiness.Path
 			ctx.Health.ReadinessPort = appConfig.Health.Readiness.Port
 		}
+		if appConfig.Health.StartupGracePeriod != "" {
+			ctx.Health.StartupGracePeriod = appConfig.Health.StartupGracePeriod
+		}
 
 		// Also update the analysis health check
 		if appConfig.Health.Liveness != nil {
@@ -359,9 +366,10 @@ func applyAppConfig(analysis *types.AppAnalysis, appConfig *config.AppConfig) {
 	// Dependencies
 	for _, dep := range appConfig.Dependencies {
 		ctx.Dependencies = append(ctx.Dependencies, types.DependencyContext{
-			Name:     dep.Name,
-			Type:     dep.Type,
-			Required: dep.Required,
+			Name:        dep.Name,
+			Type:        dep.Type,
+			Required:    dep.Required,
+			HealthCheck: dep.HealthCheck,
 		})
 	}
 
@@ -372,6 +380,16 @@ func applyAppConfig(analysis *types.AppAnalysis, appConfig *config.AppConfig) {
 			Alerts:            appConfig.Operations.Alerts,
 			MaintenanceWindow: appConfig.Operations.MaintenanceWindow,
 			OnCall:            appConfig.Operations.OnCall,
+			AutoRestart:       appConfig.Operations.AutoRestart,
+		}
+	}
+
+	// Deployment policy
+	if appConfig.DeploymentPolicy != nil {
+		ctx.DeploymentPolicy = &types.DeploymentPolicyContext{
+			Strategy:       appConfig.DeploymentPolicy.Strategy,
+			MaxSurge:       appConfig.DeploymentPolicy.MaxSurge,
+			MaxUnavailable: appConfig.DeploymentPolicy.MaxUnavailable,
 		}
 	}
 

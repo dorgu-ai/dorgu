@@ -45,6 +45,7 @@ type AppConfigContext struct {
 	Owner        string `json:"owner,omitempty"`
 	Repository   string `json:"repository,omitempty"`
 	Type         string `json:"type,omitempty"`
+	Tier         string `json:"tier,omitempty"` // critical, standard, best-effort
 	Instructions string `json:"instructions,omitempty"`
 
 	// Environment
@@ -73,6 +74,9 @@ type AppConfigContext struct {
 
 	// Operations
 	Operations *OperationsContext `json:"operations,omitempty"`
+
+	// Deployment policy
+	DeploymentPolicy *DeploymentPolicyContext `json:"deployment_policy,omitempty"`
 }
 
 // ResourceOverrides contains resource configuration overrides
@@ -100,19 +104,21 @@ type IngressPathDef struct {
 
 // HealthContext contains health check configuration from app config
 type HealthContext struct {
-	LivenessPath  string `json:"liveness_path,omitempty"`
-	LivenessPort  int    `json:"liveness_port,omitempty"`
-	ReadinessPath string `json:"readiness_path,omitempty"`
-	ReadinessPort int    `json:"readiness_port,omitempty"`
-	InitialDelay  int    `json:"initial_delay,omitempty"`
-	Period        int    `json:"period,omitempty"`
+	LivenessPath       string `json:"liveness_path,omitempty"`
+	LivenessPort       int    `json:"liveness_port,omitempty"`
+	ReadinessPath      string `json:"readiness_path,omitempty"`
+	ReadinessPort      int    `json:"readiness_port,omitempty"`
+	InitialDelay       int    `json:"initial_delay,omitempty"`
+	Period             int    `json:"period,omitempty"`
+	StartupGracePeriod string `json:"startup_grace_period,omitempty"` // e.g., "30s", "60s"
 }
 
 // DependencyContext describes a dependency from app config
 type DependencyContext struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Required bool   `json:"required"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Required    bool   `json:"required"`
+	HealthCheck string `json:"health_check,omitempty"` // e.g., "SELECT 1" for DB deps
 }
 
 // OperationsContext contains operational information
@@ -121,6 +127,14 @@ type OperationsContext struct {
 	Alerts            []string `json:"alerts,omitempty"`
 	MaintenanceWindow string   `json:"maintenance_window,omitempty"`
 	OnCall            string   `json:"on_call,omitempty"`
+	AutoRestart       bool     `json:"auto_restart,omitempty"`
+}
+
+// DeploymentPolicyContext contains deployment strategy configuration
+type DeploymentPolicyContext struct {
+	Strategy       string `json:"strategy,omitempty"`        // RollingUpdate, Recreate, BlueGreen, Canary
+	MaxSurge       string `json:"max_surge,omitempty"`       // e.g., "25%"
+	MaxUnavailable string `json:"max_unavailable,omitempty"` // e.g., "25%"
 }
 
 // Port represents an exposed port
@@ -152,10 +166,11 @@ type EnvVar struct {
 
 // ScalingConfig represents HPA configuration
 type ScalingConfig struct {
-	MinReplicas  int `json:"min_replicas"`
-	MaxReplicas  int `json:"max_replicas"`
-	TargetCPU    int `json:"target_cpu_percent,omitempty"`
-	TargetMemory int `json:"target_memory_percent,omitempty"`
+	MinReplicas  int    `json:"min_replicas"`
+	MaxReplicas  int    `json:"max_replicas"`
+	TargetCPU    int    `json:"target_cpu_percent,omitempty"`
+	TargetMemory int    `json:"target_memory_percent,omitempty"`
+	Behavior     string `json:"behavior,omitempty"` // conservative, balanced, aggressive
 }
 
 // DockerfileAnalysis contains parsed Dockerfile information

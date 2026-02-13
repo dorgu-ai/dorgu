@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dorgu-ai/dorgu/internal/config"
+	"github.com/dorgu-ai/dorgu/internal/output"
 )
 
 var configCmd = &cobra.Command{
@@ -128,7 +129,7 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	if args[0] == "llm.api_key" && len(args[1]) > 8 {
 		displayVal = args[1][:4] + "****" + args[1][len(args[1])-4:]
 	}
-	printSuccess(fmt.Sprintf("Set %s = %s", args[0], displayVal))
+	output.Success(fmt.Sprintf("Set %s = %s", args[0], displayVal))
 	return nil
 }
 
@@ -142,7 +143,7 @@ func runConfigReset(cmd *cobra.Command, args []string) error {
 	if err := config.SaveGlobalConfig(cfg); err != nil {
 		return err
 	}
-	printSuccess("Configuration reset to defaults")
+	output.Success("Configuration reset to defaults")
 	fmt.Printf("Config file: %s\n", config.GlobalConfigPath())
 	return nil
 }

@@ -4,18 +4,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 var (
-	// Styles for terminal output
-	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))  // Green
-	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // Red
-	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // Yellow
-	infoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))  // Blue
-
 	// Config file path
 	cfgFile string
 )
@@ -58,6 +51,7 @@ func init() {
 	rootCmd.AddCommand(generateCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(configCmd)
+	rootCmd.AddCommand(personaCmd)
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -82,19 +76,3 @@ func initConfig() {
 	}
 }
 
-// Helper functions for styled output
-func printSuccess(msg string) {
-	fmt.Println(successStyle.Render("✓ " + msg))
-}
-
-func printError(msg string) {
-	fmt.Println(errorStyle.Render("✗ " + msg))
-}
-
-func printWarn(msg string) {
-	fmt.Println(warnStyle.Render("⚠ " + msg))
-}
-
-func printInfo(msg string) {
-	fmt.Println(infoStyle.Render("ℹ " + msg))
-}

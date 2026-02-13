@@ -73,13 +73,13 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	// Config merge order: CLI flags > App .dorgu.yaml > Workspace .dorgu.yaml > Global > Defaults
 	globalCfg, err := config.LoadGlobalConfig()
 	if err != nil {
-		printWarn(fmt.Sprintf("Failed to load global config: %v", err))
+		output.Warn(fmt.Sprintf("Failed to load global config: %v", err))
 		globalCfg = config.DefaultGlobalConfig()
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
-		printWarn(fmt.Sprintf("No config file found: %v", err))
+		output.Warn(fmt.Sprintf("No config file found: %v", err))
 		cfg = config.Default()
 	}
 
@@ -152,9 +152,9 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		validation := generator.ValidateGenerated(analysis, files, genOpts)
 		fmt.Println()
 		if validation.Passed {
-			printSuccess("Validation passed")
+			output.Success("Validation passed")
 		} else {
-			printWarn("Validation found issues")
+			output.Warn("Validation found issues")
 		}
 		fmt.Println(generator.FormatValidationReport(validation))
 	}
@@ -169,7 +169,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		if err := output.WriteFiles(generateFlags.output, files); err != nil {
 			return fmt.Errorf("failed to write files: %w", err)
 		}
-		printSuccess("Generated manifests successfully!")
+		output.Success("Generated manifests successfully!")
 		fmt.Println()
 		fmt.Println("Files created:")
 		for _, f := range files {
