@@ -4,7 +4,7 @@
 
 # Internal documentation (not for GitHub)
 .github/workflows/deploy.yaml
-docs-internal/
+*docs-internal/
 TODO
 TEST_PLAN.md
 

@@ -47,3 +47,23 @@ func Header(msg string) {
 	fmt.Println(lipgloss.NewStyle().Bold(true).Render(msg))
 	fmt.Println()
 }
+
+// Green returns a green-colored string
+func Green(msg string) string {
+	return successStyle.Render(msg)
+}
+
+// Yellow returns a yellow-colored string
+func Yellow(msg string) string {
+	return warnStyle.Render(msg)
+}
+
+// Blue returns a blue-colored string
+func Blue(msg string) string {
+	return infoStyle.Render(msg)
+}
+
+// Red returns a red-colored string
+func Red(msg string) string {
+	return errorStyle.Render(msg)
+}
