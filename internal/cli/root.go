@@ -44,7 +44,7 @@ func init() {
 	rootCmd.PersistentFlags().Bool("no-color", false, "disable colored output")
 
 	// Bind to viper
-	viper.BindPFlag("no-color", rootCmd.PersistentFlags().Lookup("no-color"))
+	_ = viper.BindPFlag("no-color", rootCmd.PersistentFlags().Lookup("no-color"))
 
 	// Add subcommands
 	rootCmd.AddCommand(versionCmd)

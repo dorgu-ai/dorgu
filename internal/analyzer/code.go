@@ -322,7 +322,7 @@ func detectHealthEndpoint(path string, language string) string {
 
 	// Walk through source files looking for route definitions
 	var foundPath string
-	filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
@@ -383,7 +383,7 @@ func detectHealthEndpoint(path string, language string) string {
 func detectMetricsEndpoint(path string, language string) string {
 	// Walk through source files looking for /metrics
 	var foundPath string
-	filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}

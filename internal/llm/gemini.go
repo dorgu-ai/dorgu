@@ -83,6 +83,7 @@ func (c *GeminiClient) AnalyzeApp(analysis *types.AppAnalysis) (*types.AppAnalys
 	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
 		return nil, fmt.Errorf("failed to parse Gemini response: %w (response: %s)", err, responseContent)
 	}
+	NormalizeLLMAnalysis(&result)
 
 	return &result, nil
 }

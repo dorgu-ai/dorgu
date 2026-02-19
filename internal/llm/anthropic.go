@@ -70,7 +70,7 @@ func (c *AnthropicClient) AnalyzeApp(analysis *types.AppAnalysis) (*types.AppAna
 	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
 		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
-
+	NormalizeLLMAnalysis(&result)
 	return &result, nil
 }
 

@@ -147,6 +147,8 @@ func enhanceWithLLM(analysis *types.AppAnalysis, provider string) error {
 	if len(enhanced.Ports) > 0 {
 		analysis.Ports = enhanced.Ports
 	}
+	// Merge runs_as_root from LLM (generator uses ImageRunsAsRoot(analysis), so Dockerfile wins when present)
+	analysis.RunsAsRoot = enhanced.RunsAsRoot
 
 	// Ensure we still have ports from Dockerfile if LLM didn't provide them
 	if len(analysis.Ports) == 0 && analysis.Dockerfile != nil {

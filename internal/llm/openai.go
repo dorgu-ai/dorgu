@@ -63,7 +63,7 @@ func (c *OpenAIClient) AnalyzeApp(analysis *types.AppAnalysis) (*types.AppAnalys
 	if err := json.Unmarshal([]byte(resp.Choices[0].Message.Content), &result); err != nil {
 		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
-
+	NormalizeLLMAnalysis(&result)
 	return &result, nil
 }
 
@@ -223,9 +223,11 @@ Based on this information, provide a JSON response with:
   "health_check": {"path": "/health", "port": 8080, "initial_delay_seconds": 10, "period_seconds": 10},
   "dependencies": ["postgresql", "redis"],
   "resource_profile": "api|worker|web (for resource sizing)",
-  "scaling": {"min_replicas": 2, "max_replicas": 10, "target_cpu_percent": 70}
+  "scaling": {"min_replicas": 2, "max_replicas": 10, "target_cpu_percent": 70},
+  "runs_as_root": true
 }
 
+Set "runs_as_root" from Dockerfile USER: if absent or root/0, true; otherwise false.
 Ensure all values are appropriate for a production Kubernetes deployment.`,
 		analysis.Name,
 		dockerInfo,

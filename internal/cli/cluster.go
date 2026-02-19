@@ -67,7 +67,7 @@ func init() {
 	clusterInitCmd.Flags().StringVar(&clusterFlags.name, "name", "", "cluster name (required)")
 	clusterInitCmd.Flags().StringVar(&clusterFlags.environment, "environment", "development", "cluster environment (development, staging, production, sandbox)")
 	clusterInitCmd.Flags().BoolVar(&clusterFlags.dryRun, "dry-run", false, "print to stdout without applying")
-	clusterInitCmd.MarkFlagRequired("name")
+	_ = clusterInitCmd.MarkFlagRequired("name")
 
 	// Register subcommands
 	clusterCmd.AddCommand(clusterStatusCmd)
@@ -171,7 +171,7 @@ func displayClusterPersonaStatus(name string, rawYAML string) {
 				platform = strings.TrimSpace(platform)
 			}
 			if strings.HasPrefix(trimmed, "applicationCount:") {
-				fmt.Sscanf(trimmed, "applicationCount: %d", &appCount)
+				_, _ = fmt.Sscanf(trimmed, "applicationCount: %d", &appCount)
 			}
 			if trimmed == "nodes:" {
 				inNodes = true
@@ -200,7 +200,7 @@ func displayClusterPersonaStatus(name string, rawYAML string) {
 				continue
 			}
 			if inResourceSummary && strings.HasPrefix(trimmed, "runningPods:") {
-				fmt.Sscanf(trimmed, "runningPods: %d", &runningPods)
+				_, _ = fmt.Sscanf(trimmed, "runningPods: %d", &runningPods)
 			}
 		}
 	}

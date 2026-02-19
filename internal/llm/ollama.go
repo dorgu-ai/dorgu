@@ -64,7 +64,7 @@ func (c *OllamaClient) AnalyzeApp(analysis *types.AppAnalysis) (*types.AppAnalys
 	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
 		return nil, fmt.Errorf("failed to parse LLM response: %w (response: %s)", err, response)
 	}
-
+	NormalizeLLMAnalysis(&result)
 	return &result, nil
 }
 

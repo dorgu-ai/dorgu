@@ -285,13 +285,6 @@ func formatDependencies(deps []string) string {
 	return result
 }
 
-func formatScaling(scaling *types.ScalingConfig) string {
-	if scaling == nil {
-		return "No auto-scaling configured"
-	}
-	return "replicas, Max replicas, Target CPU %"
-}
-
 func formatScalingDetails(analysis *types.AppAnalysis) string {
 	scaling := analysis.Scaling
 	if analysis.AppConfig != nil && analysis.AppConfig.Scaling != nil {

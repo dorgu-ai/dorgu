@@ -172,7 +172,7 @@ func runSyncPull(cmd *cobra.Command, args []string) error {
 				truncate(p.Type, 10),
 				truncate(p.Tier, 10),
 				colorPhase(p.Phase),
-				colorHealth(p.Health))
+				colorHealth(health))
 		}
 	}
 

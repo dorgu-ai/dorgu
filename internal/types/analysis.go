@@ -34,6 +34,9 @@ type AppAnalysis struct {
 
 	// Environment
 	Environment string `json:"environment,omitempty"`
+
+	// RunsAsRoot is set by LLM when no Dockerfile; when Dockerfile is present, generator derives from Dockerfile.User.
+	RunsAsRoot bool `json:"runs_as_root,omitempty"`
 }
 
 // AppConfigContext contains relevant app config for analysis and generation

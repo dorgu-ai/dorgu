@@ -364,11 +364,3 @@ func prompt(reader *bufio.Reader, label, defaultVal string) string {
 	}
 	return input
 }
-
-func mustGetwd() string {
-	wd, err := os.Getwd()
-	if err != nil {
-		return "my-app"
-	}
-	return wd
-}

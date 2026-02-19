@@ -87,7 +87,7 @@ func TestClient_Subscribe(t *testing.T) {
 					RequestID: msg.RequestID,
 					Timestamp: time.Now(),
 				}
-				conn.WriteJSON(response)
+				_ = conn.WriteJSON(response)
 			}
 		}
 	})
@@ -128,7 +128,7 @@ func TestClient_Unsubscribe(t *testing.T) {
 				RequestID: msg.RequestID,
 				Timestamp: time.Now(),
 			}
-			conn.WriteJSON(response)
+			_ = conn.WriteJSON(response)
 		}
 	})
 	defer server.Close()
@@ -186,7 +186,7 @@ func TestClient_ListPersonas(t *testing.T) {
 					Payload:   payload,
 					Timestamp: time.Now(),
 				}
-				conn.WriteJSON(response)
+				_ = conn.WriteJSON(response)
 			}
 		}
 	})
@@ -240,7 +240,7 @@ func TestClient_GetCluster(t *testing.T) {
 					Payload:   payload,
 					Timestamp: time.Now(),
 				}
-				conn.WriteJSON(response)
+				_ = conn.WriteJSON(response)
 			}
 		}
 	})
@@ -288,7 +288,7 @@ func TestClient_ErrorResponse(t *testing.T) {
 				Payload:   payload,
 				Timestamp: time.Now(),
 			}
-			conn.WriteJSON(response)
+			_ = conn.WriteJSON(response)
 		}
 	})
 	defer server.Close()
@@ -345,7 +345,7 @@ func TestClient_EventHandler(t *testing.T) {
 		}
 
 		var msg Message
-		json.Unmarshal(data, &msg)
+		_ = json.Unmarshal(data, &msg)
 
 		// Send subscribe response
 		response := Message{
@@ -353,7 +353,7 @@ func TestClient_EventHandler(t *testing.T) {
 			RequestID: msg.RequestID,
 			Timestamp: time.Now(),
 		}
-		conn.WriteJSON(response)
+		_ = conn.WriteJSON(response)
 
 		// Send an event
 		time.Sleep(100 * time.Millisecond)
@@ -371,7 +371,7 @@ func TestClient_EventHandler(t *testing.T) {
 			Payload:   payload,
 			Timestamp: time.Now(),
 		}
-		conn.WriteJSON(eventMsg)
+		_ = conn.WriteJSON(eventMsg)
 
 		// Keep connection open
 		for {
@@ -394,7 +394,7 @@ func TestClient_EventHandler(t *testing.T) {
 	// Subscribe with handler
 	err = client.Subscribe(ctx, TopicPersonas, func(msg *Message) {
 		var event PersonaEvent
-		json.Unmarshal(msg.Payload, &event)
+		_ = json.Unmarshal(msg.Payload, &event)
 		eventChan <- event
 	})
 	require.NoError(t, err)

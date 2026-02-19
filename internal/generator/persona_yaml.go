@@ -64,6 +64,11 @@ func GeneratePersonaYAML(analysis *types.AppAnalysis, namespace string, cfg *con
 	if analysis.Description != "" {
 		sb.WriteString(fmt.Sprintf("    description: |\n      %s\n", strings.ReplaceAll(analysis.Description, "\n", "\n      ")))
 	}
+	imageRunsAsRoot := ImageRunsAsRoot(analysis)
+	sb.WriteString(fmt.Sprintf("    imageRunsAsRoot: %t\n", imageRunsAsRoot))
+	if cfg.Security.PodSecurityContext.RunAsNonRoot && imageRunsAsRoot {
+		sb.WriteString(fmt.Sprintf("    runAsUser: %d\n", DefaultNonRootUID))
+	}
 
 	// Resources
 	writeResources(&sb, analysis, cfg)
@@ -287,11 +292,15 @@ func writeOwnership(sb *strings.Builder, analysis *types.AppAnalysis) {
 func writePolicies(sb *strings.Builder, analysis *types.AppAnalysis, cfg *config.Config) {
 	sb.WriteString("  policies:\n")
 
-	// Security from org config
+	// Security from org config and image runtime
 	sb.WriteString("    security:\n")
 	sb.WriteString(fmt.Sprintf("      runAsNonRoot: %t\n", cfg.Security.PodSecurityContext.RunAsNonRoot))
 	sb.WriteString(fmt.Sprintf("      readOnlyRootFilesystem: %t\n", cfg.Security.ContainerSecurityContext.ReadOnlyRootFilesystem))
 	sb.WriteString(fmt.Sprintf("      allowPrivilegeEscalation: %t\n", cfg.Security.ContainerSecurityContext.AllowPrivilegeEscalation))
+	sb.WriteString(fmt.Sprintf("      imageRunsAsRoot: %t\n", ImageRunsAsRoot(analysis)))
+	if cfg.Security.PodSecurityContext.RunAsNonRoot && ImageRunsAsRoot(analysis) {
+		sb.WriteString(fmt.Sprintf("      runAsUser: %d\n", DefaultNonRootUID))
+	}
 
 	// Deployment policy
 	strategy := "RollingUpdate"

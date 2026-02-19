@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dorgu-ai/dorgu/internal/types"
+	"sigs.k8s.io/yaml"
 )
 
 // ValidationSeverity is the severity of a validation issue
@@ -46,6 +47,7 @@ var kubectlManifestPaths = map[string]bool{
 func ValidateGenerated(analysis *types.AppAnalysis, files []GeneratedFile, opts Options) *ValidationResult {
 	result := &ValidationResult{Passed: true}
 
+	validateDeploymentWarnings(files, analysis, result)
 	validateImagePlaceholder(analysis, opts, result)
 	validateResourceRequestsVsLimits(analysis, opts, result)
 	validateServicePortMatch(analysis, result)
@@ -89,6 +91,54 @@ func ValidateGenerated(analysis *types.AppAnalysis, files []GeneratedFile, opts 
 		result.Summary = "Validation: " + strings.Join(parts, ", ")
 	}
 	return result
+}
+
+// validateDeploymentWarnings adds warnings for deployment security and Kind/local image usage.
+func validateDeploymentWarnings(files []GeneratedFile, analysis *types.AppAnalysis, result *ValidationResult) {
+	var deploymentContent string
+	for _, f := range files {
+		if f.Path == "deployment.yaml" {
+			deploymentContent = f.Content
+			break
+		}
+	}
+	if deploymentContent == "" {
+		return
+	}
+	var manifest DeploymentManifest
+	if err := yaml.Unmarshal([]byte(deploymentContent), &manifest); err != nil {
+		return // skip if we can't parse
+	}
+	podSpec := manifest.Spec.Template.Spec
+	runAsNonRoot := podSpec.SecurityContext != nil && podSpec.SecurityContext.RunAsNonRoot != nil && *podSpec.SecurityContext.RunAsNonRoot
+	imageRunsAsRoot := ImageRunsAsRoot(analysis)
+
+	runAsNonRootWarned := false
+	for _, c := range podSpec.Containers {
+		if runAsNonRoot && imageRunsAsRoot && !runAsNonRootWarned {
+			hasRunAsUser := c.SecurityContext != nil && c.SecurityContext.RunAsUser != nil
+			if !hasRunAsUser {
+				result.Issues = append(result.Issues, ValidationIssue{
+					Severity:   SeverityWarning,
+					Category:   "security",
+					File:       "deployment.yaml",
+					Message:    "Image runs as root but runAsNonRoot is true; consider adding runAsUser.",
+					Suggestion: "Generator adds runAsUser when applicable; if you edited the manifest, set securityContext.runAsUser to a non-root UID (e.g. 65534).",
+				})
+				runAsNonRootWarned = true
+			}
+		}
+		unqualified := !strings.Contains(c.Image, "/")
+		if unqualified && c.ImagePullPolicy != "Never" {
+			result.Issues = append(result.Issues, ValidationIssue{
+				Severity:   SeverityWarning,
+				Category:   "image",
+				File:       "deployment.yaml",
+				Message:    "Unqualified image may cause ImagePullBackOff in Kind; set imagePullPolicy: Never for local images.",
+				Suggestion: "When using a local registry or kind load docker-image, set ci.registry to empty so the generator sets imagePullPolicy: Never.",
+			})
+		}
+	}
 }
 
 func validateImagePlaceholder(analysis *types.AppAnalysis, opts Options, result *ValidationResult) {
@@ -297,11 +347,11 @@ func parseCPUMillis(cpu string) int64 {
 	}
 	if strings.HasSuffix(cpu, "m") {
 		var millis int64
-		fmt.Sscanf(strings.TrimSuffix(cpu, "m"), "%d", &millis)
+		_, _ = fmt.Sscanf(strings.TrimSuffix(cpu, "m"), "%d", &millis)
 		return millis
 	}
 	var cores float64
-	fmt.Sscanf(cpu, "%f", &cores)
+	_, _ = fmt.Sscanf(cpu, "%f", &cores)
 	return int64(cores * 1000)
 }
 
@@ -315,12 +365,12 @@ func parseMemoryBytes(mem string) int64 {
 	for suffix, mult := range multipliers {
 		if strings.HasSuffix(mem, suffix) {
 			var num int64
-			fmt.Sscanf(strings.TrimSuffix(mem, suffix), "%d", &num)
+			_, _ = fmt.Sscanf(strings.TrimSuffix(mem, suffix), "%d", &num)
 			return num * mult
 		}
 	}
 	var bytes int64
-	fmt.Sscanf(mem, "%d", &bytes)
+	_, _ = fmt.Sscanf(mem, "%d", &bytes)
 	return bytes
 }
 

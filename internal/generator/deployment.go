@@ -67,6 +67,7 @@ type SeccompProfile struct {
 type Container struct {
 	Name            string                    `json:"name"`
 	Image           string                    `json:"image"`
+	ImagePullPolicy string                    `json:"imagePullPolicy,omitempty"`
 	Ports           []ContainerPort           `json:"ports,omitempty"`
 	Env             []EnvVar                  `json:"env,omitempty"`
 	Resources       ResourceRequirements      `json:"resources,omitempty"`
@@ -133,6 +134,7 @@ type HTTPGetAction struct {
 type ContainerSecurityContext struct {
 	AllowPrivilegeEscalation *bool         `json:"allowPrivilegeEscalation,omitempty"`
 	ReadOnlyRootFilesystem   *bool         `json:"readOnlyRootFilesystem,omitempty"`
+	RunAsUser                *int64        `json:"runAsUser,omitempty"`
 	Capabilities             *Capabilities `json:"capabilities,omitempty"`
 }
 
@@ -279,11 +281,17 @@ func GenerateDeployment(analysis *types.AppAnalysis, namespace string, resources
 			Drop: []corev1.Capability{"ALL"},
 		},
 	}
+	if ImageRunsAsRoot(analysis) {
+		uid := DefaultNonRootUID
+		containerSecurityContext.RunAsUser = &uid
+	}
 
-	// Determine image name
+	// Determine image name and pull policy (Never for local/Kind when no registry)
 	imageName := fmt.Sprintf("%s/%s:latest", cfg.CI.Registry, analysis.Name)
+	imagePullPolicy := ""
 	if cfg.CI.Registry == "" {
 		imageName = analysis.Name + ":latest"
+		imagePullPolicy = "Never"
 	}
 
 	// Determine replicas - prefer app config scaling
@@ -319,10 +327,11 @@ func GenerateDeployment(analysis *types.AppAnalysis, namespace string, resources
 					SecurityContext: podSecurityContext,
 					Containers: []Container{
 						{
-							Name:  name,
-							Image: imageName,
-							Ports: containerPorts,
-							Env:   envVars,
+							Name:            name,
+							Image:           imageName,
+							ImagePullPolicy: imagePullPolicy,
+							Ports:           containerPorts,
+							Env:             envVars,
 							Resources: ResourceRequirements{
 								Requests: map[string]string{
 									"cpu":    finalResources.Requests.CPU,
@@ -344,21 +353,6 @@ func GenerateDeployment(analysis *types.AppAnalysis, namespace string, resources
 	}
 
 	return toYAML(deployment)
-}
-
-// buildLabels creates standard Kubernetes labels
-func buildLabels(name string, cfg *config.Config) map[string]string {
-	labels := map[string]string{
-		"app.kubernetes.io/name":       name,
-		"app.kubernetes.io/managed-by": "dorgu",
-	}
-
-	// Add custom labels from config
-	for k, v := range cfg.Labels.Custom {
-		labels[k] = v
-	}
-
-	return labels
 }
 
 // buildLabelsWithAppConfig creates labels merging org config and app config.

@@ -282,7 +282,9 @@ func (c *Client) request(ctx context.Context, msg *Message) (*Message, error) {
 	case resp := <-respChan:
 		if resp.Type == MessageTypeError {
 			var errPayload ErrorPayload
-			json.Unmarshal(resp.Payload, &errPayload)
+			if err := json.Unmarshal(resp.Payload, &errPayload); err != nil {
+				return nil, fmt.Errorf("parse error payload: %w", err)
+			}
 			return nil, fmt.Errorf("%s: %s", errPayload.Code, errPayload.Message)
 		}
 		return resp, nil
@@ -331,7 +333,7 @@ func (c *Client) readPump() {
 		_, data, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				// Log error if needed
+				_ = err // intentionally not logged; normal close is expected
 			}
 			return
 		}
