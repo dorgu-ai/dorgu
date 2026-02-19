@@ -45,7 +45,7 @@ Ensure `$GOPATH/bin` (or `$HOME/go/bin`) is in your `PATH`.
 The Dorgu Operator provides cluster-side validation and monitoring. Install via Helm:
 
 ```bash
-helm install dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --version 0.2.0 \
   --namespace dorgu-system \
   --create-namespace
@@ -182,7 +182,7 @@ The Dorgu Operator is the cluster-side component that validates deployments and 
 **Basic installation:**
 
 ```bash
-helm install dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --version 0.2.0 \
   --namespace dorgu-system \
   --create-namespace
@@ -191,7 +191,7 @@ helm install dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
 **With all features enabled:**
 
 ```bash
-helm install dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --version 0.2.0 \
   --namespace dorgu-system \
   --create-namespace \
@@ -319,7 +319,7 @@ dorgu generate .              # Generate to k8s/
 ### Step 2: Install Operator (if not already installed)
 
 ```bash
-helm install dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --version 0.2.0 \
   --namespace dorgu-system \
   --create-namespace
@@ -426,7 +426,7 @@ The operator can validate deployments before they're applied:
 **Advisory mode** (default) — Allows deployments but logs warnings:
 
 ```bash
-helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
+helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --namespace dorgu-system \
   --set webhook.enabled=true \
   --set webhook.mode=advisory
@@ -435,7 +435,7 @@ helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
 **Enforcing mode** — Rejects non-compliant deployments:
 
 ```bash
-helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
+helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --namespace dorgu-system \
   --set webhook.enabled=true \
   --set webhook.mode=enforcing
@@ -446,7 +446,7 @@ helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
 Enable real-time communication between CLI and operator:
 
 ```bash
-helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
+helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --namespace dorgu-system \
   --set websocket.enabled=true
 ```
@@ -472,7 +472,7 @@ The operator automatically watches ArgoCD Applications (enabled by default). Per
 Enable resource baseline learning:
 
 ```bash
-helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
+helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --namespace dorgu-system \
   --set prometheus.enabled=true \
   --set prometheus.url=http://prometheus-server.monitoring:9090

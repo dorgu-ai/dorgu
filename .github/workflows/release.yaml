@@ -25,6 +25,15 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+      - name: Verify version output
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" -o dorgu ./cmd/dorgu
+          echo "Version output for this release:"
+          ./dorgu version
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

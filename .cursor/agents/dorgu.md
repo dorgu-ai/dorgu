@@ -34,7 +34,7 @@ The operator requires a Kubernetes cluster. Install via Helm:
 
 ```bash
 # Install operator
-helm install dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --version 0.2.0 \
   --namespace dorgu-system \
   --create-namespace
@@ -183,7 +183,7 @@ kubectl get crd clusterpersonas.dorgu.io
 
 1. Enable WebSocket in operator:
    ```bash
-   helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/charts/dorgu-operator \
+   helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
      --namespace dorgu-system \
      --set websocket.enabled=true
    ```

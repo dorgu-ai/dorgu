@@ -27,9 +27,22 @@ var versionCmd = &cobra.Command{
 	Short: "Print the version number of dorgu",
 	Long:  `Display the version, commit hash, and build date of dorgu.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("dorgu %s\n", versionInfo.Version)
-		fmt.Printf("Commit: %s\n", versionInfo.Commit)
-		fmt.Printf("Built: %s\n", versionInfo.Date)
+		version := versionInfo.Version
+		if version == "dev" {
+			fmt.Println("dorgu dev")
+		} else {
+			displayVersion := version
+			if version != "" && version[0] != 'v' {
+				displayVersion = "v" + version
+			}
+			fmt.Printf("dorgu version %s\n", displayVersion)
+		}
+		commit, date := versionInfo.Commit, versionInfo.Date
+		if commit != "" && commit != "none" && date != "" && date != "unknown" {
+			fmt.Printf("Build: %s @ %s\n", commit, date)
+		} else {
+			fmt.Println("Build: from source")
+		}
 	},
 }
 
