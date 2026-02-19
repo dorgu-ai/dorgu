@@ -144,7 +144,8 @@ type Capabilities struct {
 
 // GenerateDeployment generates a Kubernetes Deployment manifest
 func GenerateDeployment(analysis *types.AppAnalysis, namespace string, resources config.ResourceSpec, cfg *config.Config) (string, error) {
-	// Build labels - merge org config and app config labels
+	name := ToDNSSubdomain(analysis.Name)
+	// Build labels - merge org config and app config labels (use DNS-safe name for operator matching)
 	labels := buildLabelsWithAppConfig(analysis, cfg)
 
 	// Build annotations from app config
@@ -165,10 +166,10 @@ func GenerateDeployment(analysis *types.AppAnalysis, namespace string, resources
 	for _, e := range analysis.EnvVars {
 		ev := EnvVar{Name: e.Name}
 		if e.Secret {
-			// Reference from secret
+			// Reference from secret (use DNS-safe name for secret name)
 			ev.ValueFrom = &EnvVarSource{
 				SecretKeyRef: &SecretKeySelector{
-					Name: strings.ToLower(analysis.Name) + "-secrets",
+					Name: name + "-secrets",
 					Key:  strings.ToLower(e.Name),
 				},
 			}
@@ -297,7 +298,7 @@ func GenerateDeployment(analysis *types.AppAnalysis, namespace string, resources
 		APIVersion: "apps/v1",
 		Kind:       "Deployment",
 		Metadata: Metadata{
-			Name:        analysis.Name,
+			Name:        name,
 			Namespace:   namespace,
 			Labels:      labels,
 			Annotations: annotations,
@@ -306,7 +307,7 @@ func GenerateDeployment(analysis *types.AppAnalysis, namespace string, resources
 			Replicas: replicas,
 			Selector: LabelSelector{
 				MatchLabels: map[string]string{
-					"app.kubernetes.io/name": analysis.Name,
+					"app.kubernetes.io/name": name,
 				},
 			},
 			Template: PodTemplateSpec{
@@ -318,7 +319,7 @@ func GenerateDeployment(analysis *types.AppAnalysis, namespace string, resources
 					SecurityContext: podSecurityContext,
 					Containers: []Container{
 						{
-							Name:  analysis.Name,
+							Name:  name,
 							Image: imageName,
 							Ports: containerPorts,
 							Env:   envVars,
@@ -360,10 +361,12 @@ func buildLabels(name string, cfg *config.Config) map[string]string {
 	return labels
 }
 
-// buildLabelsWithAppConfig creates labels merging org config and app config
+// buildLabelsWithAppConfig creates labels merging org config and app config.
+// Uses DNS-safe name for app.kubernetes.io/name so operator matching works.
 func buildLabelsWithAppConfig(analysis *types.AppAnalysis, cfg *config.Config) map[string]string {
+	name := ToDNSSubdomain(analysis.Name)
 	labels := map[string]string{
-		"app.kubernetes.io/name":       analysis.Name,
+		"app.kubernetes.io/name":       name,
 		"app.kubernetes.io/managed-by": "dorgu",
 	}
 

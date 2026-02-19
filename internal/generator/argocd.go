@@ -48,6 +48,7 @@ type ArgoCDAutomated struct {
 
 // GenerateArgoCD generates an ArgoCD Application manifest
 func GenerateArgoCD(analysis *types.AppAnalysis, namespace string, cfg *config.Config) (string, error) {
+	name := ToDNSSubdomain(analysis.Name)
 	labels := buildLabelsWithAppConfig(analysis, cfg)
 
 	// Get repository URL from app config, or generate default
@@ -62,7 +63,7 @@ func GenerateArgoCD(analysis *types.AppAnalysis, namespace string, cfg *config.C
 		APIVersion: "argoproj.io/v1alpha1",
 		Kind:       "Application",
 		Metadata: Metadata{
-			Name:      analysis.Name,
+			Name:      name,
 			Namespace: "argocd", // ArgoCD apps typically live in argocd namespace
 			Labels:    labels,
 		},

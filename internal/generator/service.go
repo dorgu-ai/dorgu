@@ -32,6 +32,7 @@ type ServicePort struct {
 
 // GenerateService generates a Kubernetes Service manifest
 func GenerateService(analysis *types.AppAnalysis, namespace string, cfg *config.Config) (string, error) {
+	name := ToDNSSubdomain(analysis.Name)
 	labels := buildLabelsWithAppConfig(analysis, cfg)
 	annotations := buildAnnotationsWithAppConfig(analysis, cfg)
 
@@ -49,7 +50,7 @@ func GenerateService(analysis *types.AppAnalysis, namespace string, cfg *config.
 		APIVersion: "v1",
 		Kind:       "Service",
 		Metadata: Metadata{
-			Name:        analysis.Name,
+			Name:        name,
 			Namespace:   namespace,
 			Labels:      labels,
 			Annotations: annotations,
@@ -57,7 +58,7 @@ func GenerateService(analysis *types.AppAnalysis, namespace string, cfg *config.
 		Spec: ServiceSpec{
 			Type: "ClusterIP",
 			Selector: map[string]string{
-				"app.kubernetes.io/name": analysis.Name,
+				"app.kubernetes.io/name": name,
 			},
 			Ports: servicePorts,
 		},

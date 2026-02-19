@@ -48,6 +48,7 @@ type MetricTarget struct {
 
 // GenerateHPA generates a Kubernetes HorizontalPodAutoscaler manifest
 func GenerateHPA(analysis *types.AppAnalysis, namespace string, cfg *config.Config) (string, error) {
+	name := ToDNSSubdomain(analysis.Name)
 	labels := buildLabelsWithAppConfig(analysis, cfg)
 
 	minReplicas := 2
@@ -116,7 +117,7 @@ func GenerateHPA(analysis *types.AppAnalysis, namespace string, cfg *config.Conf
 		APIVersion: "autoscaling/v2",
 		Kind:       "HorizontalPodAutoscaler",
 		Metadata: Metadata{
-			Name:      analysis.Name,
+			Name:      name,
 			Namespace: namespace,
 			Labels:    labels,
 		},
@@ -124,7 +125,7 @@ func GenerateHPA(analysis *types.AppAnalysis, namespace string, cfg *config.Conf
 			ScaleTargetRef: ScaleTargetRef{
 				APIVersion: "apps/v1",
 				Kind:       "Deployment",
-				Name:       analysis.Name,
+				Name:       name,
 			},
 			MinReplicas: minReplicas,
 			MaxReplicas: maxReplicas,

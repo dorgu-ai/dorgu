@@ -19,13 +19,14 @@ func GeneratePersonaYAML(analysis *types.AppAnalysis, namespace string, cfg *con
 		namespace = "default"
 	}
 
+	name := ToDNSSubdomain(analysis.Name)
 	var sb strings.Builder
 
 	// Header
 	sb.WriteString("apiVersion: dorgu.io/v1\n")
 	sb.WriteString("kind: ApplicationPersona\n")
 	sb.WriteString("metadata:\n")
-	sb.WriteString(fmt.Sprintf("  name: %s\n", analysis.Name))
+	sb.WriteString(fmt.Sprintf("  name: %s\n", name))
 	sb.WriteString(fmt.Sprintf("  namespace: %s\n", namespace))
 	sb.WriteString("  labels:\n")
 	sb.WriteString("    app.kubernetes.io/managed-by: dorgu\n")
@@ -35,7 +36,7 @@ func GeneratePersonaYAML(analysis *types.AppAnalysis, namespace string, cfg *con
 
 	// Spec
 	sb.WriteString("spec:\n")
-	sb.WriteString(fmt.Sprintf("  name: %s\n", analysis.Name))
+	sb.WriteString(fmt.Sprintf("  name: %s\n", name))
 	sb.WriteString("  version: \"1\"\n")
 
 	// Type
@@ -116,10 +117,7 @@ func writeResources(sb *strings.Builder, analysis *types.AppAnalysis, cfg *confi
 	sb.WriteString(fmt.Sprintf("      cpu: \"%s\"\n", resources.Limits.CPU))
 	sb.WriteString(fmt.Sprintf("      memory: \"%s\"\n", resources.Limits.Memory))
 
-	profile := analysis.ResourceProfile
-	if profile == "" {
-		profile = "standard"
-	}
+	profile := MapResourceProfileToCRD(analysis.ResourceProfile)
 	sb.WriteString(fmt.Sprintf("    profile: %s\n", profile))
 }
 

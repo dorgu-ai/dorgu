@@ -62,6 +62,7 @@ type ServiceBackendPort struct {
 
 // GenerateIngress generates a Kubernetes Ingress manifest
 func GenerateIngress(analysis *types.AppAnalysis, namespace string, cfg *config.Config) (string, error) {
+	name := ToDNSSubdomain(analysis.Name)
 	labels := buildLabelsWithAppConfig(analysis, cfg)
 	annotations := buildAnnotationsWithAppConfig(analysis, cfg)
 	if annotations == nil {
@@ -70,7 +71,7 @@ func GenerateIngress(analysis *types.AppAnalysis, namespace string, cfg *config.
 
 	// Determine TLS settings from app config or org config
 	tlsEnabled := cfg.Ingress.TLS.Enabled
-	tlsSecret := analysis.Name + "-tls"
+	tlsSecret := name + "-tls"
 	if analysis.AppConfig != nil && analysis.AppConfig.Ingress != nil {
 		if analysis.AppConfig.Ingress.TLSEnabled {
 			tlsEnabled = true
@@ -118,7 +119,7 @@ func GenerateIngress(analysis *types.AppAnalysis, namespace string, cfg *config.
 				PathType: pathType,
 				Backend: IngressBackend{
 					Service: IngressServiceBackend{
-						Name: analysis.Name,
+						Name: name,
 						Port: ServiceBackendPort{
 							Number: httpPort,
 						},
@@ -134,7 +135,7 @@ func GenerateIngress(analysis *types.AppAnalysis, namespace string, cfg *config.
 				PathType: "Prefix",
 				Backend: IngressBackend{
 					Service: IngressServiceBackend{
-						Name: analysis.Name,
+						Name: name,
 						Port: ServiceBackendPort{
 							Number: httpPort,
 						},
@@ -148,7 +149,7 @@ func GenerateIngress(analysis *types.AppAnalysis, namespace string, cfg *config.
 		APIVersion: "networking.k8s.io/v1",
 		Kind:       "Ingress",
 		Metadata: Metadata{
-			Name:        analysis.Name,
+			Name:        name,
 			Namespace:   namespace,
 			Labels:      labels,
 			Annotations: annotations,

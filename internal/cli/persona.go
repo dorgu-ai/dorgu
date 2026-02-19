@@ -83,9 +83,15 @@ var personaStatusCmd = &cobra.Command{
 from the Kubernetes cluster, including validation results, health status,
 learned patterns, and recommendations.
 
+The name must be the Kubernetes resource name (DNS-safe). If your app directory
+has underscores (e.g. sample_app_go_net_http), the cluster resource name is
+sanitized to use hyphens (e.g. sample-app-go-net-http). You can pass either;
+the CLI will try the sanitized form if the name contains underscores and the
+first lookup fails.
+
 Examples:
   dorgu persona status order-service -n commerce
-  dorgu persona status my-app`,
+  dorgu persona status sample-app-go-net-http -n default`,
 	Args: cobra.ExactArgs(1),
 	RunE: runPersonaStatus,
 }
@@ -179,14 +185,28 @@ func runPersonaStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("kubectl not found in PATH; required for persona status")
 	}
 
-	// Get the persona resource
-	kubectlCmd := exec.Command("kubectl", "get", "applicationpersona", name,
-		"-n", personaFlags.namespace, "-o", "yaml")
-	rawOutput, err := kubectlCmd.CombinedOutput()
+	// Get the persona resource (Kubernetes resource name is DNS-safe; try sanitized if name has underscores)
+	tryGet := func(n string) ([]byte, error) {
+		kubectlCmd := exec.Command("kubectl", "get", "applicationpersona", n,
+			"-n", personaFlags.namespace, "-o", "yaml")
+		return kubectlCmd.CombinedOutput()
+	}
+	rawOutput, err := tryGet(name)
+	if err != nil {
+		outputStr := strings.TrimSpace(string(rawOutput))
+		if strings.Contains(outputStr, "not found") && strings.Contains(name, "_") {
+			// App names with underscores are sanitized to hyphens in the cluster
+			sanitized := generator.ToDNSSubdomain(name)
+			rawOutput, err = tryGet(sanitized)
+			if err == nil {
+				name = sanitized
+			}
+		}
+	}
 	if err != nil {
 		outputStr := strings.TrimSpace(string(rawOutput))
 		if strings.Contains(outputStr, "not found") {
-			return fmt.Errorf("ApplicationPersona '%s' not found in namespace '%s'", name, personaFlags.namespace)
+			return fmt.Errorf("ApplicationPersona '%s' not found in namespace '%s' (hint: use DNS-safe name, e.g. sample-app-go-net-http)", name, personaFlags.namespace)
 		}
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			return fmt.Errorf("ApplicationPersona CRD is not installed on this cluster. Install the Dorgu Operator first")
