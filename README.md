@@ -1,8 +1,8 @@
 # Dorgu
 
-**AI-powered Kubernetes manifest generator and cluster operator.** Dorgu analyzes your containerized apps (Dockerfile, docker-compose, source code) and generates production-ready Kubernetes manifests, ArgoCD config, CI/CD workflows, and application personas. The optional Dorgu Operator validates deployments against persona constraints and provides cluster-wide insights.
+**AI-powered Kubernetes manifest generator.** Analyze Dockerfile, Compose, and source code; get production-ready manifests, ArgoCD config, CI/CD workflows, and application personas. Optionally pair with the [Dorgu Operator](https://github.com/dorgu-ai/dorgu-operator) for cluster-side validation and insights.
 
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ---
@@ -17,9 +17,9 @@
 - [Cluster Commands](#cluster-commands)
 - [Complete Workflow](#complete-workflow)
 - [Configuration](#configuration)
-- [Optional Features](#optional-features)
+- [Optional Features (Operator)](#optional-features-operator)
 - [Development](#development)
-- [Vision](#vision)
+- [Vision & AI Assistants](#vision--ai-assistants)
 
 ---
 
@@ -305,64 +305,12 @@ kubectl get clusterpersona -o yaml
 
 ## Complete Workflow
 
-Here's a complete workflow from application analysis to validated deployment:
-
-### Step 1: Generate Manifests
-
-```bash
-cd my-app
-dorgu init                    # Create .dorgu.yaml
-dorgu generate . --dry-run    # Preview
-dorgu generate .              # Generate to k8s/
-```
-
-### Step 2: Install Operator (if not already installed)
-
-```bash
-helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --version 0.2.0 \
-  --namespace dorgu-system \
-  --create-namespace
-```
-
-### Step 3: Apply Persona
-
-```bash
-dorgu persona apply ./my-app --namespace production
-```
-
-### Step 4: Deploy Application
-
-```bash
-kubectl apply -f k8s/deployment.yaml -n production
-kubectl apply -f k8s/service.yaml -n production
-```
-
-### Step 5: Verify Validation
-
-```bash
-# Wait for operator reconciliation
-sleep 60
-
-# Check validation status
-dorgu persona status my-app -n production
-
-# Or check directly
-kubectl get applicationpersona my-app -n production \
-  -o jsonpath='{.status.validation.passed}'
-# Expected: true
-
-kubectl get applicationpersona my-app -n production \
-  -o jsonpath='{.status.phase}'
-# Expected: Active
-```
-
-### Step 6: Initialize Cluster (Optional)
-
-```bash
-dorgu cluster init --name my-cluster --environment production
-dorgu cluster status
-```
+1. **Generate** — `dorgu init` then `dorgu generate .` (see [Quick Start](#quick-start)).
+2. **Install operator** (optional) — See [Installation](#operator-installation-optional) above.
+3. **Apply persona** — `dorgu persona apply ./my-app --namespace production`.
+4. **Deploy** — `kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml -n production`.
+5. **Verify** — `dorgu persona status my-app -n production` (or `kubectl get applicationpersona`). Expect `phase: Active` and `validation.passed: true` after reconciliation (~60s).
+6. **Cluster** (optional) — `dorgu cluster init --name my-cluster --environment production`.
 
 ---
 
@@ -417,68 +365,18 @@ Set once with `dorgu init --global` or `dorgu config set`:
 
 ---
 
-## Optional Features
+## Optional Features (Operator)
 
-### Webhook Validation
+When using the [Dorgu Operator](https://github.com/dorgu-ai/dorgu-operator), you can enable:
 
-The operator can validate deployments before they're applied:
+| Feature | Helm flag | What you get |
+|---------|-----------|--------------|
+| **Webhook** | `--set webhook.enabled=true` | Validate deployments at apply time; `webhook.mode=advisory` (warn) or `enforcing` (reject). |
+| **WebSocket** | `--set websocket.enabled=true` | Real-time `dorgu watch personas` / `dorgu watch cluster` and `dorgu sync status`. |
+| **ArgoCD** | Enabled by default | Persona status includes sync/health, last sync time, revision. |
+| **Prometheus** | `--set prometheus.enabled=true --set prometheus.url=...` | Resource baseline learning in persona status. |
 
-**Advisory mode** (default) — Allows deployments but logs warnings:
-
-```bash
-helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --namespace dorgu-system \
-  --set webhook.enabled=true \
-  --set webhook.mode=advisory
-```
-
-**Enforcing mode** — Rejects non-compliant deployments:
-
-```bash
-helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --namespace dorgu-system \
-  --set webhook.enabled=true \
-  --set webhook.mode=enforcing
-```
-
-### WebSocket Real-time Updates
-
-Enable real-time communication between CLI and operator:
-
-```bash
-helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --namespace dorgu-system \
-  --set websocket.enabled=true
-```
-
-Then use:
-
-```bash
-dorgu watch personas    # Watch persona events
-dorgu watch cluster     # Watch cluster events
-dorgu sync status       # Sync status on-demand
-```
-
-### ArgoCD Integration
-
-The operator automatically watches ArgoCD Applications (enabled by default). Persona status will include:
-- Sync status (Synced, OutOfSync, Unknown)
-- Health status
-- Last sync time
-- Application revision
-
-### Prometheus Integration
-
-Enable resource baseline learning:
-
-```bash
-helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --namespace dorgu-system \
-  --set prometheus.enabled=true \
-  --set prometheus.url=http://prometheus-server.monitoring:9090
-```
-
-The operator will query Prometheus for CPU and memory usage patterns and include baselines in persona status.
+Use `helm upgrade dorgu-operator ... --namespace dorgu-system` with the flags above; chart and options are documented in the [operator README](https://github.com/dorgu-ai/dorgu-operator#configuration-options).
 
 ---
 
@@ -512,13 +410,15 @@ my-app/
 
 ---
 
-## Raising Issues and Contributing
+## Contributing & Support
 
-- **Bugs and feature requests:** Open an [issue](https://github.com/dorgu-ai/dorgu/issues). Check existing issues first.
-- **Security issues:** See **[SECURITY.md](SECURITY.md)** for how to report vulnerabilities privately.
-- **Contributing code or docs:** See **[CONTRIBUTING.md](CONTRIBUTING.md)** for how to fork, branch, run tests, and open a pull request.
+| Need | Action |
+|------|--------|
+| Bugs / features | [Open an issue](https://github.com/dorgu-ai/dorgu/issues) (search first) |
+| Security | [SECURITY.md](SECURITY.md) — report privately |
+| Code / docs | [CONTRIBUTING.md](CONTRIBUTING.md) — fork, branch, test, PR |
 
-We welcome contributions: bug reports, documentation improvements, and code changes.
+Contributions are welcome.
 
 ---
 
@@ -538,13 +438,9 @@ Before pushing, run `make check` to catch formatting and test failures locally.
 
 ---
 
-## Vision
+## Vision & AI Assistants
 
-Dorgu is the first step toward an **agentic Kubernetes platform**:
-
-## AI Assistant Support
-
-For users working with AI assistants (Cursor, Claude, etc.), an optional agent guide is available at `.cursor/agents/dorgu.md`. This provides step-by-step workflow guidance for common tasks.
+Dorgu is the first step toward an **agentic Kubernetes platform** — from manifest generation today to validation and cluster insights with the operator, with a path to deeper automation. For Cursor, Claude, and other AI assistants, see [.cursor/agents/dorgu.md](.cursor/agents/dorgu.md) for workflow guidance.
 
 ---
 
