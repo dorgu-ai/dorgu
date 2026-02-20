@@ -36,9 +36,14 @@ func Info(msg string) {
 	fmt.Println(infoStyle.Render("ℹ " + msg))
 }
 
-// Dim prints a dimmed message
-func Dim(msg string) {
+// DimPrint prints a dimmed message to stdout
+func DimPrint(msg string) {
 	fmt.Println(dimStyle.Render(msg))
+}
+
+// Dim returns a dimmed string (does not print)
+func Dim(msg string) string {
+	return dimStyle.Render(msg)
 }
 
 // Header prints a header
