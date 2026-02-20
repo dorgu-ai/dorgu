@@ -515,6 +515,7 @@ my-app/
 ## Raising Issues and Contributing
 
 - **Bugs and feature requests:** Open an [issue](https://github.com/dorgu-ai/dorgu/issues). Check existing issues first.
+- **Security issues:** See **[SECURITY.md](SECURITY.md)** for how to report vulnerabilities privately.
 - **Contributing code or docs:** See **[CONTRIBUTING.md](CONTRIBUTING.md)** for how to fork, branch, run tests, and open a pull request.
 
 We welcome contributions: bug reports, documentation improvements, and code changes.
