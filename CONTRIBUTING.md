@@ -17,7 +17,7 @@ Thank you for considering contributing to Dorgu. This document explains how to r
 
 ## Code of conduct
 
-Be respectful and constructive. We aim to keep the community inclusive and focused on building a useful tool for Kubernetes users.
+This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior by opening a [GitHub issue](https://github.com/dorgu-ai/dorgu/issues).
 
 ---
 
@@ -28,6 +28,7 @@ Be respectful and constructive. We aim to keep the community inclusive and focus
 - **Search** [existing issues](https://github.com/dorgu-ai/dorgu/issues) to see if the bug or idea is already reported.
 - For **bugs**, try to reproduce with the latest release or `main` and note your environment (OS, Go version, dorgu version).
 - For **feature requests**, describe the use case and why it would help.
+- For **security-sensitive issues** (e.g. vulnerabilities), do not open a public issue. See [SECURITY.md](SECURITY.md) for how to report privately.
 
 ### Opening an issue
 
