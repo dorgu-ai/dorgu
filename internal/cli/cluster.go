@@ -29,7 +29,10 @@ Examples:
   dorgu cluster status
 
   # Initialize a new cluster persona
-  dorgu cluster init --name my-cluster --environment production`,
+  dorgu cluster init --name my-cluster --environment production
+
+  # Install a curated production-ready stack
+  dorgu cluster setup`,
 }
 
 var clusterStatusCmd = &cobra.Command{
@@ -72,6 +75,7 @@ func init() {
 	// Register subcommands
 	clusterCmd.AddCommand(clusterStatusCmd)
 	clusterCmd.AddCommand(clusterInitCmd)
+	clusterCmd.AddCommand(clusterSetupCmd)
 }
 
 func runClusterStatus(cmd *cobra.Command, args []string) error {
