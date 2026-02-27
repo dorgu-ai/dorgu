@@ -51,12 +51,16 @@ func init() {
 
 func runClusterSetup(cmd *cobra.Command, args []string) error {
 	// 1. Preflight: kubectl and helm must be in PATH
+	fmt.Println()
+	output.Info("Preflight checks...")
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		return fmt.Errorf("kubectl not found in PATH — required for cluster setup")
 	}
+	output.Success("kubectl found")
 	if _, err := exec.LookPath("helm"); err != nil {
 		return fmt.Errorf("helm not found in PATH — install from https://helm.sh/docs/intro/install/")
 	}
+	output.Success("helm found")
 
 	// 2. Choose executor based on --dry-run
 	var ex setup.Executor
@@ -71,13 +75,17 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 	if personaName == "" {
 		if clusterSetupFlags.dryRun {
 			personaName = "<cluster-persona>" // placeholder for dry-run annotation output
+			output.Info("Dry-run mode: skipping ClusterPersona detection")
 		} else {
 			var err error
 			personaName, err = setup.AutoDetectClusterPersonaName(ex)
 			if err != nil {
 				return err
 			}
+			output.Success(fmt.Sprintf("ClusterPersona detected: %q", personaName))
 		}
+	} else {
+		output.Success(fmt.Sprintf("ClusterPersona: %q (from --cluster-persona flag)", personaName))
 	}
 
 	// 4. Get the active stack (BlessedStack for MVP; extensible via StackProvider)
@@ -128,16 +136,31 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// 10. Install each component
+	// 10. Add all helm repos and update indices
+	fmt.Println()
+	output.Header("Preparing Helm repositories...")
+	added := make(map[string]bool)
+	for _, c := range cfg.Components {
+		if added[c.HelmRepoName] {
+			continue
+		}
+		if err := setup.AddHelmRepo(ex, c.HelmRepoName, c.HelmRepo); err != nil {
+			output.Warn(fmt.Sprintf("helm repo add %s: %v (continuing)", c.HelmRepoName, err))
+		}
+		added[c.HelmRepoName] = true
+	}
+	if err := setup.UpdateHelmRepos(ex); err != nil {
+		output.Warn(fmt.Sprintf("helm repo update: %v (continuing)", err))
+	}
+	output.Success("Helm repositories ready")
+
+	// 11. Install each component
 	fmt.Println()
 	output.Header("Installing components...")
 	fmt.Println()
 
 	var results []setup.InstallResult
 	for i, c := range cfg.Components {
-		if err := setup.AddHelmRepo(ex, c.HelmRepoName, c.HelmRepo); err != nil {
-			output.Warn(fmt.Sprintf("helm repo add %s: %v (continuing)", c.HelmRepoName, err))
-		}
 		stop := setup.PrintComponentProgress(os.Stderr, c, i+1, len(cfg.Components))
 		result := setup.InstallComponent(ex, c, cfg)
 		stop()
@@ -145,13 +168,13 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		results = append(results, result)
 	}
 
-	// 11. Validate
+	// 12. Validate
 	fmt.Println()
 	output.Header("Validating installation...")
 	vrs := setup.ValidateAll(ex, results, cfg.SkipValidation)
 	setup.PrintValidationResults(vrs)
 
-	// 12. Annotate ClusterPersona (records setup intent)
+	// 13. Annotate ClusterPersona (records setup intent)
 	fmt.Printf("Annotating ClusterPersona %q... ", personaName)
 	if err := setup.AnnotateClusterPersona(ex, personaName, cfg); err != nil {
 		output.Error(fmt.Sprintf("annotation failed: %v", err))
@@ -159,7 +182,7 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		output.Success("done")
 	}
 
-	// 13. Final summary
+	// 14. Final summary
 	setup.PrintFinalSummary(results, vrs, cfg)
 
 	// In dry-run mode, show the command log
