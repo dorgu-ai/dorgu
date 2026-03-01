@@ -245,4 +245,3 @@ func runWatchEvents(cmd *cobra.Command, args []string) error {
 	<-ctx.Done()
 	return nil
 }
-
