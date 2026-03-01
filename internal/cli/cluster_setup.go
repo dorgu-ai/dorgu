@@ -30,6 +30,7 @@ The Blessed Stack includes:
   cert-manager     — automated TLS certificate management
   ingress-nginx    — HTTP/S ingress controller
   OpenObserve      — unified observability (logs, metrics, traces)
+  Argo CD          — declarative GitOps continuous delivery (optional, default on)
   External Secrets — secret sync from cloud stores (optional)
 
 The result is recorded as annotations on your ClusterPersona CRD. The Dorgu

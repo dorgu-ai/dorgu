@@ -12,6 +12,7 @@ const (
 	ComponentCertManager     ComponentID = "cert-manager"
 	ComponentIngressNginx    ComponentID = "ingress-nginx"
 	ComponentOpenObserve     ComponentID = "openobserve"
+	ComponentArgoCd          ComponentID = "argocd"
 	ComponentExternalSecrets ComponentID = "external-secrets"
 )
 
@@ -147,6 +148,31 @@ func blessedComponents() []ComponentConfig {
 			Required:          true,
 			DefaultEnabled:    true,
 			OperatorAddonName: "openobserve",
+		},
+		{
+			ID:          ComponentArgoCd,
+			DisplayName: "Argo CD",
+			Description: "Declarative GitOps continuous delivery for Kubernetes",
+			WhyItMatters: `Argo CD watches your Git repository and automatically syncs your Kubernetes
+manifests to the cluster. When you run 'dorgu generate', it produces Kubernetes manifests and
+ArgoCD Application resources. With Argo CD installed, those Application resources are
+automatically picked up — creating a complete GitOps pipeline from source code to running
+workloads.
+
+Without Argo CD, you would need to manually 'kubectl apply' every change. With it, pushing
+to Git is all it takes to deploy.`,
+			HelmRepo:          "https://argoproj.github.io/argo-helm",
+			HelmRepoName:      "argo",
+			HelmChart:         "argo/argo-cd",
+			HelmReleaseName:   "argocd",
+			Namespace:         "argocd",
+			Version:           "7.8.28",
+			HelmSetValues:     []string{},
+			CreateNamespace:   true,
+			Required:          false,
+			DefaultEnabled:    true,
+			DependsOn:         []ComponentID{},
+			OperatorAddonName: "argocd",
 		},
 		{
 			ID:                ComponentExternalSecrets,

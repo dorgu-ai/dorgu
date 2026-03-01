@@ -7,14 +7,23 @@ import (
 
 func TestBlessedStackOrder(t *testing.T) {
 	components := blessedComponents()
-	if len(components) < 4 {
-		t.Fatalf("expected at least 4 components, got %d", len(components))
+	if len(components) != 5 {
+		t.Fatalf("expected 5 components, got %d", len(components))
 	}
 	if components[0].ID != ComponentCertManager {
 		t.Errorf("index 0: expected %q, got %q", ComponentCertManager, components[0].ID)
 	}
-	if components[3].ID != ComponentExternalSecrets {
-		t.Errorf("index 3: expected %q, got %q", ComponentExternalSecrets, components[3].ID)
+	if components[1].ID != ComponentIngressNginx {
+		t.Errorf("index 1: expected %q, got %q", ComponentIngressNginx, components[1].ID)
+	}
+	if components[2].ID != ComponentOpenObserve {
+		t.Errorf("index 2: expected %q, got %q", ComponentOpenObserve, components[2].ID)
+	}
+	if components[3].ID != ComponentArgoCd {
+		t.Errorf("index 3: expected %q, got %q", ComponentArgoCd, components[3].ID)
+	}
+	if components[4].ID != ComponentExternalSecrets {
+		t.Errorf("index 4: expected %q, got %q", ComponentExternalSecrets, components[4].ID)
 	}
 }
 
@@ -96,6 +105,26 @@ func TestExternalSecretsOptional(t *testing.T) {
 	}
 	if es.DefaultEnabled {
 		t.Error("external-secrets should not be DefaultEnabled")
+	}
+}
+
+func TestArgoCdOptionalDefaultOn(t *testing.T) {
+	components := DefaultStack().Components()
+	var argocd *ComponentConfig
+	for i := range components {
+		if components[i].ID == ComponentArgoCd {
+			argocd = &components[i]
+			break
+		}
+	}
+	if argocd == nil {
+		t.Fatal("argocd not found in DefaultStack().Components()")
+	}
+	if argocd.Required {
+		t.Error("argocd should not be Required")
+	}
+	if !argocd.DefaultEnabled {
+		t.Error("argocd should be DefaultEnabled")
 	}
 }
 
