@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// retryDelay is the delay between install retries. Overridable in tests.
+var retryDelay = 30 * time.Second
+
 // Executor abstracts shell command execution for testability and dry-run support.
 type Executor interface {
 	Run(name string, args ...string) (string, error)
@@ -57,12 +60,16 @@ func UpdateHelmRepos(ex Executor) error {
 // BuildHelmArgs constructs the full arg slice for helm upgrade --install.
 // Exported for testing.
 func BuildHelmArgs(c ComponentConfig, version string) []string {
+	timeout := c.Timeout
+	if timeout == "" {
+		timeout = "5m0s"
+	}
 	args := []string{
 		"upgrade", "--install", c.HelmReleaseName, c.HelmChart,
 		"--namespace", c.Namespace,
 		"--version", version,
 		"--wait",
-		"--timeout", "5m0s",
+		"--timeout", timeout,
 	}
 	if c.CreateNamespace {
 		args = append(args, "--create-namespace")
@@ -95,13 +102,24 @@ func InstallComponent(ex Executor, c ComponentConfig, cfg SetupConfig) InstallRe
 
 	args := BuildHelmArgs(c, version)
 	out, err := ex.Run("helm", args...)
+
+	// Retry once on context deadline exceeded (common with ingress-nginx on Kind/desktop)
+	if err != nil && strings.Contains(fmt.Sprintf("%v %s", err, out), "context deadline exceeded") {
+		time.Sleep(retryDelay)
+		out, err = ex.Run("helm", args...)
+	}
+
 	duration := time.Since(start)
 
 	if err != nil {
+		errMsg := fmt.Sprintf("helm install %s: %v\n%s", c.HelmReleaseName, err, out)
+		if strings.Contains(fmt.Sprintf("%v %s", err, out), "context deadline exceeded") {
+			errMsg += fmt.Sprintf("\nHint: check pod status with: kubectl get pods -n %s", c.Namespace)
+		}
 		return InstallResult{
 			Component:  c,
 			Succeeded:  false,
-			Error:      fmt.Errorf("helm install %s: %w\n%s", c.HelmReleaseName, err, out),
+			Error:      fmt.Errorf("%s", errMsg),
 			Duration:   duration,
 			HelmOutput: out,
 		}

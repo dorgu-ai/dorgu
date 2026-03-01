@@ -35,6 +35,7 @@ type ComponentConfig struct {
 	DependsOn          []ComponentID
 	PostInstallMessage string
 	OperatorAddonName  string // matches checkAddon() pod name search in operator
+	Timeout            string // Helm --timeout value; empty uses default "5m0s"
 }
 
 // SetupConfig holds the resolved configuration for a single setup run.
@@ -128,6 +129,7 @@ func blessedComponents() []ComponentConfig {
 			DefaultEnabled:    true,
 			DependsOn:         []ComponentID{ComponentCertManager},
 			OperatorAddonName: "ingress-nginx",
+			Timeout:           "10m0s",
 		},
 		{
 			ID:                ComponentOpenObserve,

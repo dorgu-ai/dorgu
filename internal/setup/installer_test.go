@@ -166,6 +166,78 @@ func TestVersionOverrideInInstallComponent(t *testing.T) {
 	}
 }
 
+func TestBuildHelmArgs_ComponentTimeout(t *testing.T) {
+	c := ComponentConfig{
+		HelmReleaseName: "ingress-nginx",
+		HelmChart:       "ingress-nginx/ingress-nginx",
+		Namespace:       "ingress-nginx",
+		Timeout:         "10m0s",
+	}
+	args := BuildHelmArgs(c, "4.11.3")
+
+	found := false
+	for i, a := range args {
+		if a == "--timeout" && i+1 < len(args) && args[i+1] == "10m0s" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("--timeout 10m0s not found in args: %v", args)
+	}
+}
+
+func TestBuildHelmArgs_DefaultTimeout(t *testing.T) {
+	c := ComponentConfig{
+		HelmReleaseName: "cert-manager",
+		HelmChart:       "jetstack/cert-manager",
+		Namespace:       "cert-manager",
+		Timeout:         "",
+	}
+	args := BuildHelmArgs(c, "v1.16.3")
+
+	found := false
+	for i, a := range args {
+		if a == "--timeout" && i+1 < len(args) && args[i+1] == "5m0s" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("--timeout 5m0s (default) not found in args: %v", args)
+	}
+}
+
+func TestInstallComponent_RetryOnTimeout(t *testing.T) {
+	origDelay := retryDelay
+	retryDelay = 0
+	defer func() { retryDelay = origDelay }()
+
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "", err: fmt.Errorf("context deadline exceeded")},  // first attempt fails
+			{output: "Release installed successfully", err: nil},         // retry succeeds
+		},
+	}
+	comp := ComponentConfig{
+		ID:              ComponentIngressNginx,
+		HelmReleaseName: "ingress-nginx",
+		HelmChart:       "ingress-nginx/ingress-nginx",
+		Namespace:       "ingress-nginx",
+		Version:         "4.11.3",
+		Timeout:         "10m0s",
+	}
+	cfg := SetupConfig{Timestamp: time.Now()}
+
+	result := InstallComponent(ex, comp, cfg)
+	if !result.Succeeded {
+		t.Fatalf("expected success after retry, got error: %v", result.Error)
+	}
+	if ex.callIdx != 2 {
+		t.Errorf("expected 2 calls (initial + retry), got %d", ex.callIdx)
+	}
+}
+
 func TestCheckChartAvailability_Missing(t *testing.T) {
 	ex := &sequentialExecutor{
 		calls: []seqCall{
