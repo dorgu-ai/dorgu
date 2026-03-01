@@ -371,7 +371,7 @@ func displayPersonaStatus(name string, rawYAML string) {
 	}
 
 	// Phase with color
-	phaseDisplay := formatPhase(persona.Status.Phase)
+	phaseDisplay := output.FormatPhase(persona.Status.Phase)
 	fmt.Printf("  %-14s %s\n", "Phase:", phaseDisplay)
 
 	// Health status
@@ -480,35 +480,10 @@ func displayPersonaStatus(name string, rawYAML string) {
 	}
 }
 
-// formatPhase returns a colored phase string.
-func formatPhase(phase string) string {
-	switch phase {
-	case "Active":
-		return output.Green(phase)
-	case "Degraded":
-		return output.Yellow(phase)
-	case "Failed":
-		return output.Red(phase)
-	case "Pending":
-		return output.Blue(phase)
-	default:
-		return phase
-	}
-}
-
-// formatHealth returns a colored health status with message.
+// formatHealth returns a colored health status with optional message.
+// Core coloring delegates to output.FormatHealth.
 func formatHealth(status, message string) string {
-	var colored string
-	switch status {
-	case "Healthy":
-		colored = output.Green(status)
-	case "Degraded":
-		colored = output.Yellow(status)
-	case "Unhealthy":
-		colored = output.Red(status)
-	default:
-		colored = status
-	}
+	colored := output.FormatHealth(status)
 	if message != "" {
 		return fmt.Sprintf("%s (%s)", colored, message)
 	}

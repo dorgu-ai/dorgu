@@ -342,34 +342,15 @@ func displayClusterPersonaStatusTo(w io.Writer, name string, rawYAML string) {
 // clusterPhaseDot returns a colored "● Phase" string for the given phase.
 func clusterPhaseDot(phase string) string {
 	dot := "●"
-	switch phase {
-	case "Ready":
-		return output.Green(dot + " " + phase)
-	case "Degraded":
-		return output.Yellow(dot + " " + phase)
-	case "Discovering":
-		return output.Blue(dot + " " + phase)
-	default:
-		if phase == "" {
-			return dot + " Unknown"
-		}
-		return dot + " " + phase
+	if phase == "" {
+		return dot + " Unknown"
 	}
+	return dot + " " + output.FormatPhase(phase)
 }
 
-// colorPhase returns a colored phase string (without the dot prefix).
-// Used by sync.go and watch.go for persona/cluster event display.
+// colorPhase delegates to output.FormatPhase for backward compatibility within the cli package.
 func colorPhase(phase string) string {
-	switch phase {
-	case "Ready":
-		return output.Green(phase)
-	case "Degraded":
-		return output.Yellow(phase)
-	case "Discovering":
-		return output.Blue(phase)
-	default:
-		return phase
-	}
+	return output.FormatPhase(phase)
 }
 
 // formatAge returns a human-readable age string from an RFC3339 timestamp.

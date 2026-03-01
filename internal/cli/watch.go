@@ -136,7 +136,7 @@ func runWatchPersonas(cmd *cobra.Command, args []string) error {
 			fmt.Printf("[%s] %s %s/%s created (phase: %s)\n",
 				timestamp, output.Green("✓"), event.Namespace, event.Name, event.Phase)
 		case "updated":
-			healthColor := colorHealth(event.Health)
+			healthColor := output.FormatHealth(event.Health)
 			fmt.Printf("[%s] %s %s/%s updated (phase: %s, health: %s)\n",
 				timestamp, output.Blue("↻"), event.Namespace, event.Name, event.Phase, healthColor)
 		case "deleted":
@@ -246,15 +246,3 @@ func runWatchEvents(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func colorHealth(health string) string {
-	switch health {
-	case "Healthy":
-		return output.Green(health)
-	case "Degraded":
-		return output.Yellow(health)
-	case "Unhealthy":
-		return output.Red(health)
-	default:
-		return health
-	}
-}

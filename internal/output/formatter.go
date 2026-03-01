@@ -73,6 +73,36 @@ func Red(msg string) string {
 	return errorStyle.Render(msg)
 }
 
+// FormatPhase returns a colored phase string for cluster and persona displays.
+func FormatPhase(phase string) string {
+	switch phase {
+	case "Ready", "Active":
+		return Green(phase)
+	case "Degraded":
+		return Yellow(phase)
+	case "Discovering", "Pending":
+		return Blue(phase)
+	case "Failed":
+		return Red(phase)
+	default:
+		return phase
+	}
+}
+
+// FormatHealth returns a colored health string for display.
+func FormatHealth(health string) string {
+	switch health {
+	case "Healthy":
+		return Green(health)
+	case "Degraded":
+		return Yellow(health)
+	case "Unhealthy":
+		return Red(health)
+	default:
+		return health
+	}
+}
+
 // ErrorWithHint prints a styled error message followed by dimmed hint lines.
 func ErrorWithHint(msg string, hints ...string) {
 	fmt.Fprintln(os.Stderr, errorStyle.Render("✗ "+msg))

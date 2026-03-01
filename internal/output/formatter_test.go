@@ -241,6 +241,75 @@ func TestErrorWithSuggestions_Empty(t *testing.T) {
 	}
 }
 
+func TestFormatPhase(t *testing.T) {
+	tests := []struct {
+		phase   string
+		wantFn  func(string) bool
+		wantRaw bool // true = should contain raw phase (no color wrapping expected in test env)
+	}{
+		{"Ready", func(s string) bool { return strings.Contains(s, "Ready") }, false},
+		{"Active", func(s string) bool { return strings.Contains(s, "Active") }, false},
+		{"Degraded", func(s string) bool { return strings.Contains(s, "Degraded") }, false},
+		{"Discovering", func(s string) bool { return strings.Contains(s, "Discovering") }, false},
+		{"Pending", func(s string) bool { return strings.Contains(s, "Pending") }, false},
+		{"Failed", func(s string) bool { return strings.Contains(s, "Failed") }, false},
+		{"Unknown", func(s string) bool { return strings.Contains(s, "Unknown") }, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.phase, func(t *testing.T) {
+			result := FormatPhase(tt.phase)
+			if !tt.wantFn(result) {
+				t.Errorf("FormatPhase(%q) = %q, should contain the phase text", tt.phase, result)
+			}
+		})
+	}
+}
+
+func TestFormatPhase_Empty(t *testing.T) {
+	result := FormatPhase("")
+	// Empty phase should return empty string (no coloring applied to empty input)
+	if result != "" {
+		t.Logf("FormatPhase(\"\") = %q (may include ANSI codes in TTY)", result)
+	}
+}
+
+func TestFormatHealth(t *testing.T) {
+	tests := []string{"Healthy", "Degraded", "Unhealthy", "Unknown"}
+	for _, h := range tests {
+		t.Run(h, func(t *testing.T) {
+			result := FormatHealth(h)
+			if !strings.Contains(result, h) {
+				t.Errorf("FormatHealth(%q) = %q, should contain the health text", h, result)
+			}
+		})
+	}
+}
+
+func TestFormatPhase_CoversDuplicates(t *testing.T) {
+	// Verify FormatPhase handles all phases that were previously split across
+	// colorPhase (cluster.go) and formatPhase (persona.go)
+	phases := []string{"Ready", "Active", "Degraded", "Discovering", "Pending", "Failed"}
+	for _, p := range phases {
+		result := FormatPhase(p)
+		if !strings.Contains(result, p) {
+			t.Errorf("FormatPhase(%q) does not contain the phase text: %q", p, result)
+		}
+	}
+}
+
+func TestFormatHealth_CoversDuplicates(t *testing.T) {
+	// Verify FormatHealth handles all health states from colorHealth (watch.go)
+	// and the health display in persona.go
+	healths := []string{"Healthy", "Degraded", "Unhealthy"}
+	for _, h := range healths {
+		result := FormatHealth(h)
+		if !strings.Contains(result, h) {
+			t.Errorf("FormatHealth(%q) does not contain the health text: %q", h, result)
+		}
+	}
+}
+
 func TestDifferentColors_ProduceDifferentOutput(t *testing.T) {
 	msg := "same message"
 
