@@ -1,6 +1,9 @@
 package output
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -158,6 +161,83 @@ func TestColorFunctions_Unicode(t *testing.T) {
 				t.Errorf("%s() should preserve unicode characters", tt.name)
 			}
 		})
+	}
+}
+
+func captureStderr(f func()) string {
+	origStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	f()
+	w.Close()
+	os.Stderr = origStderr
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	return buf.String()
+}
+
+func TestErrorWithHint(t *testing.T) {
+	out := captureStderr(func() {
+		ErrorWithHint("something went wrong", "hint one", "hint two")
+	})
+
+	if !strings.Contains(out, "✗") {
+		t.Error("ErrorWithHint should contain ✗ error prefix")
+	}
+	if !strings.Contains(out, "something went wrong") {
+		t.Error("ErrorWithHint should contain the error message")
+	}
+	if !strings.Contains(out, "→") {
+		t.Error("ErrorWithHint should contain → hint arrow")
+	}
+	if !strings.Contains(out, "hint one") {
+		t.Error("ErrorWithHint should contain first hint")
+	}
+	if !strings.Contains(out, "hint two") {
+		t.Error("ErrorWithHint should contain second hint")
+	}
+}
+
+func TestErrorWithHint_NoHints(t *testing.T) {
+	out := captureStderr(func() {
+		ErrorWithHint("no hints here")
+	})
+	if !strings.Contains(out, "✗") {
+		t.Error("ErrorWithHint with no hints should still contain ✗")
+	}
+	if strings.Contains(out, "→") {
+		t.Error("ErrorWithHint with no hints should not contain →")
+	}
+}
+
+func TestErrorWithSuggestions(t *testing.T) {
+	out := captureStderr(func() {
+		ErrorWithSuggestions("unknown command", []string{"generate", "persona", "cluster"})
+	})
+
+	if !strings.Contains(out, "✗") {
+		t.Error("ErrorWithSuggestions should contain ✗ error prefix")
+	}
+	if !strings.Contains(out, "unknown command") {
+		t.Error("ErrorWithSuggestions should contain the error message")
+	}
+	if !strings.Contains(out, "Did you mean one of these?") {
+		t.Error("ErrorWithSuggestions should contain the 'Did you mean' prompt")
+	}
+	if !strings.Contains(out, "generate") {
+		t.Error("ErrorWithSuggestions should contain suggestion items")
+	}
+}
+
+func TestErrorWithSuggestions_Empty(t *testing.T) {
+	out := captureStderr(func() {
+		ErrorWithSuggestions("no match", []string{})
+	})
+	if !strings.Contains(out, "no match") {
+		t.Error("ErrorWithSuggestions should still print message with empty suggestions")
+	}
+	if strings.Contains(out, "Did you mean") {
+		t.Error("ErrorWithSuggestions with empty list should not print 'Did you mean'")
 	}
 }
 

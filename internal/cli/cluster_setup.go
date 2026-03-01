@@ -81,7 +81,10 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 			var err error
 			personaName, err = setup.AutoDetectClusterPersonaName(ex)
 			if err != nil {
-				return err
+				output.ErrorWithHint("No ClusterPersona found in cluster",
+					"Create one first: dorgu cluster init --name <cluster-name> --environment <env>",
+					"Or specify one: dorgu cluster setup --cluster-persona <name>")
+				return errSilent
 			}
 			output.Success(fmt.Sprintf("ClusterPersona detected: %q", personaName))
 		}
