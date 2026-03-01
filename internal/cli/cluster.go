@@ -149,7 +149,10 @@ func getClusterPersonaStatus(name string) error {
 	if err != nil {
 		outputStr := strings.TrimSpace(string(rawOutput))
 		if strings.Contains(outputStr, "not found") {
-			return fmt.Errorf("ClusterPersona '%s' not found", name)
+			output.ErrorWithHint("ClusterPersona not found: "+name,
+				"List available ClusterPersonas: dorgu cluster status",
+				"Create one: dorgu cluster init --name <name> --environment <env>")
+			return errSilent
 		}
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			return fmt.Errorf("ClusterPersona CRD is not installed on this cluster. Install the Dorgu Operator first")
@@ -219,17 +222,17 @@ func runClusterInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Generate ClusterPersona YAML
-	clusterPersonaYAML := generateClusterPersonaYAML(clusterFlags.name, clusterFlags.environment)
+	personaYAML := generateClusterPersonaYAML(clusterFlags.name, clusterFlags.environment)
 
 	if clusterFlags.dryRun {
-		fmt.Println(clusterPersonaYAML)
+		fmt.Println(personaYAML)
 		return nil
 	}
 
 	// Apply via kubectl
 	output.Info("Creating ClusterPersona...")
 	kubectlCmd := exec.Command("kubectl", "apply", "-f", "-")
-	kubectlCmd.Stdin = bytes.NewBufferString(clusterPersonaYAML)
+	kubectlCmd.Stdin = bytes.NewBufferString(personaYAML)
 	kubectlCmd.Stdout = os.Stdout
 	kubectlCmd.Stderr = os.Stderr
 	if err := kubectlCmd.Run(); err != nil {
