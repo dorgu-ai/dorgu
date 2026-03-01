@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/briandowns/spinner"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
 
@@ -35,20 +37,34 @@ func PromptEnvironment(r *bufio.Reader) string {
 	return input
 }
 
-// PromptComponentSelection prints the component's WhyItMatters, chart info, and (if not Required)
+// printStepHeader writes a lipgloss-styled step header box to w.
+// Using lipgloss eliminates the byte-slicing truncation bug that could
+// corrupt multibyte UTF-8 characters.
+func printStepHeader(w io.Writer, c ComponentConfig, stepNum, totalSteps int) {
+	headerStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("39")).
+		Padding(0, 1).
+		Width(45)
+
+	stepLine := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Render(fmt.Sprintf("Step %d of %d", stepNum, totalSteps))
+	titleLine := lipgloss.NewStyle().Bold(true).Render(c.DisplayName)
+	descLine := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(c.Description)
+
+	content := fmt.Sprintf("%s\n%s\n%s", stepLine, titleLine, descLine)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, headerStyle.Render(content))
+	fmt.Fprintln(w)
+}
+
+// PromptComponentSelection prints the step header, component description, and (if not Required)
 // prompts: "Install <DisplayName>? [y/N]:". Returns true if the component should be installed.
 // For Required components, prints "[Required — will be installed]" and returns true without prompting.
-// stepNum and totalSteps are for "── Step N of M: <title> ──" header.
 func PromptComponentSelection(r *bufio.Reader, c ComponentConfig, stepNum, totalSteps int) bool {
-	header := fmt.Sprintf("── Step %d of %d: %s ──────────────────────────────────", stepNum, totalSteps, c.DisplayName)
-	// Trim to ~65 runes for consistent display (rune-safe to avoid splitting multi-byte characters)
-	runes := []rune(header)
-	if len(runes) > 65 {
-		header = string(runes[:65])
-	}
-	fmt.Println()
-	fmt.Println(output.Blue(header))
-	fmt.Println()
+	printStepHeader(os.Stdout, c, stepNum, totalSteps)
+
 	fmt.Println(c.WhyItMatters)
 	fmt.Println()
 	output.DimPrint(fmt.Sprintf("  Chart:     %s", c.HelmChart))
@@ -75,12 +91,30 @@ func PromptComponentSelection(r *bufio.Reader, c ComponentConfig, stepNum, total
 	return input == "y" || input == "yes"
 }
 
-// PrintInstallPlan prints the installation plan table.
+// PrintInstallPlan prints the installation plan table with box-drawing characters.
 func PrintInstallPlan(cfg SetupConfig) {
-	fmt.Println()
-	output.Header("Installation Plan")
-	fmt.Printf("  %-28s %-12s %s\n", "Component", "Version", "Namespace")
-	fmt.Printf("  %-28s %-12s %s\n", strings.Repeat("─", 28), strings.Repeat("─", 12), strings.Repeat("─", 20))
+	printInstallPlanTo(os.Stdout, cfg)
+}
+
+func printInstallPlanTo(w io.Writer, cfg SetupConfig) {
+	colComp := 22
+	colVer := 11
+	colNs := 16
+
+	divComp := strings.Repeat("─", colComp)
+	divVer := strings.Repeat("─", colVer)
+	divNs := strings.Repeat("─", colNs)
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  Installation Plan")
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  ┌%s┬%s┬%s┐\n", strings.Repeat("─", colComp+2), strings.Repeat("─", colVer+2), strings.Repeat("─", colNs+2))
+	fmt.Fprintf(w, "  │ %-*s │ %-*s │ %-*s │\n", colComp, "Component", colVer, "Version", colNs, "Namespace")
+	fmt.Fprintf(w, "  ├%s┼%s┼%s┤\n", strings.Repeat("─", colComp+2), strings.Repeat("─", colVer+2), strings.Repeat("─", colNs+2))
+	_ = divComp
+	_ = divVer
+	_ = divNs
+
 	for _, c := range cfg.Components {
 		version := c.Version
 		if cfg.VersionOverrides != nil {
@@ -88,14 +122,23 @@ func PrintInstallPlan(cfg SetupConfig) {
 				version = v
 			}
 		}
-		fmt.Printf("  %-28s %-12s %s\n", c.DisplayName, version, c.Namespace)
+		name := c.DisplayName
+		if len(name) > colComp {
+			name = name[:colComp-1] + "…"
+		}
+		ns := c.Namespace
+		if len(ns) > colNs {
+			ns = ns[:colNs-1] + "…"
+		}
+		fmt.Fprintf(w, "  │ %-*s │ %-*s │ %-*s │\n", colComp, name, colVer, version, colNs, ns)
 	}
-	fmt.Println()
-	fmt.Printf("  Environment: %s\n", cfg.Environment)
+	fmt.Fprintf(w, "  └%s┴%s┴%s┘\n", strings.Repeat("─", colComp+2), strings.Repeat("─", colVer+2), strings.Repeat("─", colNs+2))
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  Environment: %s\n", cfg.Environment)
 	if cfg.ClusterPersonaName != "" {
-		fmt.Printf("  ClusterPersona: %s\n", cfg.ClusterPersonaName)
+		fmt.Fprintf(w, "  ClusterPersona: %s\n", cfg.ClusterPersonaName)
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
 }
 
 // ConfirmProceed prompts: "Proceed? [y/N]:" and returns true if user confirmed.
@@ -111,16 +154,38 @@ func ConfirmProceed(r *bufio.Reader) bool {
 //	stop := PrintComponentProgress(w, c, stepNum, totalSteps)
 //	defer stop()
 //
-// Shows a spinner with "Installing <DisplayName>...".
+// Shows a spinner with "[N/M] Installing <DisplayName>... (elapsed)".
 // Accepts an io.Writer for the spinner output (use os.Stderr in production, a buffer in tests).
 func PrintComponentProgress(w io.Writer, c ComponentConfig, stepNum, totalSteps int) func() {
 	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond, spinner.WithWriter(w))
+	start := time.Now()
 	s.Suffix = fmt.Sprintf(" [%d/%d] Installing %s...", stepNum, totalSteps, c.DisplayName)
 	s.Start()
-	return func() { s.Stop() }
+
+	done := make(chan struct{})
+	go func() {
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				elapsed := time.Since(start).Round(time.Second)
+				s.Suffix = fmt.Sprintf(" [%d/%d] Installing %s... (%s)",
+					stepNum, totalSteps, c.DisplayName, elapsed)
+			}
+		}
+	}()
+
+	return func() {
+		close(done)
+		s.Stop()
+	}
 }
 
 // PrintComponentResult prints ✓ / ✗ result for a single component install.
+// On failure, prints inline diagnostic hints to help the user debug.
 func PrintComponentResult(r InstallResult) {
 	if r.Skipped {
 		output.Warn(fmt.Sprintf("Skipped %s", r.Component.DisplayName))
@@ -132,7 +197,23 @@ func PrintComponentResult(r InstallResult) {
 			output.Info(r.Component.PostInstallMessage)
 		}
 	} else {
-		output.Error(fmt.Sprintf("%s failed: %v", r.Component.DisplayName, r.Error))
+		// Extract a concise error message
+		errMsg := ""
+		if r.Error != nil {
+			errMsg = r.Error.Error()
+			// Use only the first line for the inline summary
+			if idx := strings.Index(errMsg, "\n"); idx >= 0 {
+				errMsg = strings.TrimSpace(errMsg[:idx])
+			}
+			if len(errMsg) > 80 {
+				errMsg = errMsg[:77] + "..."
+			}
+		}
+		output.Error(fmt.Sprintf("%s failed (%s)", r.Component.DisplayName, errMsg))
+		// Inline diagnostic hints
+		output.DimPrint(fmt.Sprintf("  → Check pod status: kubectl get pods -n %s", r.Component.Namespace))
+		output.DimPrint(fmt.Sprintf("  → Check events: kubectl get events -n %s --sort-by=.lastTimestamp", r.Component.Namespace))
+		output.DimPrint("  → Retry: dorgu cluster setup --cluster-persona <name>")
 	}
 }
 
@@ -150,15 +231,18 @@ func PrintValidationResults(vrs []ValidationResult) {
 	fmt.Println()
 }
 
-// PrintFinalSummary prints the completion table and next steps.
+// PrintFinalSummary prints the completion box and next steps.
 func PrintFinalSummary(results []InstallResult, vrs []ValidationResult, cfg SetupConfig) {
-	fmt.Println()
-	output.Header("Setup Complete")
+	printFinalSummaryTo(os.Stdout, results, vrs, cfg)
+}
 
+func printFinalSummaryTo(w io.Writer, results []InstallResult, vrs []ValidationResult, cfg SetupConfig) {
 	succeeded := 0
 	failed := 0
 	skipped := 0
+	var totalDuration time.Duration
 	for _, r := range results {
+		totalDuration += r.Duration
 		switch {
 		case r.Skipped:
 			skipped++
@@ -169,8 +253,32 @@ func PrintFinalSummary(results []InstallResult, vrs []ValidationResult, cfg Setu
 		}
 	}
 
-	fmt.Printf("  Installed: %d  Skipped: %d  Failed: %d\n", succeeded, skipped, failed)
-	fmt.Println()
+	// Choose border color: red if any failures, green otherwise
+	borderColor := lipgloss.Color("42") // green
+	if failed > 0 {
+		borderColor = lipgloss.Color("196") // red
+	}
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(0, 1).
+		Width(44)
+
+	installed := output.Green(fmt.Sprintf("✓ Installed: %d", succeeded))
+	skippedStr := output.Dim(fmt.Sprintf("⊘ Skipped: %d", skipped))
+	failedStr := output.Red(fmt.Sprintf("✗ Failed: %d", failed))
+	elapsed := fmt.Sprintf("⏱ Total: %s", totalDuration.Round(time.Second))
+
+	line1 := fmt.Sprintf("%-30s %s", installed, skippedStr)
+	line2 := fmt.Sprintf("%-30s %s", failedStr, elapsed)
+
+	title := lipgloss.NewStyle().Bold(true).Render("Setup Complete")
+	content := fmt.Sprintf("%s\n%s\n%s", title, line1, line2)
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, boxStyle.Render(content))
+	fmt.Fprintln(w)
 
 	// Health summary
 	healthy := 0
@@ -179,16 +287,17 @@ func PrintFinalSummary(results []InstallResult, vrs []ValidationResult, cfg Setu
 			healthy++
 		}
 	}
-	if len(vrs) > 0 {
-		fmt.Printf("  Pods healthy: %d/%d\n", healthy, succeeded)
-		fmt.Println()
+	if len(vrs) > 0 && succeeded > 0 {
+		fmt.Fprintf(w, "  Pods healthy: %d/%d\n", healthy, succeeded)
+		fmt.Fprintln(w)
 	}
 
-	output.Header("Next Steps")
-	output.Info("Check cluster status:   dorgu cluster status")
+	fmt.Fprintf(w, "  Next Steps\n")
+	fmt.Fprintf(w, "  %s\n", strings.Repeat("─", 38))
+	fmt.Fprintf(w, "  %s Check cluster status:   dorgu cluster status\n", output.Dim("→"))
 	if cfg.ClusterPersonaName != "" {
-		output.Info(fmt.Sprintf("View ClusterPersona:    kubectl get clusterpersona %s -o yaml", cfg.ClusterPersonaName))
+		fmt.Fprintf(w, "  %s View ClusterPersona:    kubectl get clusterpersona %s -o yaml\n", output.Dim("→"), cfg.ClusterPersonaName)
 	}
-	output.Info("Monitor with ArgoCD:    dorgu sync")
-	fmt.Println()
+	fmt.Fprintf(w, "  %s Monitor with ArgoCD:    dorgu sync\n", output.Dim("→"))
+	fmt.Fprintln(w)
 }
