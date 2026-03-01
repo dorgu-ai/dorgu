@@ -154,6 +154,11 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 	}
 	output.Success("Helm repositories ready")
 
+	// 10b. Preflight: verify chart versions exist
+	if err := setup.CheckChartAvailability(ex, cfg.Components); err != nil {
+		return fmt.Errorf("preflight chart check failed: %w", err)
+	}
+
 	// 11. Install each component
 	fmt.Println()
 	output.Header("Installing components...")

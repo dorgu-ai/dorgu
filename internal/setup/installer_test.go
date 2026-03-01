@@ -1,10 +1,31 @@
 package setup
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
+
+// sequentialExecutor returns canned responses based on call index.
+type sequentialExecutor struct {
+	calls   []seqCall
+	callIdx int
+}
+
+type seqCall struct {
+	output string
+	err    error
+}
+
+func (m *sequentialExecutor) Run(name string, args ...string) (string, error) {
+	if m.callIdx >= len(m.calls) {
+		return "", fmt.Errorf("unexpected call %d: %s %v", m.callIdx, name, args)
+	}
+	c := m.calls[m.callIdx]
+	m.callIdx++
+	return c.output, c.err
+}
 
 func TestDryRunExecutorLogs(t *testing.T) {
 	ex := &DryRunExecutor{}
@@ -142,5 +163,39 @@ func TestVersionOverrideInInstallComponent(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("override version v1.17.0 not found in logged commands: %v", ex.Log)
+	}
+}
+
+func TestCheckChartAvailability_Missing(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "[]", err: nil},                                         // helm search repo (empty result)
+			{output: `[{"name":"openobserve/openobserve","version":"0.60.0"}]`, err: nil}, // helm search repo --versions (available versions)
+		},
+	}
+	components := []ComponentConfig{
+		{ID: ComponentOpenObserve, HelmChart: "openobserve/openobserve", Version: "0.10.2"},
+	}
+	err := CheckChartAvailability(ex, components)
+	if err == nil {
+		t.Fatal("expected error for missing chart version, got nil")
+	}
+	if !strings.Contains(err.Error(), "chart version not found") {
+		t.Errorf("expected 'chart version not found' in error, got: %v", err)
+	}
+}
+
+func TestCheckChartAvailability_Found(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: `[{"name":"openobserve/openobserve","version":"0.60.0"}]`, err: nil},
+		},
+	}
+	components := []ComponentConfig{
+		{ID: ComponentOpenObserve, HelmChart: "openobserve/openobserve", Version: "0.60.0"},
+	}
+	err := CheckChartAvailability(ex, components)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
 	}
 }

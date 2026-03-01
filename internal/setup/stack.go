@@ -139,7 +139,7 @@ func blessedComponents() []ComponentConfig {
 			HelmChart:         "openobserve/openobserve",
 			HelmReleaseName:   "openobserve",
 			Namespace:         "openobserve",
-			Version:           "0.10.2",
+			Version:           "0.60.0",
 			HelmSetValues:     []string{},
 			CreateNamespace:   true,
 			Required:          true,

@@ -114,6 +114,21 @@ func InstallComponent(ex Executor, c ComponentConfig, cfg SetupConfig) InstallRe
 	}
 }
 
+// CheckChartAvailability verifies that each component's chart+version exists in the
+// configured Helm repos. Run after AddHelmRepo + UpdateHelmRepos, before installing.
+func CheckChartAvailability(ex Executor, components []ComponentConfig) error {
+	for _, c := range components {
+		out, err := ex.Run("helm", "search", "repo", c.HelmChart, "--version", c.Version, "--output", "json")
+		if err != nil || strings.TrimSpace(out) == "[]" || strings.TrimSpace(out) == "" {
+			// Try to list available versions for a helpful message
+			avail, _ := ex.Run("helm", "search", "repo", c.HelmChart, "--versions", "--output", "json")
+			return fmt.Errorf("chart version not found: %s %s\n  Available versions (from helm search repo):\n  %s\n  Update the version in stack.go or use --set-version %s=<version>",
+				c.HelmChart, c.Version, strings.TrimSpace(avail), c.ID)
+		}
+	}
+	return nil
+}
+
 // AutoDetectClusterPersonaName runs: kubectl get clusterpersona --no-headers -o name
 // Returns the name if exactly one ClusterPersona exists.
 // Returns an error with a hint if zero or more than one exist.
