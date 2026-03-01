@@ -215,8 +215,8 @@ func TestInstallComponent_RetryOnTimeout(t *testing.T) {
 
 	ex := &sequentialExecutor{
 		calls: []seqCall{
-			{output: "", err: fmt.Errorf("context deadline exceeded")},  // first attempt fails
-			{output: "Release installed successfully", err: nil},         // retry succeeds
+			{output: "", err: fmt.Errorf("context deadline exceeded")}, // first attempt fails
+			{output: "Release installed successfully", err: nil},       // retry succeeds
 		},
 	}
 	comp := ComponentConfig{
@@ -241,7 +241,7 @@ func TestInstallComponent_RetryOnTimeout(t *testing.T) {
 func TestCheckChartAvailability_Missing(t *testing.T) {
 	ex := &sequentialExecutor{
 		calls: []seqCall{
-			{output: "[]", err: nil},                                         // helm search repo (empty result)
+			{output: "[]", err: nil}, // helm search repo (empty result)
 			{output: `[{"name":"openobserve/openobserve","version":"0.60.0"}]`, err: nil}, // helm search repo --versions (available versions)
 		},
 	}
