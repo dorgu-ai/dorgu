@@ -41,9 +41,10 @@ func PromptEnvironment(r *bufio.Reader) string {
 // stepNum and totalSteps are for "── Step N of M: <title> ──" header.
 func PromptComponentSelection(r *bufio.Reader, c ComponentConfig, stepNum, totalSteps int) bool {
 	header := fmt.Sprintf("── Step %d of %d: %s ──────────────────────────────────", stepNum, totalSteps, c.DisplayName)
-	// Trim to ~65 chars for consistent display
-	if len(header) > 65 {
-		header = header[:65]
+	// Trim to ~65 runes for consistent display (rune-safe to avoid splitting multi-byte characters)
+	runes := []rune(header)
+	if len(runes) > 65 {
+		header = string(runes[:65])
 	}
 	fmt.Println()
 	fmt.Println(output.Blue(header))
