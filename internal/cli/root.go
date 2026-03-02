@@ -1,12 +1,20 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/dorgu-ai/dorgu/internal/output"
 )
+
+// errSilent is returned by command handlers that have already printed their own
+// formatted error (e.g. via output.ErrorWithHint). Execute() will propagate the
+// non-zero exit but will not double-print the message.
+var errSilent = errors.New("")
 
 var (
 	// Config file path
@@ -15,8 +23,9 @@ var (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "dorgu",
-	Short: "AI-powered Kubernetes application onboarding",
+	Use:           "dorgu",
+	SilenceErrors: true,
+	Short:         "AI-powered Kubernetes application onboarding",
 	Long: `Dorgu analyzes your containerized applications and generates 
 production-ready Kubernetes manifests, CI/CD pipelines, and documentation.
 
@@ -33,7 +42,11 @@ Examples:
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() error {
-	return rootCmd.Execute()
+	err := rootCmd.Execute()
+	if err != nil && !errors.Is(err, errSilent) {
+		output.Error(err.Error())
+	}
+	return err
 }
 
 func init() {

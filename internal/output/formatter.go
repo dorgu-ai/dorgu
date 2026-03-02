@@ -72,3 +72,25 @@ func Blue(msg string) string {
 func Red(msg string) string {
 	return errorStyle.Render(msg)
 }
+
+// ErrorWithHint prints a styled error message followed by dimmed hint lines.
+func ErrorWithHint(msg string, hints ...string) {
+	fmt.Fprintln(os.Stderr, errorStyle.Render("✗ "+msg))
+	for _, h := range hints {
+		fmt.Fprintln(os.Stderr, dimStyle.Render("  → "+h))
+	}
+	fmt.Fprintln(os.Stderr)
+}
+
+// ErrorWithSuggestions prints an error with a list of suggested alternatives.
+func ErrorWithSuggestions(msg string, suggestions []string) {
+	fmt.Fprintln(os.Stderr, errorStyle.Render("✗ "+msg))
+	if len(suggestions) > 0 {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, dimStyle.Render("  Did you mean one of these?"))
+		for _, s := range suggestions {
+			fmt.Fprintln(os.Stderr, infoStyle.Render("    "+s))
+		}
+	}
+	fmt.Fprintln(os.Stderr)
+}

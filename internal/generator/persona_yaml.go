@@ -64,11 +64,6 @@ func GeneratePersonaYAML(analysis *types.AppAnalysis, namespace string, cfg *con
 	if analysis.Description != "" {
 		sb.WriteString(fmt.Sprintf("    description: |\n      %s\n", strings.ReplaceAll(analysis.Description, "\n", "\n      ")))
 	}
-	imageRunsAsRoot := ImageRunsAsRoot(analysis)
-	sb.WriteString(fmt.Sprintf("    imageRunsAsRoot: %t\n", imageRunsAsRoot))
-	if cfg.Security.PodSecurityContext.RunAsNonRoot && imageRunsAsRoot {
-		sb.WriteString(fmt.Sprintf("    runAsUser: %d\n", DefaultNonRootUID))
-	}
 
 	// Resources
 	writeResources(&sb, analysis, cfg)

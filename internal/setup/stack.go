@@ -12,6 +12,7 @@ const (
 	ComponentCertManager     ComponentID = "cert-manager"
 	ComponentIngressNginx    ComponentID = "ingress-nginx"
 	ComponentOpenObserve     ComponentID = "openobserve"
+	ComponentArgoCd          ComponentID = "argocd"
 	ComponentExternalSecrets ComponentID = "external-secrets"
 )
 
@@ -35,6 +36,7 @@ type ComponentConfig struct {
 	DependsOn          []ComponentID
 	PostInstallMessage string
 	OperatorAddonName  string // matches checkAddon() pod name search in operator
+	Timeout            string // Helm --timeout value; empty uses default "5m0s"
 }
 
 // SetupConfig holds the resolved configuration for a single setup run.
@@ -128,6 +130,7 @@ func blessedComponents() []ComponentConfig {
 			DefaultEnabled:    true,
 			DependsOn:         []ComponentID{ComponentCertManager},
 			OperatorAddonName: "ingress-nginx",
+			Timeout:           "10m0s",
 		},
 		{
 			ID:                ComponentOpenObserve,
@@ -139,12 +142,37 @@ func blessedComponents() []ComponentConfig {
 			HelmChart:         "openobserve/openobserve",
 			HelmReleaseName:   "openobserve",
 			Namespace:         "openobserve",
-			Version:           "0.10.2",
+			Version:           "0.60.0",
 			HelmSetValues:     []string{},
 			CreateNamespace:   true,
 			Required:          true,
 			DefaultEnabled:    true,
 			OperatorAddonName: "openobserve",
+		},
+		{
+			ID:          ComponentArgoCd,
+			DisplayName: "Argo CD",
+			Description: "Declarative GitOps continuous delivery for Kubernetes",
+			WhyItMatters: `Argo CD watches your Git repository and automatically syncs your Kubernetes
+manifests to the cluster. When you run 'dorgu generate', it produces Kubernetes manifests and
+ArgoCD Application resources. With Argo CD installed, those Application resources are
+automatically picked up — creating a complete GitOps pipeline from source code to running
+workloads.
+
+Without Argo CD, you would need to manually 'kubectl apply' every change. With it, pushing
+to Git is all it takes to deploy.`,
+			HelmRepo:          "https://argoproj.github.io/argo-helm",
+			HelmRepoName:      "argo",
+			HelmChart:         "argo/argo-cd",
+			HelmReleaseName:   "argocd",
+			Namespace:         "argocd",
+			Version:           "7.8.28",
+			HelmSetValues:     []string{},
+			CreateNamespace:   true,
+			Required:          false,
+			DefaultEnabled:    true,
+			DependsOn:         []ComponentID{},
+			OperatorAddonName: "argocd",
 		},
 		{
 			ID:                ComponentExternalSecrets,

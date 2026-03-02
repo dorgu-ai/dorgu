@@ -8,9 +8,32 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	k8syaml "sigs.k8s.io/yaml"
 
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
+
+// clusterPersonaYAML is a minimal struct for structured parsing of ClusterPersona YAML output.
+type clusterPersonaYAML struct {
+	Status struct {
+		Phase             string `json:"phase"`
+		KubernetesVersion string `json:"kubernetesVersion"`
+		Platform          string `json:"platform"`
+		ApplicationCount  int    `json:"applicationCount"`
+		Nodes             []struct {
+			Name string `json:"name"`
+		} `json:"nodes"`
+		Addons []struct {
+			Name      string `json:"name"`
+			Installed bool   `json:"installed"`
+			Healthy   bool   `json:"healthy"`
+			Version   string `json:"version"`
+		} `json:"addons"`
+		ResourceSummary struct {
+			RunningPods int `json:"runningPods"`
+		} `json:"resourceSummary"`
+	} `json:"status"`
+}
 
 var clusterFlags struct {
 	name        string
@@ -126,7 +149,10 @@ func getClusterPersonaStatus(name string) error {
 	if err != nil {
 		outputStr := strings.TrimSpace(string(rawOutput))
 		if strings.Contains(outputStr, "not found") {
-			return fmt.Errorf("ClusterPersona '%s' not found", name)
+			output.ErrorWithHint("ClusterPersona not found: "+name,
+				"List available ClusterPersonas: dorgu cluster status",
+				"Create one: dorgu cluster init --name <name> --environment <env>")
+			return errSilent
 		}
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			return fmt.Errorf("ClusterPersona CRD is not installed on this cluster. Install the Dorgu Operator first")
@@ -141,83 +167,28 @@ func getClusterPersonaStatus(name string) error {
 func displayClusterPersonaStatus(name string, rawYAML string) {
 	output.Header(fmt.Sprintf("ClusterPersona: %s", name))
 
-	lines := strings.Split(rawYAML, "\n")
+	var cp clusterPersonaYAML
+	if err := k8syaml.Unmarshal([]byte(rawYAML), &cp); err != nil {
+		output.Warn(fmt.Sprintf("Could not parse ClusterPersona YAML: %v", err))
+		fmt.Println(rawYAML)
+		return
+	}
 
-	// Extract key information
-	var phase, kubeVersion, platform string
-	var nodeCount, appCount, runningPods int
+	s := cp.Status
 	var addons []string
-
-	inStatus := false
-	inNodes := false
-	inAddons := false
-	inResourceSummary := false
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if trimmed == "status:" {
-			inStatus = true
-			continue
-		}
-
-		if inStatus {
-			if strings.HasPrefix(trimmed, "phase:") {
-				phase = strings.TrimPrefix(trimmed, "phase:")
-				phase = strings.TrimSpace(phase)
-			}
-			if strings.HasPrefix(trimmed, "kubernetesVersion:") {
-				kubeVersion = strings.TrimPrefix(trimmed, "kubernetesVersion:")
-				kubeVersion = strings.TrimSpace(kubeVersion)
-			}
-			if strings.HasPrefix(trimmed, "platform:") {
-				platform = strings.TrimPrefix(trimmed, "platform:")
-				platform = strings.TrimSpace(platform)
-			}
-			if strings.HasPrefix(trimmed, "applicationCount:") {
-				_, _ = fmt.Sscanf(trimmed, "applicationCount: %d", &appCount)
-			}
-			if trimmed == "nodes:" {
-				inNodes = true
-				continue
-			}
-			if inNodes && strings.HasPrefix(trimmed, "- name:") {
-				nodeCount++
-			}
-			if inNodes && !strings.HasPrefix(trimmed, "-") && !strings.HasPrefix(trimmed, " ") && trimmed != "" {
-				inNodes = false
-			}
-			if trimmed == "addons:" {
-				inAddons = true
-				continue
-			}
-			if inAddons && strings.HasPrefix(trimmed, "- name:") {
-				addonName := strings.TrimPrefix(trimmed, "- name:")
-				addonName = strings.TrimSpace(addonName)
-				addons = append(addons, addonName)
-			}
-			if inAddons && !strings.HasPrefix(trimmed, "-") && !strings.HasPrefix(trimmed, " ") && trimmed != "" {
-				inAddons = false
-			}
-			if trimmed == "resourceSummary:" {
-				inResourceSummary = true
-				continue
-			}
-			if inResourceSummary && strings.HasPrefix(trimmed, "runningPods:") {
-				_, _ = fmt.Sscanf(trimmed, "runningPods: %d", &runningPods)
-			}
-		}
+	for _, a := range s.Addons {
+		addons = append(addons, a.Name)
 	}
 
 	// Display summary
 	fmt.Println()
 	output.Info("Cluster Overview")
-	fmt.Printf("  Phase:              %s\n", colorPhase(phase))
-	fmt.Printf("  Kubernetes Version: %s\n", kubeVersion)
-	fmt.Printf("  Platform:           %s\n", platform)
-	fmt.Printf("  Nodes:              %d\n", nodeCount)
-	fmt.Printf("  Running Pods:       %d\n", runningPods)
-	fmt.Printf("  Applications:       %d\n", appCount)
+	fmt.Printf("  Phase:              %s\n", colorPhase(s.Phase))
+	fmt.Printf("  Kubernetes Version: %s\n", s.KubernetesVersion)
+	fmt.Printf("  Platform:           %s\n", s.Platform)
+	fmt.Printf("  Nodes:              %d\n", len(s.Nodes))
+	fmt.Printf("  Running Pods:       %d\n", s.ResourceSummary.RunningPods)
+	fmt.Printf("  Applications:       %d\n", s.ApplicationCount)
 
 	if len(addons) > 0 {
 		fmt.Println()
@@ -251,17 +222,17 @@ func runClusterInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Generate ClusterPersona YAML
-	clusterPersonaYAML := generateClusterPersonaYAML(clusterFlags.name, clusterFlags.environment)
+	personaYAML := generateClusterPersonaYAML(clusterFlags.name, clusterFlags.environment)
 
 	if clusterFlags.dryRun {
-		fmt.Println(clusterPersonaYAML)
+		fmt.Println(personaYAML)
 		return nil
 	}
 
 	// Apply via kubectl
 	output.Info("Creating ClusterPersona...")
 	kubectlCmd := exec.Command("kubectl", "apply", "-f", "-")
-	kubectlCmd.Stdin = bytes.NewBufferString(clusterPersonaYAML)
+	kubectlCmd.Stdin = bytes.NewBufferString(personaYAML)
 	kubectlCmd.Stdout = os.Stdout
 	kubectlCmd.Stderr = os.Stderr
 	if err := kubectlCmd.Run(); err != nil {

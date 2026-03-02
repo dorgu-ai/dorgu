@@ -30,6 +30,7 @@ The Blessed Stack includes:
   cert-manager     — automated TLS certificate management
   ingress-nginx    — HTTP/S ingress controller
   OpenObserve      — unified observability (logs, metrics, traces)
+  Argo CD          — declarative GitOps continuous delivery (optional, default on)
   External Secrets — secret sync from cloud stores (optional)
 
 The result is recorded as annotations on your ClusterPersona CRD. The Dorgu
@@ -153,6 +154,11 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		output.Warn(fmt.Sprintf("helm repo update: %v (continuing)", err))
 	}
 	output.Success("Helm repositories ready")
+
+	// 10b. Preflight: verify chart versions exist
+	if err := setup.CheckChartAvailability(ex, cfg.Components); err != nil {
+		return fmt.Errorf("preflight chart check failed: %w", err)
+	}
 
 	// 11. Install each component
 	fmt.Println()
