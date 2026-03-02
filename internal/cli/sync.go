@@ -107,7 +107,7 @@ func runSyncStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Printf("  Name:              %s\n", cluster.Name)
 		fmt.Printf("  Environment:       %s\n", cluster.Environment)
-		fmt.Printf("  Phase:             %s\n", colorPhase(cluster.Phase))
+		fmt.Printf("  Phase:             %s\n", output.FormatPhase(cluster.Phase))
 		fmt.Printf("  Kubernetes:        %s\n", cluster.KubernetesVer)
 		fmt.Printf("  Platform:          %s\n", cluster.Platform)
 		fmt.Printf("  Nodes:             %d\n", cluster.NodeCount)
@@ -194,8 +194,8 @@ func runSyncPull(cmd *cobra.Command, args []string) error {
 				truncate(p.AppName, 15),
 				truncate(p.Type, 10),
 				truncate(p.Tier, 10),
-				colorPhase(p.Phase),
-				colorHealth(health))
+				output.FormatPhase(p.Phase),
+				output.FormatHealth(health))
 		}
 	}
 
@@ -209,7 +209,7 @@ func runSyncPull(cmd *cobra.Command, args []string) error {
 		output.Header("ClusterPersona")
 		fmt.Printf("  Name:              %s\n", cluster.Name)
 		fmt.Printf("  Environment:       %s\n", cluster.Environment)
-		fmt.Printf("  Phase:             %s\n", colorPhase(cluster.Phase))
+		fmt.Printf("  Phase:             %s\n", output.FormatPhase(cluster.Phase))
 		fmt.Printf("  Kubernetes:        %s\n", cluster.KubernetesVer)
 		fmt.Printf("  Platform:          %s\n", cluster.Platform)
 		fmt.Printf("  Nodes:             %d\n", cluster.NodeCount)
