@@ -271,3 +271,91 @@ func TestCheckChartAvailability_Found(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 }
+
+func TestGetCurrentKubeContext(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "kind-dorgu-dev\n", err: nil},
+		},
+	}
+	ctx, err := GetCurrentKubeContext(ex)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ctx != "kind-dorgu-dev" {
+		t.Errorf("got context %q, want %q", ctx, "kind-dorgu-dev")
+	}
+}
+
+func TestGetCurrentKubeContext_Error(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "", err: fmt.Errorf("exit code 1")},
+		},
+	}
+	_, err := GetCurrentKubeContext(ex)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestValidateKubeContext_ProductionWarning(t *testing.T) {
+	tests := []struct {
+		context string
+		want    bool
+	}{
+		{"arn:aws:eks:us-east-1:123:cluster/prod-main", true},
+		{"gke_myorg_us-central1_prd-cluster", true},
+		{"arn:aws:eks:us-west-2:123:cluster/live-api", true},
+		{"kind-dorgu-dev", false},
+		{"minikube", false},
+		{"staging-cluster", false},
+	}
+	for _, tt := range tests {
+		needsConfirm, _ := ValidateKubeContext(tt.context)
+		if needsConfirm != tt.want {
+			t.Errorf("ValidateKubeContext(%q) = %v, want %v", tt.context, needsConfirm, tt.want)
+		}
+	}
+}
+
+func TestCheckOperatorInstalled_CRDMissing(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "", err: fmt.Errorf("exit code 1")},
+		},
+	}
+	err := CheckOperatorInstalled(ex)
+	if err == nil {
+		t.Fatal("expected error when CRD is missing")
+	}
+	if !strings.Contains(err.Error(), "CRD not found") {
+		t.Errorf("error should mention CRD, got: %v", err)
+	}
+}
+
+func TestCheckOperatorInstalled_PodNotRunning(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "clusterpersonas   dorgu.io/v1", err: nil},
+			{output: "", err: nil},
+		},
+	}
+	err := CheckOperatorInstalled(ex)
+	if err == nil {
+		t.Fatal("expected error when operator pod is not running")
+	}
+}
+
+func TestCheckOperatorInstalled_AllGood(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "clusterpersonas   dorgu.io/v1", err: nil},
+			{output: "dorgu-operator-abc123   1/1   Running   0   5m", err: nil},
+		},
+	}
+	err := CheckOperatorInstalled(ex)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
