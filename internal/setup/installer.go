@@ -83,15 +83,78 @@ func BuildHelmArgs(c ComponentConfig, version string) []string {
 	return args
 }
 
+// ReleaseStatus represents the state of a Helm release.
+type ReleaseStatus string
+
+const (
+	ReleaseNotFound ReleaseStatus = "not-found"
+	ReleaseDeployed ReleaseStatus = "deployed"
+	ReleaseFailed   ReleaseStatus = "failed"
+	ReleasePending  ReleaseStatus = "pending-install"
+	ReleaseOther    ReleaseStatus = "other"
+)
+
+// CheckReleaseStatus runs: helm status <release> -n <namespace> -o json
+// Returns the release status or ReleaseNotFound if no release exists.
+func CheckReleaseStatus(ex Executor, releaseName, namespace string) ReleaseStatus {
+	out, err := ex.Run("helm", "status", releaseName, "-n", namespace, "-o", "json")
+	if err != nil {
+		if strings.Contains(out, "not found") || strings.Contains(fmt.Sprintf("%v", err), "not found") {
+			return ReleaseNotFound
+		}
+		return ReleaseOther
+	}
+	lower := strings.ToLower(out)
+	switch {
+	case strings.Contains(lower, `"status":"deployed"`):
+		return ReleaseDeployed
+	case strings.Contains(lower, `"status":"failed"`):
+		return ReleaseFailed
+	case strings.Contains(lower, `"status":"pending-install"`):
+		return ReleasePending
+	default:
+		return ReleaseOther
+	}
+}
+
+// CleanFailedRelease runs: helm uninstall <release> -n <namespace>
+// Only call when CheckReleaseStatus returns ReleaseFailed or ReleasePending.
+func CleanFailedRelease(ex Executor, releaseName, namespace string) error {
+	out, err := ex.Run("helm", "uninstall", releaseName, "-n", namespace)
+	if err != nil {
+		return fmt.Errorf("helm uninstall %s -n %s: %w\n%s", releaseName, namespace, err, out)
+	}
+	return nil
+}
+
 // InstallComponent runs: helm upgrade --install <release> <chart> \
 //
 //	--namespace <ns> --version <ver> --create-namespace --wait --timeout 5m0s \
 //	[--set k=v ...] [--values file]
 //
+// Before installing, checks for failed/pending releases and cleans them up.
 // Applies VersionOverrides from cfg before building args.
 // Returns InstallResult with Duration and HelmOutput.
 func InstallComponent(ex Executor, c ComponentConfig, cfg SetupConfig) InstallResult {
 	start := time.Now()
+
+	// Pre-install: check for existing failed release and clean it up
+	status := CheckReleaseStatus(ex, c.HelmReleaseName, c.Namespace)
+	switch status {
+	case ReleaseFailed, ReleasePending:
+		if err := CleanFailedRelease(ex, c.HelmReleaseName, c.Namespace); err != nil {
+			return InstallResult{
+				Component: c,
+				Succeeded: false,
+				Error:     fmt.Errorf("failed to clean broken release %s: %w", c.HelmReleaseName, err),
+				Duration:  time.Since(start),
+			}
+		}
+	case ReleaseDeployed:
+		// Already installed — proceed with upgrade to apply any version changes
+	case ReleaseNotFound:
+		// Fresh install
+	}
 
 	version := c.Version
 	if cfg.VersionOverrides != nil {
@@ -103,8 +166,13 @@ func InstallComponent(ex Executor, c ComponentConfig, cfg SetupConfig) InstallRe
 	args := BuildHelmArgs(c, version)
 	out, err := ex.Run("helm", args...)
 
-	// Retry once on context deadline exceeded (common with ingress-nginx on Kind/desktop)
+	// Retry once on context deadline exceeded (common with ingress-nginx on Kind)
 	if err != nil && strings.Contains(fmt.Sprintf("%v %s", err, out), "context deadline exceeded") {
+		// Clean up failed release before retry
+		retryStatus := CheckReleaseStatus(ex, c.HelmReleaseName, c.Namespace)
+		if retryStatus == ReleaseFailed || retryStatus == ReleasePending {
+			_ = CleanFailedRelease(ex, c.HelmReleaseName, c.Namespace)
+		}
 		time.Sleep(retryDelay)
 		out, err = ex.Run("helm", args...)
 	}
@@ -197,5 +265,46 @@ func AnnotateClusterPersona(ex Executor, name string, cfg SetupConfig) error {
 	if err != nil {
 		return fmt.Errorf("kubectl annotate clusterpersona %s: %w\n%s", name, err, out)
 	}
+	return nil
+}
+
+// GetCurrentKubeContext runs: kubectl config current-context
+func GetCurrentKubeContext(ex Executor) (string, error) {
+	out, err := ex.Run("kubectl", "config", "current-context")
+	if err != nil {
+		return "", fmt.Errorf("failed to get current kube-context: %w\n%s", err, out)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// ValidateKubeContext checks whether the context name looks like a production cluster.
+// Returns (needsConfirmation, warning).
+func ValidateKubeContext(contextName string) (bool, string) {
+	lower := strings.ToLower(contextName)
+	for _, substr := range []string{"prod", "prd", "live"} {
+		if strings.Contains(lower, substr) {
+			return true, fmt.Sprintf("Current kube-context %q appears to be a production cluster", contextName)
+		}
+	}
+	return false, ""
+}
+
+// CheckOperatorInstalled verifies the dorgu operator is present by checking
+// for the ClusterPersona CRD and a running operator pod in dorgu-system.
+func CheckOperatorInstalled(ex Executor) error {
+	out, err := ex.Run("kubectl", "api-resources", "--api-group=dorgu.io", "--no-headers")
+	if err != nil || !strings.Contains(out, "clusterpersonas") {
+		return fmt.Errorf("dorgu operator CRD not found — install the operator first:\n  helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator -n dorgu-system --create-namespace")
+	}
+
+	out, err = ex.Run("kubectl", "get", "pods", "-n", "dorgu-system",
+		"--field-selector=status.phase=Running", "--no-headers")
+	if err != nil {
+		return fmt.Errorf("failed to check operator pods: %w", err)
+	}
+	if !strings.Contains(out, "dorgu-operator") {
+		return fmt.Errorf("dorgu operator pod not running in dorgu-system namespace — ensure the operator is deployed and healthy")
+	}
+
 	return nil
 }

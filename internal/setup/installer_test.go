@@ -215,8 +215,10 @@ func TestInstallComponent_RetryOnTimeout(t *testing.T) {
 
 	ex := &sequentialExecutor{
 		calls: []seqCall{
-			{output: "", err: fmt.Errorf("context deadline exceeded")}, // first attempt fails
-			{output: "Release installed successfully", err: nil},       // retry succeeds
+			{output: "Error: release: not found", err: fmt.Errorf("not found")}, // pre-install status check
+			{output: "", err: fmt.Errorf("context deadline exceeded")},          // first attempt fails
+			{output: "Error: release: not found", err: fmt.Errorf("not found")}, // retry status check
+			{output: "Release installed successfully", err: nil},                // retry succeeds
 		},
 	}
 	comp := ComponentConfig{
@@ -233,8 +235,8 @@ func TestInstallComponent_RetryOnTimeout(t *testing.T) {
 	if !result.Succeeded {
 		t.Fatalf("expected success after retry, got error: %v", result.Error)
 	}
-	if ex.callIdx != 2 {
-		t.Errorf("expected 2 calls (initial + retry), got %d", ex.callIdx)
+	if ex.callIdx != 4 {
+		t.Errorf("expected 4 calls (status + install + retry-status + retry-install), got %d", ex.callIdx)
 	}
 }
 
@@ -269,5 +271,209 @@ func TestCheckChartAvailability_Found(t *testing.T) {
 	err := CheckChartAvailability(ex, components)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestCheckReleaseStatus_NotFound(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "Error: release: not found", err: fmt.Errorf("exit code 1")},
+		},
+	}
+	status := CheckReleaseStatus(ex, "cert-manager", "cert-manager")
+	if status != ReleaseNotFound {
+		t.Errorf("expected ReleaseNotFound, got %q", status)
+	}
+}
+
+func TestCheckReleaseStatus_Deployed(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: `{"info":{"status":"deployed"}}`, err: nil},
+		},
+	}
+	status := CheckReleaseStatus(ex, "cert-manager", "cert-manager")
+	if status != ReleaseDeployed {
+		t.Errorf("expected ReleaseDeployed, got %q", status)
+	}
+}
+
+func TestCheckReleaseStatus_Failed(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: `{"info":{"status":"failed"}}`, err: nil},
+		},
+	}
+	status := CheckReleaseStatus(ex, "ingress-nginx", "ingress-nginx")
+	if status != ReleaseFailed {
+		t.Errorf("expected ReleaseFailed, got %q", status)
+	}
+}
+
+func TestCleanFailedRelease_Success(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "release \"ingress-nginx\" uninstalled", err: nil},
+		},
+	}
+	err := CleanFailedRelease(ex, "ingress-nginx", "ingress-nginx")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCleanFailedRelease_Error(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "Error: uninstall failed", err: fmt.Errorf("exit code 1")},
+		},
+	}
+	err := CleanFailedRelease(ex, "ingress-nginx", "ingress-nginx")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestInstallComponent_CleansFailedReleaseBeforeInstall(t *testing.T) {
+	origDelay := retryDelay
+	retryDelay = 0
+	defer func() { retryDelay = origDelay }()
+
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			// CheckReleaseStatus
+			{output: `{"info":{"status":"failed"}}`, err: nil},
+			// CleanFailedRelease (helm uninstall)
+			{output: "release uninstalled", err: nil},
+			// helm upgrade --install (success)
+			{output: "Release installed", err: nil},
+		},
+	}
+	comp := ComponentConfig{
+		ID:              ComponentCertManager,
+		HelmReleaseName: "cert-manager",
+		HelmChart:       "jetstack/cert-manager",
+		Namespace:       "cert-manager",
+		Version:         "v1.16.3",
+	}
+	cfg := SetupConfig{Timestamp: time.Now()}
+	result := InstallComponent(ex, comp, cfg)
+	if !result.Succeeded {
+		t.Fatalf("expected success, got error: %v", result.Error)
+	}
+	if ex.callIdx != 3 {
+		t.Errorf("expected 3 calls (status + uninstall + install), got %d", ex.callIdx)
+	}
+}
+
+func TestInstallComponent_FreshInstall(t *testing.T) {
+	origDelay := retryDelay
+	retryDelay = 0
+	defer func() { retryDelay = origDelay }()
+
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			// CheckReleaseStatus (not found)
+			{output: "Error: release: not found", err: fmt.Errorf("not found")},
+			// helm upgrade --install (success)
+			{output: "Release installed", err: nil},
+		},
+	}
+	comp := ComponentConfig{
+		ID:              ComponentCertManager,
+		HelmReleaseName: "cert-manager",
+		HelmChart:       "jetstack/cert-manager",
+		Namespace:       "cert-manager",
+		Version:         "v1.16.3",
+	}
+	cfg := SetupConfig{Timestamp: time.Now()}
+	result := InstallComponent(ex, comp, cfg)
+	if !result.Succeeded {
+		t.Fatalf("expected success, got error: %v", result.Error)
+func TestGetCurrentKubeContext(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "kind-dorgu-dev\n", err: nil},
+		},
+	}
+	ctx, err := GetCurrentKubeContext(ex)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ctx != "kind-dorgu-dev" {
+		t.Errorf("got context %q, want %q", ctx, "kind-dorgu-dev")
+	}
+}
+
+func TestGetCurrentKubeContext_Error(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "", err: fmt.Errorf("exit code 1")},
+		},
+	}
+	_, err := GetCurrentKubeContext(ex)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestValidateKubeContext_ProductionWarning(t *testing.T) {
+	tests := []struct {
+		context string
+		want    bool
+	}{
+		{"arn:aws:eks:us-east-1:123:cluster/prod-main", true},
+		{"gke_myorg_us-central1_prd-cluster", true},
+		{"arn:aws:eks:us-west-2:123:cluster/live-api", true},
+		{"kind-dorgu-dev", false},
+		{"minikube", false},
+		{"staging-cluster", false},
+	}
+	for _, tt := range tests {
+		needsConfirm, _ := ValidateKubeContext(tt.context)
+		if needsConfirm != tt.want {
+			t.Errorf("ValidateKubeContext(%q) = %v, want %v", tt.context, needsConfirm, tt.want)
+		}
+	}
+}
+
+func TestCheckOperatorInstalled_CRDMissing(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "", err: fmt.Errorf("exit code 1")},
+		},
+	}
+	err := CheckOperatorInstalled(ex)
+	if err == nil {
+		t.Fatal("expected error when CRD is missing")
+	}
+	if !strings.Contains(err.Error(), "CRD not found") {
+		t.Errorf("error should mention CRD, got: %v", err)
+	}
+}
+
+func TestCheckOperatorInstalled_PodNotRunning(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "clusterpersonas   dorgu.io/v1", err: nil},
+			{output: "", err: nil},
+		},
+	}
+	err := CheckOperatorInstalled(ex)
+	if err == nil {
+		t.Fatal("expected error when operator pod is not running")
+	}
+}
+
+func TestCheckOperatorInstalled_AllGood(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "clusterpersonas   dorgu.io/v1", err: nil},
+			{output: "dorgu-operator-abc123   1/1   Running   0   5m", err: nil},
+		},
+	}
+	err := CheckOperatorInstalled(ex)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

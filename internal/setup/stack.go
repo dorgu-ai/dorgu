@@ -11,6 +11,7 @@ type ComponentID string
 const (
 	ComponentCertManager     ComponentID = "cert-manager"
 	ComponentIngressNginx    ComponentID = "ingress-nginx"
+	ComponentCNPG            ComponentID = "cnpg"
 	ComponentOpenObserve     ComponentID = "openobserve"
 	ComponentArgoCd          ComponentID = "argocd"
 	ComponentExternalSecrets ComponentID = "external-secrets"
@@ -133,6 +134,24 @@ func blessedComponents() []ComponentConfig {
 			Timeout:           "10m0s",
 		},
 		{
+			ID:                ComponentCNPG,
+			DisplayName:       "CloudNativePG",
+			Description:       "Kubernetes operator for PostgreSQL lifecycle management",
+			WhyItMatters:      "CloudNativePG manages PostgreSQL clusters as native Kubernetes resources. It handles replication, failover, backup, and recovery automatically. OpenObserve uses PostgreSQL for metadata storage, so CNPG must be installed before OpenObserve.",
+			HelmRepo:          "https://cloudnative-pg.github.io/charts",
+			HelmRepoName:      "cnpg",
+			HelmChart:         "cnpg/cloudnative-pg",
+			HelmReleaseName:   "cnpg",
+			Namespace:         "cnpg-system",
+			Version:           "0.23.0",
+			HelmSetValues:     []string{},
+			CreateNamespace:   true,
+			Required:          true,
+			DefaultEnabled:    true,
+			OperatorAddonName: "cnpg",
+			Timeout:           "5m0s",
+		},
+		{
 			ID:                ComponentOpenObserve,
 			DisplayName:       "OpenObserve",
 			Description:       "Unified observability: logs, metrics, traces, dashboards",
@@ -147,6 +166,7 @@ func blessedComponents() []ComponentConfig {
 			CreateNamespace:   true,
 			Required:          true,
 			DefaultEnabled:    true,
+			DependsOn:         []ComponentID{ComponentCNPG},
 			OperatorAddonName: "openobserve",
 		},
 		{
@@ -169,7 +189,7 @@ to Git is all it takes to deploy.`,
 			Version:           "7.8.28",
 			HelmSetValues:     []string{},
 			CreateNamespace:   true,
-			Required:          false,
+			Required:          true,
 			DefaultEnabled:    true,
 			DependsOn:         []ComponentID{},
 			OperatorAddonName: "argocd",

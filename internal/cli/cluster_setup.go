@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -20,6 +21,7 @@ var clusterSetupFlags struct {
 	skipValidation     bool
 	gitops             bool
 	gitopsOutputDir    string
+	kubeContext        string
 }
 
 var clusterSetupCmd = &cobra.Command{
@@ -31,8 +33,9 @@ via an interactive wizard. Each component is explained before installation.
 The Blessed Stack includes:
   cert-manager     — automated TLS certificate management
   ingress-nginx    — HTTP/S ingress controller
+  CloudNativePG    — PostgreSQL operator (required by OpenObserve)
   OpenObserve      — unified observability (logs, metrics, traces)
-  Argo CD          — declarative GitOps continuous delivery (optional, default on)
+  Argo CD          — declarative GitOps continuous delivery
   External Secrets — secret sync from cloud stores (optional)
 
 The result is recorded as annotations on your ClusterPersona CRD. The Dorgu
@@ -56,6 +59,7 @@ func init() {
 	clusterSetupCmd.Flags().BoolVar(&clusterSetupFlags.skipValidation, "skip-validation", false, "skip post-install pod health checks")
 	clusterSetupCmd.Flags().BoolVar(&clusterSetupFlags.gitops, "gitops", false, "scaffold a GitOps repository instead of installing imperatively")
 	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.gitopsOutputDir, "gitops-output", "./dorgu-cluster-gitops", "output directory for GitOps repo scaffold")
+	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.kubeContext, "context", "", "kube-context to use (defaults to current-context)")
 }
 
 func runClusterSetup(cmd *cobra.Command, args []string) error {
@@ -70,6 +74,56 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("helm not found in PATH — install from https://helm.sh/docs/intro/install/")
 	}
 	output.Success("helm found")
+
+	// 1b. Kube-context safety guard
+	if clusterSetupFlags.kubeContext != "" {
+		if _, err := exec.Command("kubectl", "config", "use-context", clusterSetupFlags.kubeContext).CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to switch to kube-context %q: %w", clusterSetupFlags.kubeContext, err)
+		}
+		output.Success(fmt.Sprintf("Using kube-context: %q", clusterSetupFlags.kubeContext))
+	}
+
+	// Always show current context before proceeding
+	{
+		var preflightEx setup.Executor
+		if clusterSetupFlags.dryRun {
+			preflightEx = &setup.DryRunExecutor{}
+		} else {
+			preflightEx = &setup.OSExecutor{}
+		}
+		detected, err := setup.GetCurrentKubeContext(preflightEx)
+		if err != nil {
+			output.Warn("Could not detect kube-context — proceeding with default")
+		} else {
+			output.Success(fmt.Sprintf("kube-context: %q", detected))
+			needsConfirm, warning := setup.ValidateKubeContext(detected)
+			if needsConfirm {
+				output.Warn(warning)
+				confirmReader := bufio.NewReader(os.Stdin)
+				fmt.Printf("Are you sure you want to proceed with this context? [y/N]: ")
+				input, _ := confirmReader.ReadString('\n')
+				input = strings.ToLower(strings.TrimSpace(input))
+				if input != "y" && input != "yes" {
+					output.Info("Aborted.")
+					return nil
+				}
+			}
+		}
+	}
+
+	// 1c. Operator readiness gate (skip in dry-run)
+	if !clusterSetupFlags.dryRun {
+		checkEx := &setup.OSExecutor{}
+		if err := setup.CheckOperatorInstalled(checkEx); err != nil {
+			output.ErrorWithHint("Dorgu Operator not detected on this cluster",
+				err.Error(),
+				"Install: helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator -n dorgu-system --create-namespace")
+			return errSilent
+		}
+		output.Success("Dorgu Operator detected")
+	} else {
+		output.Info("Dry-run mode: skipping operator readiness check")
+	}
 
 	// 2. Choose executor based on --dry-run
 	var ex setup.Executor
@@ -182,18 +236,45 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("preflight chart check failed: %w", err)
 	}
 
-	// 11. Install each component
+	// 11. Install each component (with dependency enforcement)
 	fmt.Println()
 	output.Header("Installing components...")
 	fmt.Println()
 
 	var results []setup.InstallResult
+	installed := make(map[setup.ComponentID]bool)
+
 	for i, c := range cfg.Components {
+		// Check dependencies: all DependsOn must be in the installed set
+		depsMet := true
+		var missingDep setup.ComponentID
+		for _, dep := range c.DependsOn {
+			if !installed[dep] {
+				depsMet = false
+				missingDep = dep
+				break
+			}
+		}
+		if !depsMet {
+			result := setup.InstallResult{
+				Component: c,
+				Succeeded: false,
+				Error:     fmt.Errorf("dependency %q not installed — skipping %s", missingDep, c.DisplayName),
+			}
+			setup.PrintComponentResult(result)
+			results = append(results, result)
+			continue
+		}
+
 		stop := setup.PrintComponentProgress(os.Stderr, c, i+1, len(cfg.Components))
 		result := setup.InstallComponent(ex, c, cfg)
 		stop()
 		setup.PrintComponentResult(result)
 		results = append(results, result)
+
+		if result.Succeeded {
+			installed[c.ID] = true
+		}
 	}
 
 	// 12. Validate
