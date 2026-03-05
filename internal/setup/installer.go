@@ -267,3 +267,44 @@ func AnnotateClusterPersona(ex Executor, name string, cfg SetupConfig) error {
 	}
 	return nil
 }
+
+// GetCurrentKubeContext runs: kubectl config current-context
+func GetCurrentKubeContext(ex Executor) (string, error) {
+	out, err := ex.Run("kubectl", "config", "current-context")
+	if err != nil {
+		return "", fmt.Errorf("failed to get current kube-context: %w\n%s", err, out)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// ValidateKubeContext checks whether the context name looks like a production cluster.
+// Returns (needsConfirmation, warning).
+func ValidateKubeContext(contextName string) (bool, string) {
+	lower := strings.ToLower(contextName)
+	for _, substr := range []string{"prod", "prd", "live"} {
+		if strings.Contains(lower, substr) {
+			return true, fmt.Sprintf("Current kube-context %q appears to be a production cluster", contextName)
+		}
+	}
+	return false, ""
+}
+
+// CheckOperatorInstalled verifies the dorgu operator is present by checking
+// for the ClusterPersona CRD and a running operator pod in dorgu-system.
+func CheckOperatorInstalled(ex Executor) error {
+	out, err := ex.Run("kubectl", "api-resources", "--api-group=dorgu.io", "--no-headers")
+	if err != nil || !strings.Contains(out, "clusterpersonas") {
+		return fmt.Errorf("dorgu operator CRD not found — install the operator first:\n  helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator -n dorgu-system --create-namespace")
+	}
+
+	out, err = ex.Run("kubectl", "get", "pods", "-n", "dorgu-system",
+		"--field-selector=status.phase=Running", "--no-headers")
+	if err != nil {
+		return fmt.Errorf("failed to check operator pods: %w", err)
+	}
+	if !strings.Contains(out, "dorgu-operator") {
+		return fmt.Errorf("dorgu operator pod not running in dorgu-system namespace — ensure the operator is deployed and healthy")
+	}
+
+	return nil
+}
