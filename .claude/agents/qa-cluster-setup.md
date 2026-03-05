@@ -1,6 +1,6 @@
 ---
 name: qa-cluster-setup
-description: Comprehensive interactive QA agent for testing ClusterPersona CRD and `dorgu cluster setup` Blessed Stack wizard. Covers cluster init, status, setup dry-run, interactive wizard, installation validation, idempotency, error handling, operator addon discovery, and cleanup.
+description: Comprehensive interactive QA agent for testing ClusterPersona CRD and `dorgu cluster setup` Blessed Stack wizard. Covers cluster init, status, setup dry-run, interactive wizard, installation validation, idempotency, helm recovery, GitOps mode, preflight safety, error handling, operator addon discovery, and cleanup.
 model: claude-opus-4-6
 ---
 
@@ -26,9 +26,11 @@ Read these files to understand the current implementation:
 2. `internal/cli/cluster_setup.go` — Blessed Stack wizard flow
 3. `internal/setup/stack.go` — component definitions and versions
 4. `internal/setup/ui.go` — interactive prompts and output formatting
-5. `internal/setup/installer.go` — executor pattern, helm command building
+5. `internal/setup/installer.go` — executor pattern, helm command building, release status checks
 6. `internal/setup/validator.go` — post-install pod validation
-7. `docs-internal/QA_TESTING_GUIDE.md` — reference checklist
+7. `internal/setup/gitops.go` — GitOps scaffold generation
+8. `internal/setup/gitops_test.go` — GitOps tests
+9. `docs-internal/QA_TESTING_GUIDE.md` — reference checklist
 
 ---
 
@@ -105,7 +107,7 @@ Ask the user to verify:
 - `dorgu cluster` shows three subcommands: `init`, `status`, `setup`
 - Each subcommand has a meaningful short description
 - `dorgu cluster init --help` shows `--name`, `--environment`, `--dry-run` flags
-- `dorgu cluster setup --help` shows `--cluster-persona`, `--environment`, `--dry-run`, `--skip-validation` flags
+- `dorgu cluster setup --help` shows `--cluster-persona`, `--environment`, `--dry-run`, `--skip-validation`, `--gitops`, `--gitops-output`, `--context` flags
 - Help text is clear and grammatically correct
 
 ---
@@ -124,7 +126,7 @@ make install
 make deploy IMG=dorgu-operator:dev
 ```
 
-### 2.1 Install operator (released version)
+### 2.1b Install operator (released version)
 
 ```bash
 helm install dorgu-operator \
@@ -189,6 +191,7 @@ Ask the user to verify:
 - Command succeeds without error
 - Output confirms ClusterPersona was created
 - `kubectl get clusterpersona` shows `qa-cluster`
+- **NODES column shows correct node count** (e.g. `1` on single-node Kind, NOT `110`)
 - `kubectl get clusterpersona qa-cluster -o yaml` shows:
   - `apiVersion: dorgu.io/v1`
   - `kind: ClusterPersona`
@@ -330,7 +333,7 @@ Then recreate for remaining tests:
 dorgu cluster init --name qa-cluster --environment development
 ```
 
-### 4.5 Operator reconciliation timing
+### 4.5 Operator reconciliation timing and phase stability
 
 ```bash
 # Immediately after creating the ClusterPersona:
@@ -340,15 +343,20 @@ dorgu cluster status qa-cluster
 # Wait 30-60 seconds, then:
 dorgu cluster status qa-cluster
 # Expected phase: Ready (operator has populated status)
+
+# Wait another 60 seconds, check again:
+dorgu cluster status qa-cluster
+# Expected phase: STILL Ready (should not regress to Unknown)
 ```
 
 Ask the user to verify:
 - Phase transitions from Discovering → Ready (or directly shows Ready if operator is fast)
+- **Phase does NOT regress from Ready to Unknown** (BUG-04-5 fix verification)
 - Status fields are populated after reconciliation:
   - `kubernetesVersion` is set
   - `platform` is detected
   - `nodes` array has entries
-  - `resourceSummary` has CPU/memory totals
+  - `resourceSummary` has CPU/memory totals and `nodeCount` matches actual node count
 
 ---
 
@@ -392,6 +400,76 @@ sudo mv $(which helm).bak $(which helm)
 Ask the user to verify:
 - Command fails immediately with clear error: helm not found
 
+### 5.4 Kube-context display
+
+```bash
+dorgu cluster setup --dry-run
+```
+
+Ask the user to verify (focus on preflight output):
+- **Active kube-context is displayed** before the wizard starts
+- Shows something like `kube-context: "kind-<cluster-name>"` with a success indicator
+- Context is shown BEFORE any component selection begins
+
+### 5.5 Production context warning (optional, if user can simulate)
+
+If the user can create a context with "prod" in its name (or rename their current one):
+
+```bash
+# Create a context alias with "prod" in name:
+kubectl config rename-context kind-<cluster-name> kind-prod-test
+dorgu cluster setup --dry-run
+kubectl config rename-context kind-prod-test kind-<cluster-name>
+```
+
+Ask the user to verify:
+- A **warning** is displayed about the production-like context
+- A **confirmation prompt** appears: `Are you sure you want to proceed with this context? [y/N]`
+- Pressing N aborts cleanly with no error
+
+### 5.6 `--context` flag
+
+```bash
+# Use the correct context name:
+dorgu cluster setup --dry-run --context kind-<cluster-name>
+```
+
+Ask the user to verify:
+- Output confirms it switched to the specified context
+- Setup proceeds normally after context switch
+
+```bash
+# Try an invalid context:
+dorgu cluster setup --dry-run --context nonexistent-context
+```
+
+Ask the user to verify:
+- Clear error message about invalid context
+- Does not proceed to the wizard
+
+### 5.7 Operator readiness gate
+
+**Without operator** (if feasible — e.g. on a fresh cluster before installing operator):
+
+```bash
+dorgu cluster setup
+```
+
+Ask the user to verify:
+- Fails with clear error: "Dorgu Operator not detected on this cluster"
+- Shows installation hint (helm install command)
+- Does NOT proceed to the wizard
+
+**In dry-run mode:**
+
+```bash
+dorgu cluster setup --dry-run
+```
+
+Ask the user to verify:
+- Operator readiness check is **skipped** with an info message like "Dry-run mode: skipping operator readiness check"
+- Wizard proceeds normally
+
 ---
 
 ## Phase 6: Cluster setup — Dry-run mode
@@ -413,20 +491,21 @@ Walk the user through the interactive prompts and ask them to verify:
 - Type `development` and press Enter
 - Confirm the selection is accepted
 
-**Component selection (5 components):**
+**Component selection (6 components):**
 For each component, verify:
 - Educational "Why it matters" text is displayed (multiple paragraphs, informative)
 - Chart name, version, and namespace are shown
 - **cert-manager:** Shows `[Required — will be installed]` (no prompt)
 - **ingress-nginx:** Shows `[Required — will be installed]` (no prompt)
-- **openobserve:** Shows `[Required — will be installed]` (no prompt)
-- **argocd:** Prompts `Install? [Y/n]` (optional, default on) — press Enter to accept
+- **CloudNativePG:** Shows `[Required — will be installed]` (no prompt)
+- **OpenObserve:** Shows `[Required — will be installed]` (no prompt)
+- **Argo CD:** Shows `[Required — will be installed]` (no prompt)
 - **external-secrets:** Prompts `Install? [y/N]` (optional, default off) — press N to skip
 
 **Installation plan:**
-- Table shows 4 components (cert-manager, ingress-nginx, openobserve, argocd)
+- Table shows 5 components (cert-manager, ingress-nginx, cnpg, openobserve, argocd)
 - External-secrets is NOT listed (was skipped)
-- Versions are correct (cert-manager v1.16.3, ingress-nginx 4.11.3, openobserve 0.10.2)
+- Versions are correct (cert-manager v1.16.3, ingress-nginx 4.11.3, cnpg 0.23.0, openobserve 0.60.0, argocd 7.8.28)
 - Environment shows `development`
 - ClusterPersona shows `qa-cluster`
 
@@ -439,6 +518,7 @@ For each component, verify:
 - Commands include `helm repo add`, `helm repo update`, and `helm upgrade --install` for each component
 - Helm install commands contain correct flags: `--namespace`, `--version`, `--create-namespace`, `--wait`, `--timeout`
 - cert-manager has `--set installCRDs=true`
+- CNPG has correct namespace `cnpg-system`
 
 **No actual changes:**
 ```bash
@@ -467,11 +547,10 @@ dorgu cluster setup --dry-run
 This time, when prompted for External Secrets, press **y**.
 
 Ask the user to verify:
-- Installation plan now shows **5 components** (including argocd and external-secrets)
-- argocd version and namespace are correct
+- Installation plan now shows **6 components** (5 required + external-secrets)
 - external-secrets version is 0.10.7
 - external-secrets namespace is `external-secrets`
-- Dry-run command log includes helm commands for both argocd and external-secrets
+- Dry-run command log includes helm commands for all 6 components
 
 ### 6.4 Dry-run — decline all optional, cancel at confirmation
 
@@ -490,36 +569,37 @@ Ask the user to verify:
 
 ## Phase 7: Cluster setup — Full installation
 
-### 7.1 Full install (3 required + ArgoCD)
+### 7.1 Full install (5 required, skip External Secrets)
 
 ```bash
 dorgu cluster setup --cluster-persona qa-cluster --environment development
 ```
 
 Walk the user through:
-1. Preflight checks pass
+1. Preflight checks pass (tools found, kube-context displayed, operator detected)
 2. ClusterPersona auto-detected or from flag
 3. Environment set to `development` (from flag, no prompt)
 4. Component selection:
    - cert-manager: Required, auto-accepted
    - ingress-nginx: Required, auto-accepted
-   - openobserve: Required, auto-accepted
-   - argocd: Optional (default on) → press **Enter** to accept
+   - CloudNativePG: Required, auto-accepted
+   - OpenObserve: Required, auto-accepted
+   - Argo CD: Required, auto-accepted
    - external-secrets: Optional (default off) → press **N** to skip
-5. Installation plan shows 4 components
+5. Installation plan shows 5 components
 6. Confirm proceed → press **y**
 
 **During installation, verify:**
-- Progress spinners/indicators show for each component: `[1/3] Installing cert-manager...`
+- Progress spinners/indicators show for each component: `[1/5] Installing cert-manager...`
 - Each component shows a success indicator (checkmark) when done
-- Components install in order (cert-manager first, since ingress-nginx depends on it)
+- Components install in dependency order (cert-manager → ingress-nginx → cnpg → openobserve → argocd)
 - Installation takes a few minutes per component (expected)
 - Validation phase runs after all installs:
   - Shows pod health check per namespace
   - Each component reports pods as Running
 
 **After installation, verify:**
-- Final summary shows: `Installed: 4  Skipped: 1  Failed: 0` (or similar)
+- Final summary shows: `Installed: 5  Skipped: 1  Failed: 0` (or similar)
 - ClusterPersona annotation message is shown
 - Next steps are displayed
 
@@ -531,12 +611,13 @@ Run each of these and report the results:
 ```bash
 helm list -A
 ```
-Expected: cert-manager, ingress-nginx, openobserve, argocd — all STATUS=deployed
+Expected: cert-manager, ingress-nginx, cnpg, openobserve, argocd — all STATUS=deployed
 
 **Pods in each namespace:**
 ```bash
 kubectl get pods -n cert-manager
 kubectl get pods -n ingress-nginx
+kubectl get pods -n cnpg-system
 kubectl get pods -n openobserve
 kubectl get pods -n argocd
 ```
@@ -544,7 +625,7 @@ Expected: All pods Running or Completed (jobs), no CrashLoopBackOff
 
 **Namespaces created:**
 ```bash
-kubectl get ns cert-manager ingress-nginx openobserve argocd
+kubectl get ns cert-manager ingress-nginx cnpg-system openobserve argocd
 ```
 Expected: All exist and are Active
 
@@ -553,7 +634,7 @@ Expected: All exist and are Active
 kubectl get clusterpersona qa-cluster -o jsonpath='{.metadata.annotations}' | jq .
 ```
 Expected annotations present:
-- `dorgu.io/setup-stack` — value: `cert-manager,ingress-nginx,openobserve,argocd`
+- `dorgu.io/setup-stack` — value: `cert-manager,ingress-nginx,cnpg,openobserve,argocd`
 - `dorgu.io/setup-environment` — value: `development`
 - `dorgu.io/setup-timestamp` — value: a valid RFC 3339 timestamp
 
@@ -562,6 +643,12 @@ Expected annotations present:
 kubectl get crd | grep cert-manager
 ```
 Expected: Certificate, Issuer, ClusterIssuer, etc. CRDs exist
+
+**CNPG CRDs installed:**
+```bash
+kubectl get crd | grep cnpg
+```
+Expected: Cluster, Backup, ScheduledBackup CRDs from CloudNativePG
 
 **ingress-nginx admission webhook:**
 ```bash
@@ -577,7 +664,7 @@ dorgu cluster status qa-cluster
 
 Ask the user to verify:
 - Phase is Ready
-- Discovered Add-ons now includes cert-manager, ingress-nginx, openobserve, argocd
+- Discovered Add-ons now includes cert-manager, ingress-nginx, cnpg, openobserve, argocd
 - If add-ons don't appear yet, wait 2-5 minutes for operator reconciliation and re-check
 
 **Deep addon status check:**
@@ -590,6 +677,52 @@ For each addon, verify:
 - `healthy: true` (or check operator logs if not)
 - `version` is populated
 - `namespace` is correct
+
+---
+
+## Phase 7.5: Helm Recovery & Dependency Enforcement
+
+These tests validate the Helm recovery logic (BUG-08-2 fix) and DependsOn enforcement (BUG-07-1 fix).
+
+### 7.5.1 Failed release cleanup
+
+First, create a deliberately failed Helm release in one of the setup namespaces:
+
+```bash
+# Create a failed release to simulate a broken state:
+helm install cert-manager oci://ghcr.io/some-nonexistent/chart --namespace cert-manager --create-namespace --timeout 10s 2>/dev/null || true
+
+# Verify it's in failed state:
+helm list -n cert-manager
+# Expected: cert-manager with STATUS=failed
+```
+
+Now run setup — it should detect and clean the failed release:
+
+```bash
+dorgu cluster setup --cluster-persona qa-cluster --environment development
+```
+
+Ask the user to verify:
+- Setup detects the failed release during pre-install check
+- Setup automatically cleans up the failed release before installing
+- cert-manager installs successfully despite the pre-existing failed state
+- No manual cleanup was needed
+
+### 7.5.2 Dependency enforcement
+
+This test requires simulating a dependency failure. The easiest way is to observe behavior when a required component's dependency fails.
+
+Ask the user to verify by inspecting the install loop logic:
+- If cert-manager were to fail, ingress-nginx would be **skipped** with message like: `dependency "cert-manager" not installed — skipping ingress-nginx`
+- If CNPG were to fail, OpenObserve would be skipped similarly
+- The install loop tracks `installed` components and checks `DependsOn` before each install
+
+If the user wants a live test:
+```bash
+# Temporarily break cert-manager's chart version to force a failure:
+# (This requires modifying stack.go temporarily — only do if user is comfortable)
+```
 
 ---
 
@@ -623,6 +756,78 @@ Ask the user to verify:
 
 ---
 
+## Phase 8.5: GitOps Mode
+
+These tests validate the `--gitops` flag that scaffolds an ArgoCD App-of-Apps directory instead of running imperative Helm installs.
+
+### 8.5.1 GitOps dry-run
+
+```bash
+dorgu cluster setup --gitops --dry-run
+```
+
+Walk through the wizard (environment selection, component selection, confirm).
+
+Ask the user to verify:
+- Output describes the GitOps scaffold structure that would be created
+- **No files are actually created on disk**
+- The `--gitops-output` directory does NOT exist after the command
+
+### 8.5.2 GitOps scaffold generation
+
+```bash
+dorgu cluster setup --gitops --gitops-output /tmp/test-gitops
+```
+
+Walk through the wizard (select all defaults — 5 required + skip external-secrets).
+
+Ask the user to verify:
+- Directory structure is created at `/tmp/test-gitops/`
+- Verify files exist:
+  ```bash
+  find /tmp/test-gitops -type f | sort
+  ```
+- Expected structure includes:
+  - `README.md` — usage instructions
+  - `argocd/root-app.yaml` — App-of-Apps root Application
+  - `clusters/<persona>/kustomization.yaml`
+  - Per-component: `clusters/<persona>/apps/<component>.yaml` (ArgoCD Application)
+  - Per-component: `clusters/<persona>/values/<component>.yaml` (value overrides)
+
+**Validate YAML:**
+```bash
+kubectl apply --dry-run=client -f /tmp/test-gitops/argocd/root-app.yaml
+```
+Expected: valid Application resource (no errors)
+
+**Inspect an ArgoCD Application manifest:**
+```bash
+cat /tmp/test-gitops/clusters/*/apps/cert-manager.yaml
+```
+Verify:
+- `apiVersion: argoproj.io/v1alpha1`
+- `kind: Application`
+- References correct Helm repo URL (`https://charts.jetstack.io`)
+- References correct chart version
+
+### 8.5.3 GitOps with custom output dir
+
+```bash
+dorgu cluster setup --gitops --gitops-output ./my-custom-gitops
+```
+
+Ask the user to verify:
+- Files are created in `./my-custom-gitops/` (relative path works)
+- Same structure as 8.5.2
+
+### 8.5.4 Cleanup
+
+```bash
+rm -rf /tmp/test-gitops ./my-custom-gitops
+```
+
+---
+
 ## Phase 9: Cluster setup — Optional component (External Secrets)
 
 ### 9.1 Install with External Secrets
@@ -634,7 +839,7 @@ dorgu cluster setup --cluster-persona qa-cluster --environment development
 This time, when prompted for External Secrets, press **y** to install it.
 
 Ask the user to verify:
-- Installation plan shows **5 components** (all 3 required + argocd + external-secrets)
+- Installation plan shows **6 components** (5 required + external-secrets)
 - External Secrets installs successfully after argocd
 - Validation shows external-secrets pods as Running
 
@@ -649,15 +854,15 @@ kubectl get clusterpersona qa-cluster \
 Expected:
 - external-secrets pods running
 - Helm release deployed
-- Annotation includes `external-secrets` in the comma-separated list
+- Annotation: `cert-manager,ingress-nginx,cnpg,openobserve,argocd,external-secrets`
 
-### 9.2 ClusterPersona status with all 4 addons
+### 9.2 ClusterPersona status with all 6 addons
 
 ```bash
 dorgu cluster status qa-cluster
 ```
 
-Wait for operator reconciliation (2-5 min) and verify external-secrets appears in the Discovered Add-ons list.
+Wait for operator reconciliation (2-5 min) and verify external-secrets appears in the Discovered Add-ons list alongside cert-manager, ingress-nginx, cnpg, openobserve, and argocd.
 
 ---
 
@@ -779,7 +984,15 @@ kubectl get ingressclass
 # Expected: nginx IngressClass exists
 ```
 
-### 12.3 openobserve verification
+### 12.3 CloudNativePG verification
+
+```bash
+kubectl get pods -n cnpg-system
+kubectl get crds | grep cnpg
+# Expected: Cluster, Backup, ScheduledBackup CRDs from CloudNativePG operator
+```
+
+### 12.4 OpenObserve verification
 
 ```bash
 kubectl get pods -n openobserve
@@ -791,7 +1004,7 @@ curl -s http://localhost:5080/healthz
 kill %1
 ```
 
-### 12.4 ArgoCD verification
+### 12.5 ArgoCD verification
 
 ```bash
 kubectl get pods -n argocd
@@ -807,7 +1020,7 @@ kubectl get crds | grep argoproj
 # Expected: Application, AppProject, ApplicationSet CRDs exist
 ```
 
-### 12.5 external-secrets verification (if installed)
+### 12.6 external-secrets verification (if installed)
 
 ```bash
 kubectl get pods -n external-secrets
@@ -827,14 +1040,14 @@ kubectl get clusterpersona qa-cluster -o yaml
 
 In the `.status.addons` array, verify each installed component:
 
-| Field | cert-manager | ingress-nginx | openobserve | argocd | external-secrets |
-|-------|-------------|---------------|-------------|--------|-----------------|
-| name | cert-manager | ingress-nginx | openobserve | argocd | external-secrets |
-| type | cert-management | ingress | monitoring/logging | gitops | secrets |
-| installed | true | true | true | true | true (if installed) |
-| version | populated | populated | populated | populated | populated |
-| namespace | cert-manager | ingress-nginx | openobserve | argocd | external-secrets |
-| healthy | true | true | true | true | true |
+| Field | cert-manager | ingress-nginx | cnpg | openobserve | argocd | external-secrets |
+|-------|-------------|---------------|------|-------------|--------|-----------------|
+| name | cert-manager | ingress-nginx | cnpg | openobserve | argocd | external-secrets |
+| type | cert-management | ingress | database | monitoring/logging | gitops | secrets |
+| installed | true | true | true | true | true | true (if installed) |
+| version | populated | populated | populated | populated | populated | populated |
+| namespace | cert-manager | ingress-nginx | cnpg-system | openobserve | argocd | external-secrets |
+| healthy | true | true | true | true | true | true |
 
 ### 13.2 Verify node information
 
@@ -858,6 +1071,7 @@ kubectl get clusterpersona qa-cluster -o jsonpath='{.status.resourceSummary}' | 
 
 Verify:
 - totalCPU and totalMemory are populated and reasonable
+- **nodeCount** matches actual node count (e.g. `1` on single-node Kind)
 - totalPods shows capacity
 - Utilization percentages are present (if populated by operator)
 
@@ -870,11 +1084,12 @@ Verify:
 ```bash
 helm uninstall cert-manager -n cert-manager
 helm uninstall ingress-nginx -n ingress-nginx
+helm uninstall cnpg -n cnpg-system
 helm uninstall openobserve -n openobserve
-helm uninstall argocd -n argocd 2>/dev/null
+helm uninstall argocd -n argocd
 helm uninstall external-secrets -n external-secrets 2>/dev/null
 
-kubectl delete ns cert-manager ingress-nginx openobserve argocd external-secrets 2>/dev/null
+kubectl delete ns cert-manager ingress-nginx cnpg-system openobserve argocd external-secrets 2>/dev/null
 ```
 
 ### 14.2 Remove ClusterPersona
@@ -920,18 +1135,20 @@ At the end, produce a summary like:
   Phase 2: Operator & CRDs .............. 4/4 PASS
   Phase 3: ClusterPersona Init .......... 6/6 PASS
   Phase 4: Cluster Status ............... 5/5 PASS
-  Phase 5: Preflight Checks ............. 2/3 PASS (1 SKIP)
+  Phase 5: Preflight Checks ............. 4/7 PASS (3 SKIP)
   Phase 6: Dry-run Mode ................. 4/4 PASS
   Phase 7: Full Installation ............ 3/3 PASS
+  Phase 7.5: Helm Recovery .............. 2/2 PASS
   Phase 8: Idempotency .................. 2/2 PASS
+  Phase 8.5: GitOps Mode ................ 4/4 PASS
   Phase 9: Optional Components .......... 2/2 PASS
   Phase 10: Skip Validation ............. 1/1 PASS
   Phase 11: Edge Cases .................. 4/5 PASS (1 FAIL)
-  Phase 12: Component Verification ...... 4/4 PASS
+  Phase 12: Component Verification ...... 5/6 PASS (1 SKIP)
   Phase 13: Addon Discovery ............. 3/3 PASS
   Phase 14: Cleanup ..................... 4/4 PASS
   ────────────────────────────────────────────────
-  TOTAL: 48/50 PASS | 1 FAIL | 1 SKIP
+  TOTAL: 57/62 PASS | 1 FAIL | 4 SKIP
 
   Failed tests:
   - 11.4: Invalid input at environment prompt accepted "foobar"
@@ -939,6 +1156,9 @@ At the end, produce a summary like:
 
   Skipped tests:
   - 5.2: Preflight kubectl missing — user could not simulate
+  - 5.3: Preflight helm missing — user could not simulate
+  - 5.5: Production context warning — user could not simulate
+  - 12.6: external-secrets — not installed in this run
 
   Notes:
   - [Any user-provided notes from the session]
