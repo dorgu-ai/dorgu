@@ -19,6 +19,8 @@ var clusterSetupFlags struct {
 	environment        string
 	dryRun             bool
 	skipValidation     bool
+	gitops             bool
+	gitopsOutputDir    string
 	kubeContext        string
 }
 
@@ -39,10 +41,14 @@ The Blessed Stack includes:
 The result is recorded as annotations on your ClusterPersona CRD. The Dorgu
 Operator will discover the installed components within 5 minutes.
 
+Use --gitops to scaffold a GitOps repository with ArgoCD Application manifests
+instead of installing components imperatively.
+
 Examples:
   dorgu cluster setup
   dorgu cluster setup --cluster-persona my-cluster --environment production
-  dorgu cluster setup --dry-run`,
+  dorgu cluster setup --dry-run
+  dorgu cluster setup --gitops --gitops-output ./my-cluster-gitops`,
 	RunE: runClusterSetup,
 }
 
@@ -51,6 +57,8 @@ func init() {
 	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.environment, "environment", "", "environment override: development, staging, production")
 	clusterSetupCmd.Flags().BoolVar(&clusterSetupFlags.dryRun, "dry-run", false, "print helm commands without executing them")
 	clusterSetupCmd.Flags().BoolVar(&clusterSetupFlags.skipValidation, "skip-validation", false, "skip post-install pod health checks")
+	clusterSetupCmd.Flags().BoolVar(&clusterSetupFlags.gitops, "gitops", false, "scaffold a GitOps repository instead of installing imperatively")
+	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.gitopsOutputDir, "gitops-output", "./dorgu-cluster-gitops", "output directory for GitOps repo scaffold")
 	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.kubeContext, "context", "", "kube-context to use (defaults to current-context)")
 }
 
@@ -175,6 +183,17 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 	if len(selected) == 0 {
 		output.Warn("No components selected. Exiting.")
 		return nil
+	}
+
+	// GitOps mode: scaffold a repo instead of imperatively installing
+	if clusterSetupFlags.gitops {
+		return setup.ScaffoldGitOpsRepo(setup.GitOpsConfig{
+			OutputDir:          clusterSetupFlags.gitopsOutputDir,
+			ClusterPersonaName: personaName,
+			Environment:        environment,
+			Components:         selected,
+			DryRun:             clusterSetupFlags.dryRun,
+		})
 	}
 
 	// 8. Build SetupConfig
