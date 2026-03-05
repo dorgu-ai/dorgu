@@ -390,6 +390,9 @@ func TestInstallComponent_FreshInstall(t *testing.T) {
 	result := InstallComponent(ex, comp, cfg)
 	if !result.Succeeded {
 		t.Fatalf("expected success, got error: %v", result.Error)
+	}
+}
+
 func TestGetCurrentKubeContext(t *testing.T) {
 	ex := &sequentialExecutor{
 		calls: []seqCall{
