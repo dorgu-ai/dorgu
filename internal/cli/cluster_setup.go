@@ -217,18 +217,45 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("preflight chart check failed: %w", err)
 	}
 
-	// 11. Install each component
+	// 11. Install each component (with dependency enforcement)
 	fmt.Println()
 	output.Header("Installing components...")
 	fmt.Println()
 
 	var results []setup.InstallResult
+	installed := make(map[setup.ComponentID]bool)
+
 	for i, c := range cfg.Components {
+		// Check dependencies: all DependsOn must be in the installed set
+		depsMet := true
+		var missingDep setup.ComponentID
+		for _, dep := range c.DependsOn {
+			if !installed[dep] {
+				depsMet = false
+				missingDep = dep
+				break
+			}
+		}
+		if !depsMet {
+			result := setup.InstallResult{
+				Component: c,
+				Succeeded: false,
+				Error:     fmt.Errorf("dependency %q not installed — skipping %s", missingDep, c.DisplayName),
+			}
+			setup.PrintComponentResult(result)
+			results = append(results, result)
+			continue
+		}
+
 		stop := setup.PrintComponentProgress(os.Stderr, c, i+1, len(cfg.Components))
 		result := setup.InstallComponent(ex, c, cfg)
 		stop()
 		setup.PrintComponentResult(result)
 		results = append(results, result)
+
+		if result.Succeeded {
+			installed[c.ID] = true
+		}
 	}
 
 	// 12. Validate

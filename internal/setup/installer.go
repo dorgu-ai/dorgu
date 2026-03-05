@@ -83,15 +83,78 @@ func BuildHelmArgs(c ComponentConfig, version string) []string {
 	return args
 }
 
+// ReleaseStatus represents the state of a Helm release.
+type ReleaseStatus string
+
+const (
+	ReleaseNotFound ReleaseStatus = "not-found"
+	ReleaseDeployed ReleaseStatus = "deployed"
+	ReleaseFailed   ReleaseStatus = "failed"
+	ReleasePending  ReleaseStatus = "pending-install"
+	ReleaseOther    ReleaseStatus = "other"
+)
+
+// CheckReleaseStatus runs: helm status <release> -n <namespace> -o json
+// Returns the release status or ReleaseNotFound if no release exists.
+func CheckReleaseStatus(ex Executor, releaseName, namespace string) ReleaseStatus {
+	out, err := ex.Run("helm", "status", releaseName, "-n", namespace, "-o", "json")
+	if err != nil {
+		if strings.Contains(out, "not found") || strings.Contains(fmt.Sprintf("%v", err), "not found") {
+			return ReleaseNotFound
+		}
+		return ReleaseOther
+	}
+	lower := strings.ToLower(out)
+	switch {
+	case strings.Contains(lower, `"status":"deployed"`):
+		return ReleaseDeployed
+	case strings.Contains(lower, `"status":"failed"`):
+		return ReleaseFailed
+	case strings.Contains(lower, `"status":"pending-install"`):
+		return ReleasePending
+	default:
+		return ReleaseOther
+	}
+}
+
+// CleanFailedRelease runs: helm uninstall <release> -n <namespace>
+// Only call when CheckReleaseStatus returns ReleaseFailed or ReleasePending.
+func CleanFailedRelease(ex Executor, releaseName, namespace string) error {
+	out, err := ex.Run("helm", "uninstall", releaseName, "-n", namespace)
+	if err != nil {
+		return fmt.Errorf("helm uninstall %s -n %s: %w\n%s", releaseName, namespace, err, out)
+	}
+	return nil
+}
+
 // InstallComponent runs: helm upgrade --install <release> <chart> \
 //
 //	--namespace <ns> --version <ver> --create-namespace --wait --timeout 5m0s \
 //	[--set k=v ...] [--values file]
 //
+// Before installing, checks for failed/pending releases and cleans them up.
 // Applies VersionOverrides from cfg before building args.
 // Returns InstallResult with Duration and HelmOutput.
 func InstallComponent(ex Executor, c ComponentConfig, cfg SetupConfig) InstallResult {
 	start := time.Now()
+
+	// Pre-install: check for existing failed release and clean it up
+	status := CheckReleaseStatus(ex, c.HelmReleaseName, c.Namespace)
+	switch status {
+	case ReleaseFailed, ReleasePending:
+		if err := CleanFailedRelease(ex, c.HelmReleaseName, c.Namespace); err != nil {
+			return InstallResult{
+				Component: c,
+				Succeeded: false,
+				Error:     fmt.Errorf("failed to clean broken release %s: %w", c.HelmReleaseName, err),
+				Duration:  time.Since(start),
+			}
+		}
+	case ReleaseDeployed:
+		// Already installed — proceed with upgrade to apply any version changes
+	case ReleaseNotFound:
+		// Fresh install
+	}
 
 	version := c.Version
 	if cfg.VersionOverrides != nil {
@@ -103,8 +166,13 @@ func InstallComponent(ex Executor, c ComponentConfig, cfg SetupConfig) InstallRe
 	args := BuildHelmArgs(c, version)
 	out, err := ex.Run("helm", args...)
 
-	// Retry once on context deadline exceeded (common with ingress-nginx on Kind/desktop)
+	// Retry once on context deadline exceeded (common with ingress-nginx on Kind)
 	if err != nil && strings.Contains(fmt.Sprintf("%v %s", err, out), "context deadline exceeded") {
+		// Clean up failed release before retry
+		retryStatus := CheckReleaseStatus(ex, c.HelmReleaseName, c.Namespace)
+		if retryStatus == ReleaseFailed || retryStatus == ReleasePending {
+			_ = CleanFailedRelease(ex, c.HelmReleaseName, c.Namespace)
+		}
 		time.Sleep(retryDelay)
 		out, err = ex.Run("helm", args...)
 	}
