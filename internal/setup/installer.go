@@ -297,14 +297,14 @@ func CheckOperatorInstalled(ex Executor) error {
 		return fmt.Errorf("dorgu operator CRD not found — install the operator first:\n  helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator -n dorgu-system --create-namespace")
 	}
 
-	out, err = ex.Run("kubectl", "get", "pods", "-n", "dorgu-system",
-		"--field-selector=status.phase=Running", "--no-headers")
-	if err != nil {
-		return fmt.Errorf("failed to check operator pods: %w", err)
-	}
-	if !strings.Contains(out, "dorgu-operator") {
-		return fmt.Errorf("dorgu operator pod not running in dorgu-system namespace — ensure the operator is deployed and healthy")
+	// Check both known operator namespaces: dorgu-system (released) and dorgu-operator-system (local dev)
+	for _, ns := range []string{"dorgu-system", "dorgu-operator-system"} {
+		out, err = ex.Run("kubectl", "get", "pods", "-n", ns,
+			"--field-selector=status.phase=Running", "--no-headers")
+		if err == nil && strings.Contains(out, "dorgu-operator") {
+			return nil
+		}
 	}
 
-	return nil
+	return fmt.Errorf("dorgu operator pod not running in dorgu-system or dorgu-operator-system namespace — ensure the operator is deployed and healthy")
 }
