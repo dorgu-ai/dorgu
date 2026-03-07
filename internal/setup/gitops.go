@@ -17,6 +17,7 @@ type GitOpsConfig struct {
 	Environment        string
 	Components         []ComponentConfig
 	DryRun             bool
+	RepoURL            string
 }
 
 // ScaffoldGitOpsRepo creates a directory structure suitable for ArgoCD
@@ -35,6 +36,9 @@ type GitOpsConfig struct {
 //	      apps/
 //	        <component>.yaml
 func ScaffoldGitOpsRepo(cfg GitOpsConfig) error {
+	if cfg.RepoURL == "" && !cfg.DryRun {
+		return fmt.Errorf("RepoURL is required for GitOps scaffolding")
+	}
 	if cfg.DryRun {
 		output.Info("GitOps mode (dry-run): would scaffold to " + cfg.OutputDir)
 		fmt.Println()
@@ -97,8 +101,8 @@ func ScaffoldGitOpsRepo(cfg GitOpsConfig) error {
 	output.Info("Next steps:")
 	output.DimPrint("  1. cd " + cfg.OutputDir)
 	output.DimPrint("  2. git init && git add -A && git commit -m 'Initial cluster GitOps scaffold'")
-	output.DimPrint("  3. Push to your Git remote")
-	output.DimPrint("  4. Update argocd/root-app.yaml with your Git repo URL")
+	output.DimPrint("  3. git remote add origin " + cfg.RepoURL)
+	output.DimPrint("  4. git push -u origin main")
 	output.DimPrint("  5. Apply the root app: kubectl apply -f argocd/root-app.yaml")
 	fmt.Println()
 
@@ -171,9 +175,8 @@ This repository was scaffolded by ` + "`dorgu cluster setup --gitops`" + `.
 ## Getting Started
 
 1. Push this repo to your Git remote
-2. Update ` + "`argocd/root-app.yaml`" + ` with your Git repo URL (replace ` + "`<YOUR_GIT_REPO_URL>`" + `)
-3. Apply the root application: ` + "`kubectl apply -f argocd/root-app.yaml`" + `
-4. ArgoCD will sync all components automatically
+2. Apply the root application: ` + "`kubectl apply -f argocd/root-app.yaml`" + `
+3. ArgoCD will sync all components automatically
 
 ## Customizing Components
 
@@ -193,7 +196,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: <YOUR_GIT_REPO_URL>
+    repoURL: {{.RepoURL}}
     path: clusters/{{.ClusterPersonaName}}/apps
     targetRevision: HEAD
   destination:

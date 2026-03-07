@@ -3,6 +3,7 @@ package setup
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -38,6 +39,7 @@ func TestScaffoldGitOpsRepo_CreatesStructure(t *testing.T) {
 		Environment:        "production",
 		Components:         components,
 		DryRun:             false,
+		RepoURL:            "https://github.com/org/my-gitops.git",
 	}
 	err := ScaffoldGitOpsRepo(cfg)
 	if err != nil {
@@ -71,6 +73,7 @@ func TestScaffoldGitOpsRepo_ArgoAppContent(t *testing.T) {
 		Environment:        "development",
 		Components:         components,
 		DryRun:             false,
+		RepoURL:            "https://github.com/org/test-repo.git",
 	}
 	err := ScaffoldGitOpsRepo(cfg)
 	if err != nil {
@@ -93,5 +96,48 @@ func TestScaffoldGitOpsRepo_ArgoAppContent(t *testing.T) {
 	}
 	if !containsStr(content, "namespace: cert-manager") {
 		t.Error("ArgoCD Application YAML missing namespace")
+	}
+}
+
+func TestScaffoldGitOpsRepo_RepoURLPopulated(t *testing.T) {
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "gitops-output")
+	cfg := GitOpsConfig{
+		OutputDir:          outDir,
+		ClusterPersonaName: "test-cluster",
+		Environment:        "development",
+		Components:         blessedComponents()[:1],
+		DryRun:             false,
+		RepoURL:            "https://github.com/org/my-gitops.git",
+	}
+	err := ScaffoldGitOpsRepo(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	rootApp, err := os.ReadFile(filepath.Join(outDir, "argocd", "root-app.yaml"))
+	if err != nil {
+		t.Fatalf("failed to read root-app.yaml: %v", err)
+	}
+	if !strings.Contains(string(rootApp), "https://github.com/org/my-gitops.git") {
+		t.Error("root-app.yaml should contain the actual repo URL")
+	}
+	if strings.Contains(string(rootApp), "<YOUR_GIT_REPO_URL>") {
+		t.Error("root-app.yaml should not contain placeholder")
+	}
+}
+
+func TestScaffoldGitOpsRepo_MissingRepoURL(t *testing.T) {
+	dir := t.TempDir()
+	cfg := GitOpsConfig{
+		OutputDir:          filepath.Join(dir, "out"),
+		ClusterPersonaName: "test",
+		Environment:        "development",
+		Components:         blessedComponents()[:1],
+		DryRun:             false,
+		RepoURL:            "",
+	}
+	err := ScaffoldGitOpsRepo(cfg)
+	if err == nil {
+		t.Fatal("expected error for empty RepoURL")
 	}
 }
