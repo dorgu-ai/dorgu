@@ -85,13 +85,8 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 
 	// Always show current context before proceeding
 	{
-		var preflightEx setup.Executor
-		if clusterSetupFlags.dryRun {
-			preflightEx = &setup.DryRunExecutor{}
-		} else {
-			preflightEx = &setup.OSExecutor{}
-		}
-		detected, err := setup.GetCurrentKubeContext(preflightEx)
+		realEx := &setup.OSExecutor{}
+		detected, err := setup.GetCurrentKubeContext(realEx)
 		if err != nil {
 			output.Warn("Could not detect kube-context — proceeding with default")
 		} else {
@@ -151,6 +146,16 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 			output.Success(fmt.Sprintf("ClusterPersona detected: %q", personaName))
 		}
 	} else {
+		if !clusterSetupFlags.dryRun {
+			checkEx := &setup.OSExecutor{}
+			if err := setup.ValidateClusterPersonaExists(checkEx, personaName); err != nil {
+				output.ErrorWithHint(
+					fmt.Sprintf("ClusterPersona %q not found in cluster", personaName),
+					"List available: dorgu cluster status",
+					"Create one: dorgu cluster init --name <name> --environment <env>")
+				return errSilent
+			}
+		}
 		output.Success(fmt.Sprintf("ClusterPersona: %q (from --cluster-persona flag)", personaName))
 	}
 

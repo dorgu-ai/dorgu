@@ -458,13 +458,41 @@ func TestCheckOperatorInstalled_CRDMissing(t *testing.T) {
 func TestCheckOperatorInstalled_PodNotRunning(t *testing.T) {
 	ex := &sequentialExecutor{
 		calls: []seqCall{
-			{output: "clusterpersonas   dorgu.io/v1", err: nil},
-			{output: "", err: nil},
+			{output: "clusterpersonas   dorgu.io/v1", err: nil}, // CRD check
+			{output: "", err: nil},                              // dorgu-system namespace
+			{output: "", err: nil},                              // dorgu-operator-system namespace
 		},
 	}
 	err := CheckOperatorInstalled(ex)
 	if err == nil {
 		t.Fatal("expected error when operator pod is not running")
+	}
+}
+
+func TestValidateClusterPersonaExists_Found(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "my-cluster  development  Ready  1  0  5m", err: nil},
+		},
+	}
+	err := ValidateClusterPersonaExists(ex, "my-cluster")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateClusterPersonaExists_NotFound(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "Error from server (NotFound): clusterpersonas.dorgu.io \"nonexistent\" not found", err: fmt.Errorf("exit code 1")},
+		},
+	}
+	err := ValidateClusterPersonaExists(ex, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for non-existent ClusterPersona")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error should contain persona name, got: %v", err)
 	}
 }
 

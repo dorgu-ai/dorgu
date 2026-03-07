@@ -215,6 +215,15 @@ func CheckChartAvailability(ex Executor, components []ComponentConfig) error {
 	return nil
 }
 
+// ValidateClusterPersonaExists checks that a ClusterPersona with the given name exists.
+func ValidateClusterPersonaExists(ex Executor, name string) error {
+	out, err := ex.Run("kubectl", "get", "clusterpersona", name, "--no-headers")
+	if err != nil {
+		return fmt.Errorf("ClusterPersona %q not found: %w\n%s", name, err, out)
+	}
+	return nil
+}
+
 // AutoDetectClusterPersonaName runs: kubectl get clusterpersona --no-headers -o name
 // Returns the name if exactly one ClusterPersona exists.
 // Returns an error with a hint if zero or more than one exist.
