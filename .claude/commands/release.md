@@ -1,36 +1,69 @@
 # Release
 
-Cut a new Dorgu CLI release. The argument to this command is the version to release (e.g. `/release v0.2.1`).
+Cut a new Dorgu CLI release. Optionally pass a version (e.g. `/release v0.3.0`). If no version is provided, it is auto-detected from commit history.
 
-If no version is provided, determine the next version by reading `CHANGELOG.md` and the latest git tag.
-
-## Step 1: Pre-flight checks
+## Step 1: Auto-detect version (if not provided)
 
 ```bash
-# Confirm you're on main and it's clean
-git status
-git log --oneline -5
+# Get latest tag
+git describe --tags --abbrev=0
 
-# Run full CI check (must pass before tagging)
+# List commits since last tag
+git log $(git describe --tags --abbrev=0)..HEAD --oneline --no-merges
+```
+
+Determine the bump type from commit prefixes:
+
+| Commit prefix | Bump |
+|---------------|------|
+| `feat:` or `add:` with `!` or `BREAKING` in message | **major** (vX.0.0) |
+| `feat:` or `add:` | **minor** (v0.X.0) |
+| `fix:`, `chore:`, `refactor:`, anything else | **patch** (v0.0.X) |
+
+Calculate the next version by parsing the latest tag and applying the bump.
+
+**Ask the user to confirm** the proposed version before proceeding:
+
+> Proposed version: `v0.3.0` (minor bump — found `feat:` commits since `v0.2.0`)
+>
+> Commits included:
+> - abc1234 feat: interactive gitops scaffolding
+> - def5678 fix: validate cluster-persona flag
+>
+> Proceed with v0.3.0?
+
+If the user provides an explicit version as argument, skip auto-detection and use it directly.
+
+## Step 2: Pre-flight checks
+
+```bash
+# Must be on main branch and clean
+git branch --show-current    # must be "main" or "master"
+git status                   # must be clean (no uncommitted changes)
+
+# Full CI check
 make check
 
-# Run with coverage to see the current test state
-make test-coverage
+# Verify binary builds
+make build
+./build/dorgu version
 ```
 
 If `make check` fails, stop and fix the issues. Do not tag a failing build.
 
-## Step 2: Verify the binary builds cleanly
+## Step 3: Validate CHANGELOG.md
 
 ```bash
-make build
-./build/dorgu version
-# Confirm the version string looks right (will show "dev" for untagged builds)
+# Check that [Unreleased] section has content
+head -30 CHANGELOG.md
 ```
 
-## Step 3: Update CHANGELOG.md
+If `[Unreleased]` is empty (no entries), warn the user:
+> CHANGELOG.md has no entries under [Unreleased]. Run `/changelog` first to populate it, or add entries manually.
 
-Open `CHANGELOG.md` and move items from `[Unreleased]` into a new versioned section:
+## Step 4: Update CHANGELOG.md
+
+Move items from `[Unreleased]` into a new versioned section:
 
 ```markdown
 ## [<VERSION>] - <YYYY-MM-DD>
@@ -50,31 +83,29 @@ Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions:
 - **Changed** — changes to existing functionality
 - **Fixed** — bug fixes
 - **Removed** — removed features
-- **Deprecated** — features that will be removed
 
 Leave `[Unreleased]` section empty and ready for the next cycle.
 
-## Step 4: Commit the changelog
+## Step 5: Commit the changelog
 
 ```bash
 git add CHANGELOG.md
 git commit -m "chore: release <VERSION>"
 ```
 
-## Step 5: Tag the release
+## Step 6: Tag the release
 
 ```bash
 git tag -a <VERSION> -m "Release <VERSION>"
 ```
 
-Version must follow semver (`vMAJOR.MINOR.PATCH`). Pre-releases use `-rc.N` suffix (e.g. `v0.2.1-rc.1`).
+Version must follow semver (`vMAJOR.MINOR.PATCH`). Pre-releases use `-rc.N` suffix (e.g. `v0.3.0-rc.1`).
 
-## Step 6: Verify the build with GoReleaser (dry run)
+## Step 7: Verify the build with GoReleaser (dry run)
 
 ```bash
 make goreleaser
-# This runs: goreleaser release --snapshot --clean
-# Builds all platform binaries to ./dist/ without publishing
+# Runs: goreleaser release --snapshot --clean
 ```
 
 Check that `./dist/` contains binaries for:
@@ -84,7 +115,12 @@ Check that `./dist/` contains binaries for:
 - `dorgu_darwin_arm64`
 - `dorgu_windows_amd64`
 
-## Step 7: Push tag to trigger release workflow
+## Step 8: Push tag to trigger release workflow
+
+**Ask the user to confirm before pushing:**
+
+> Ready to push tag `<VERSION>` to origin. This will trigger the release CI workflow.
+> Push now?
 
 ```bash
 git push origin main
@@ -93,16 +129,12 @@ git push origin <VERSION>
 
 The `release.yaml` GitHub Actions workflow triggers on tag push and runs GoReleaser to publish binaries and create the GitHub Release.
 
-## Step 8: Verify the release
+## Step 9: Verify the release
 
 After CI completes:
 1. Check GitHub Releases page for `<VERSION>` with attached binaries and checksums
-2. Test install from the release: `go install github.com/dorgu-ai/dorgu/cmd/dorgu@<VERSION>`
+2. Test install: `go install github.com/dorgu-ai/dorgu/cmd/dorgu@<VERSION>`
 3. Verify `dorgu version` output matches the tag
-
-## Step 9: Update the Operator release (if needed)
-
-If this CLI release corresponds to an Operator release, go to `dorgu-ai/dorgu-operator` and repeat the same steps there. The Helm chart version in `charts/dorgu-operator/Chart.yaml` should also be bumped and published to GHCR.
 
 ## Rollback
 
@@ -113,4 +145,11 @@ git tag -d <VERSION>
 git push origin :refs/tags/<VERSION>
 ```
 
-Then fix the issue, update CHANGELOG.md (amend the section), and re-tag.
+Then fix the issue, update CHANGELOG.md, and re-tag.
+
+## Conventions
+
+- No `Co-Authored-By` or contributor attribution in the release commit
+- Commit message: `chore: release <VERSION>`
+- Tag message: `Release <VERSION>`
+- Do not skip hooks (`--no-verify`)
