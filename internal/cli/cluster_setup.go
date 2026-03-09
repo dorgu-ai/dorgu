@@ -192,13 +192,31 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 
 	// GitOps mode: scaffold a repo instead of imperatively installing
 	if clusterSetupFlags.gitops {
-		return setup.ScaffoldGitOpsRepo(setup.GitOpsConfig{
-			OutputDir:          clusterSetupFlags.gitopsOutputDir,
+		var repoURL string
+		if !clusterSetupFlags.dryRun {
+			var err error
+			repoURL, err = setup.PromptGitRepoURL(reader)
+			if err != nil {
+				return fmt.Errorf("GitOps setup cancelled: %w", err)
+			}
+		}
+		gitopsDir := setup.PromptGitOpsOutputDir(reader, clusterSetupFlags.gitopsOutputDir)
+
+		err := setup.ScaffoldGitOpsRepo(setup.GitOpsConfig{
+			OutputDir:          gitopsDir,
 			ClusterPersonaName: personaName,
 			Environment:        environment,
 			Components:         selected,
 			DryRun:             clusterSetupFlags.dryRun,
+			RepoURL:            repoURL,
 		})
+		if err != nil {
+			return err
+		}
+		if !clusterSetupFlags.dryRun {
+			setup.ConfirmGitOpsPush(reader, repoURL, gitopsDir)
+		}
+		return nil
 	}
 
 	// 8. Build SetupConfig

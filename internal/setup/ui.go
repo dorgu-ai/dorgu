@@ -26,15 +26,66 @@ func PrintWelcomeBanner() {
 }
 
 // PromptEnvironment prompts: "? Environment [development/staging/production]:"
-// Returns the entered value (trimmed). Default: "development".
+// Validates against known environments; retries on invalid input.
+// Default: "development".
 func PromptEnvironment(r *bufio.Reader) string {
-	fmt.Printf("? Environment [development/staging/production]: ")
+	validEnvs := map[string]bool{"development": true, "staging": true, "production": true}
+	for {
+		fmt.Printf("? Environment [development/staging/production]: ")
+		input, _ := r.ReadString('\n')
+		input = strings.TrimSpace(input)
+		if input == "" {
+			return "development"
+		}
+		if validEnvs[input] {
+			return input
+		}
+		fmt.Printf("  Invalid environment %q. Choose: development, staging, production\n", input)
+	}
+}
+
+// PromptGitRepoURL prompts for the Git repository URL and validates it.
+// Retries up to 3 times on invalid input.
+func PromptGitRepoURL(r *bufio.Reader) (string, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		fmt.Printf("? Git repository URL (e.g., https://github.com/org/repo.git): ")
+		input, _ := r.ReadString('\n')
+		input = strings.TrimSpace(input)
+		if input == "" {
+			fmt.Println("  Repository URL is required.")
+			continue
+		}
+		if !strings.HasPrefix(input, "https://") && !strings.HasPrefix(input, "git@") && !strings.HasPrefix(input, "ssh://") {
+			fmt.Printf("  Invalid URL %q — must start with https://, git@, or ssh://\n", input)
+			continue
+		}
+		return input, nil
+	}
+	return "", fmt.Errorf("no valid repository URL provided after 3 attempts")
+}
+
+// PromptGitOpsOutputDir prompts for the output directory with a default.
+func PromptGitOpsOutputDir(r *bufio.Reader, defaultDir string) string {
+	fmt.Printf("? Output directory [%s]: ", defaultDir)
 	input, _ := r.ReadString('\n')
 	input = strings.TrimSpace(input)
 	if input == "" {
-		return "development"
+		return defaultDir
 	}
 	return input
+}
+
+// ConfirmGitOpsPush prints push instructions after scaffolding.
+func ConfirmGitOpsPush(r *bufio.Reader, repoURL, outputDir string) {
+	fmt.Println()
+	output.Header("Next: Push to Git and apply")
+	fmt.Println()
+	output.DimPrint("  cd " + outputDir)
+	output.DimPrint("  git init && git add -A && git commit -m 'Initial cluster GitOps scaffold'")
+	output.DimPrint("  git remote add origin " + repoURL)
+	output.DimPrint("  git push -u origin main")
+	output.DimPrint("  kubectl apply -f argocd/root-app.yaml")
+	fmt.Println()
 }
 
 // printStepHeader writes a lipgloss-styled step header box to w.
