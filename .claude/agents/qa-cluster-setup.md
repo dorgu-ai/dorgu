@@ -23,13 +23,13 @@ This is an **interactive guided QA session**. For every test case:
 Read these files to understand the current implementation:
 
 1. `internal/cli/cluster.go` — cluster status and init commands
-2. `internal/cli/cluster_setup.go` — Blessed Stack wizard flow
+2. `internal/cli/cluster_setup.go` — Blessed Stack wizard flow (includes interactive GitOps wiring, preflight validation)
 3. `internal/setup/stack.go` — component definitions and versions
-4. `internal/setup/ui.go` — interactive prompts and output formatting
-5. `internal/setup/installer.go` — executor pattern, helm command building, release status checks
+4. `internal/setup/ui.go` — interactive prompts (PromptEnvironment with validation, PromptGitRepoURL, PromptGitOpsOutputDir, ConfirmGitOpsPush)
+5. `internal/setup/installer.go` — executor pattern, helm command building, release status checks, ValidateClusterPersonaExists
 6. `internal/setup/validator.go` — post-install pod validation
-7. `internal/setup/gitops.go` — GitOps scaffold generation
-8. `internal/setup/gitops_test.go` — GitOps tests
+7. `internal/setup/gitops.go` — GitOps scaffold generation (RepoURL field replaces placeholder)
+8. `internal/setup/gitops_test.go` — GitOps tests (includes repo URL population tests)
 9. `docs-internal/QA_TESTING_GUIDE.md` — reference checklist
 
 ---
@@ -49,11 +49,14 @@ Ask the user these questions before beginning:
 
 **Q3: Which environment are you using?**
 - Kind
+- vCluster (on existing cluster)
 - minikube
 - Docker Desktop Kubernetes
 - Remote cluster (EKS/GKE/AKS/other)
 
 Store these answers — they affect expected outputs throughout the session (e.g. platform detection, operator namespace, install commands).
+
+> **Note:** vCluster is the recommended option for avoiding TLS image pull issues common with Kind behind corporate proxies. vCluster inherits the host cluster's image pull capabilities.
 
 ---
 
@@ -69,6 +72,7 @@ kubectl version --client
 helm version        # Helm v3.x
 docker info         # Docker running
 kind version        # If using Kind
+vcluster version    # If using vCluster
 ```
 
 ### 1.2 Cluster access
@@ -82,6 +86,28 @@ Ask the user to confirm:
 - Cluster is reachable
 - At least one node is Ready
 - Note the node count and Kubernetes version (needed later for ClusterPersona status validation)
+
+### 1.2b vCluster setup (if using vCluster)
+
+If the user selected vCluster as their environment:
+
+```bash
+# Create a vCluster on the host cluster (e.g. staging/prac cluster)
+vcluster create dorgu-qa -n dorgu-qa-vcluster
+
+# Connect to the vCluster (switches kube-context automatically)
+vcluster connect dorgu-qa -n dorgu-qa-vcluster
+
+# Verify you're inside the vCluster
+kubectl cluster-info
+kubectl get nodes
+```
+
+Ask the user to verify:
+- vCluster created successfully
+- kube-context switched to the vCluster context
+- `kubectl get nodes` shows the virtual node(s)
+- Note: vCluster inherits image pull from the host — no TLS issues
 
 ### 1.3 CLI build (if local dev)
 
@@ -135,6 +161,24 @@ helm install dorgu-operator \
   --namespace dorgu-system \
   --create-namespace
 ```
+
+### 2.1c Install operator (vCluster)
+
+When using vCluster, install the released operator chart inside the vCluster context:
+
+```bash
+# Ensure you're connected to the vCluster
+vcluster connect dorgu-qa -n dorgu-qa-vcluster
+
+# Install operator (same as released, but inside the vCluster)
+helm install dorgu-operator \
+  oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --version <VERSION> \
+  --namespace dorgu-system \
+  --create-namespace
+```
+
+> **Note:** Helm chart pulls succeed inside vCluster because it inherits the host cluster's network and image pull configuration, bypassing TLS issues that affect Kind.
 
 ### 2.2 Verify CRDs exist
 
@@ -400,7 +444,7 @@ sudo mv $(which helm).bak $(which helm)
 Ask the user to verify:
 - Command fails immediately with clear error: helm not found
 
-### 5.4 Kube-context display
+### 5.4 Kube-context display (BUG-05-4 fix verified)
 
 ```bash
 dorgu cluster setup --dry-run
@@ -408,8 +452,9 @@ dorgu cluster setup --dry-run
 
 Ask the user to verify (focus on preflight output):
 - **Active kube-context is displayed** before the wizard starts
-- Shows something like `kube-context: "kind-<cluster-name>"` with a success indicator
+- Shows the **real** kube-context name (e.g. `kube-context: "kind-dorgu-dev"` or `kube-context: "vcluster_dorgu-qa_..."`) — NOT a dry-run placeholder
 - Context is shown BEFORE any component selection begins
+- The context detection uses the real `kubectl config current-context` even in dry-run mode (BUG-05-4 fix)
 
 ### 5.5 Production context warning (optional, if user can simulate)
 
@@ -482,8 +527,11 @@ dorgu cluster setup --dry-run
 
 Walk the user through the interactive prompts and ask them to verify:
 
+**Kube-context display:**
+- Shows the **real** kube-context name (not a dry-run placeholder)
+
 **ClusterPersona detection:**
-- Auto-detects `qa-cluster` from the cluster
+- Auto-detects `qa-cluster` from the cluster (or shows placeholder in dry-run without operator)
 - Shows which ClusterPersona will be used
 
 **Environment prompt:**
@@ -756,9 +804,9 @@ Ask the user to verify:
 
 ---
 
-## Phase 8.5: GitOps Mode
+## Phase 8.5: GitOps Mode (Interactive Flow)
 
-These tests validate the `--gitops` flag that scaffolds an ArgoCD App-of-Apps directory instead of running imperative Helm installs.
+These tests validate the `--gitops` flag that scaffolds an ArgoCD App-of-Apps directory. The flow is now **interactive**: it prompts for the Git repository URL, validates parameters, and guides the user through pushing scaffolded files.
 
 ### 8.5.1 GitOps dry-run
 
@@ -766,33 +814,58 @@ These tests validate the `--gitops` flag that scaffolds an ArgoCD App-of-Apps di
 dorgu cluster setup --gitops --dry-run
 ```
 
-Walk through the wizard (environment selection, component selection, confirm).
+Walk through the wizard (environment selection, component selection). In dry-run mode, the repo URL prompt is **skipped** and the output directory prompt still appears.
 
 Ask the user to verify:
 - Output describes the GitOps scaffold structure that would be created
+- Repo URL prompt is **not shown** (skipped in dry-run)
+- Output directory prompt appears with default `./dorgu-cluster-gitops`
 - **No files are actually created on disk**
 - The `--gitops-output` directory does NOT exist after the command
 
-### 8.5.2 GitOps scaffold generation
+### 8.5.2 GitOps interactive scaffold generation
 
 ```bash
 dorgu cluster setup --gitops --gitops-output /tmp/test-gitops
 ```
 
-Walk through the wizard (select all defaults — 5 required + skip external-secrets).
+Walk the user through the **interactive flow**:
 
-Ask the user to verify:
+1. **Environment selection** — choose `development`
+2. **Component selection** — accept all required, skip external-secrets
+3. **Git repository URL prompt** — enter a valid URL like `https://github.com/myorg/my-cluster-gitops.git`
+4. **Output directory prompt** — accept default or customize
+
+Ask the user to verify the prompts:
+- `? Git repository URL (e.g., https://github.com/org/repo.git):` prompt appears
+- Accepts `https://`, `git@`, and `ssh://` prefixed URLs
+- Output directory prompt shows default value in brackets
+
+After scaffolding:
 - Directory structure is created at `/tmp/test-gitops/`
 - Verify files exist:
   ```bash
   find /tmp/test-gitops -type f | sort
   ```
 - Expected structure includes:
-  - `README.md` — usage instructions
+  - `README.md` — usage instructions (no longer mentions replacing placeholder URL)
   - `argocd/root-app.yaml` — App-of-Apps root Application
-  - `clusters/<persona>/kustomization.yaml`
   - Per-component: `clusters/<persona>/apps/<component>.yaml` (ArgoCD Application)
   - Per-component: `clusters/<persona>/values/<component>.yaml` (value overrides)
+
+**Verify repo URL is populated (no placeholder):**
+```bash
+grep repoURL /tmp/test-gitops/argocd/root-app.yaml
+```
+Expected: `repoURL: https://github.com/myorg/my-cluster-gitops.git` — the actual URL you entered, **NOT** `<YOUR_GIT_REPO_URL>`
+
+**Post-scaffold push instructions:**
+- After scaffolding, the CLI should display **next steps** with git commands:
+  - `cd /tmp/test-gitops`
+  - `git init && git add -A && git commit -m '...'`
+  - `git remote add origin <repo-url>`
+  - `git push -u origin main`
+  - `kubectl apply -f argocd/root-app.yaml`
 
 **Validate YAML:**
 ```bash
@@ -810,7 +883,25 @@ Verify:
 - References correct Helm repo URL (`https://charts.jetstack.io`)
 - References correct chart version
 
-### 8.5.3 GitOps with custom output dir
+### 8.5.3 GitOps repo URL validation
+
+```bash
+dorgu cluster setup --gitops --gitops-output /tmp/test-gitops-invalid
+```
+
+When the repo URL prompt appears, test validation:
+
+1. **Empty input** — press Enter with no URL → should show "Repository URL is required" and re-prompt
+2. **Invalid URL** — type `not-a-url` → should show "Invalid URL — must start with https://, git@, or ssh://" and re-prompt
+3. **Valid URL after retries** — type `https://github.com/org/repo.git` → should accept and proceed
+4. **3 failed attempts** — if all 3 attempts are invalid, should exit with "GitOps setup cancelled" error
+
+Ask the user to verify:
+- Re-prompting works correctly (up to 3 attempts)
+- Error messages are clear and helpful
+- Valid URL eventually accepted
+
+### 8.5.4 GitOps with custom output dir
 
 ```bash
 dorgu cluster setup --gitops --gitops-output ./my-custom-gitops
@@ -819,11 +910,12 @@ dorgu cluster setup --gitops --gitops-output ./my-custom-gitops
 Ask the user to verify:
 - Files are created in `./my-custom-gitops/` (relative path works)
 - Same structure as 8.5.2
+- Repo URL prompt still appears and works
 
-### 8.5.4 Cleanup
+### 8.5.5 Cleanup
 
 ```bash
-rm -rf /tmp/test-gitops ./my-custom-gitops
+rm -rf /tmp/test-gitops /tmp/test-gitops-invalid ./my-custom-gitops
 ```
 
 ---
@@ -905,15 +997,30 @@ Recreate the ClusterPersona after this test:
 dorgu cluster init --name qa-cluster --environment development
 ```
 
-### 11.2 Setup with explicit non-existent ClusterPersona
+### 11.2 Setup with explicit non-existent ClusterPersona (BUG-11-2 fix verified)
+
+**In non-dry-run mode (validates against cluster):**
+
+```bash
+dorgu cluster setup --cluster-persona does-not-exist
+```
+
+Ask the user to verify:
+- Command fails **immediately** at preflight with error: `ClusterPersona "does-not-exist" not found in cluster`
+- Shows helpful hints: "List available: dorgu cluster status" and "Create one: dorgu cluster init ..."
+- Does **not** proceed to the wizard or install any components
+- No time wasted on Helm installs before the error (BUG-11-2 fix — previously failed only at the annotation step after 15+ minutes)
+
+**In dry-run mode (skips validation):**
 
 ```bash
 dorgu cluster setup --cluster-persona does-not-exist --dry-run
 ```
 
 Ask the user to verify:
-- Command fails with clear error about the ClusterPersona not being found
-- Does not proceed to the wizard
+- Dry-run proceeds normally (validation skipped since it can't contact cluster in dry-run)
+- Shows the ClusterPersona name from the flag without error
+- Wizard flow works with the provided name
 
 ### 11.3 Setup with no cluster access
 
@@ -927,11 +1034,12 @@ Ask the user to verify:
 - Fails at preflight or cluster detection with a clear error
 - Not a panic or stack trace
 
-### 11.4 Interactive prompt — invalid input handling
+### 11.4 Interactive prompt — invalid input handling (environment validation fix verified)
 
 During `dorgu cluster setup --dry-run`, try entering invalid inputs:
 
-- At environment prompt: type `foobar` → should reject and re-prompt or use default
+- At environment prompt: type `foobar` → should **reject with message**: `Invalid environment "foobar". Choose: development, staging, production` and **re-prompt** (loops until valid input or empty for default)
+- At environment prompt: press Enter (empty) → should default to `development`
 - At component Install? prompt: type `maybe` → should treat as N (or re-prompt)
 - At Proceed? prompt: type anything other than y/Y → should abort cleanly
 
@@ -1114,8 +1222,21 @@ kubectl delete ns dorgu-system
 
 ### 14.4 (Optional) Destroy cluster
 
+**Kind:**
 ```bash
 kind delete cluster --name <cluster-name>
+```
+
+**vCluster:**
+```bash
+# Disconnect from vCluster first (switches back to host context)
+vcluster disconnect
+
+# Delete the vCluster
+vcluster delete dorgu-qa -n dorgu-qa-vcluster
+
+# Clean up the namespace on the host cluster
+kubectl delete ns dorgu-qa-vcluster
 ```
 
 ---
@@ -1140,19 +1261,21 @@ At the end, produce a summary like:
   Phase 7: Full Installation ............ 3/3 PASS
   Phase 7.5: Helm Recovery .............. 2/2 PASS
   Phase 8: Idempotency .................. 2/2 PASS
-  Phase 8.5: GitOps Mode ................ 4/4 PASS
+  Phase 8.5: GitOps Mode ................ 5/5 PASS
   Phase 9: Optional Components .......... 2/2 PASS
   Phase 10: Skip Validation ............. 1/1 PASS
-  Phase 11: Edge Cases .................. 4/5 PASS (1 FAIL)
+  Phase 11: Edge Cases .................. 5/5 PASS
   Phase 12: Component Verification ...... 5/6 PASS (1 SKIP)
   Phase 13: Addon Discovery ............. 3/3 PASS
   Phase 14: Cleanup ..................... 4/4 PASS
   ────────────────────────────────────────────────
-  TOTAL: 57/62 PASS | 1 FAIL | 4 SKIP
+  TOTAL: 62/66 PASS | 0 FAIL | 4 SKIP
 
-  Failed tests:
-  - 11.4: Invalid input at environment prompt accepted "foobar"
-    without rejection (see notes)
+  Fixed since last run:
+  - 5.4: Dry-run now shows real kube-context (BUG-05-4)
+  - 8.5: GitOps mode now interactive with repo URL prompting
+  - 11.2: --cluster-persona validates existence immediately (BUG-11-2)
+  - 11.4: Environment prompt now rejects invalid input and re-prompts
 
   Skipped tests:
   - 5.2: Preflight kubectl missing — user could not simulate
