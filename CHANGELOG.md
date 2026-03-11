@@ -6,9 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-11
+
 ### Added
 
-- Community standards: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) (Contributor Covenant 2.1), [SECURITY.md](SECURITY.md), and [CHANGELOG.md](CHANGELOG.md).
+- `cluster setup` wizard command with StackProvider and Executor abstractions.
+- Blessed Stack composition: CNPG dependency, ArgoCD as optional default-on component.
+- GitOps mode for cluster setup scaffold with interactive repo URL prompting.
+- Kube-context safety guard and operator readiness gate for cluster setup.
+- Failed Helm release cleanup and dependency enforcement in install loop.
+- Component-specific timeouts and retry for Helm installs.
+- Preflight version check and Helm repo update before install.
+- Lipgloss-styled setup wizard output and redesigned cluster status visual hierarchy.
+- Error hints for persona apply schema mismatch and cluster setup issues.
+- `review` command and Go reviewer agent for automated code review.
+- QA cluster setup agent and testing paths.
+- Unit tests across analyzer, generator, and other packages.
+- Clean persona display with new formatting output.
+- Community standards: CODE_OF_CONDUCT.md, SECURITY.md, and CHANGELOG.md.
+- Cluster quick start guide in README.
+
+### Changed
+
+- Consolidated phase/health color helpers into output package.
+- Updated README with latest project information and cluster quick start.
+- Structured YAML parsing for cluster status display.
+- Rune-safe header truncation in setup wizard UI.
+- Updated OpenObserve chart version.
+
+### Fixed
+
+- Validate cluster-persona flag and show real context in dry-run.
+- Operator check for `dorgu-operator-system` namespace.
+- Improved ClusterPersona not-found error with hints.
+- Show enablement guidance when sync WebSocket connection fails.
+- Remove duplicate `imageRunsAsRoot` from technical section (BUG-001).
 
 ## [0.2.x]
 
