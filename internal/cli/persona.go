@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -164,13 +165,21 @@ func runPersonaApply(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Apply via kubectl
+	// Apply via kubectl — capture stderr to detect schema errors while still streaming to user
 	output.Info("Applying ApplicationPersona to cluster...")
+	var stderrCapture bytes.Buffer
 	kubectlCmd := exec.Command("kubectl", "apply", "-f", "-", "-n", personaFlags.namespace)
 	kubectlCmd.Stdin = bytes.NewBufferString(personaYAML)
 	kubectlCmd.Stdout = os.Stdout
-	kubectlCmd.Stderr = os.Stderr
+	kubectlCmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
 	if err := kubectlCmd.Run(); err != nil {
+		stderrStr := stderrCapture.String()
+		if strings.Contains(stderrStr, "strict decoding error") || strings.Contains(stderrStr, "ValidationError") {
+			output.ErrorWithHint("ApplicationPersona rejected by cluster (schema mismatch)",
+				"Try regenerating: dorgu persona generate . -o ./k8s-out",
+				"Then re-apply: dorgu persona apply . -n <namespace>")
+			return errSilent
+		}
 		return fmt.Errorf("kubectl apply failed: %w", err)
 	}
 
@@ -362,7 +371,7 @@ func displayPersonaStatus(name string, rawYAML string) {
 	}
 
 	// Phase with color
-	phaseDisplay := formatPhase(persona.Status.Phase)
+	phaseDisplay := output.FormatPhase(persona.Status.Phase)
 	fmt.Printf("  %-14s %s\n", "Phase:", phaseDisplay)
 
 	// Health status
@@ -471,35 +480,10 @@ func displayPersonaStatus(name string, rawYAML string) {
 	}
 }
 
-// formatPhase returns a colored phase string.
-func formatPhase(phase string) string {
-	switch phase {
-	case "Active":
-		return output.Green(phase)
-	case "Degraded":
-		return output.Yellow(phase)
-	case "Failed":
-		return output.Red(phase)
-	case "Pending":
-		return output.Blue(phase)
-	default:
-		return phase
-	}
-}
-
-// formatHealth returns a colored health status with message.
+// formatHealth returns a colored health status with optional message.
+// Core coloring delegates to output.FormatHealth.
 func formatHealth(status, message string) string {
-	var colored string
-	switch status {
-	case "Healthy":
-		colored = output.Green(status)
-	case "Degraded":
-		colored = output.Yellow(status)
-	case "Unhealthy":
-		colored = output.Red(status)
-	default:
-		colored = status
-	}
+	colored := output.FormatHealth(status)
 	if message != "" {
 		return fmt.Sprintf("%s (%s)", colored, message)
 	}

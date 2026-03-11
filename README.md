@@ -11,6 +11,7 @@
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Cluster Quick Start](#cluster-quick-start)
 - [Commands](#commands)
 - [Dorgu Operator](#dorgu-operator)
 - [Persona Commands](#persona-commands)
@@ -96,6 +97,59 @@ dorgu generate ./my-app --dry-run
 
 ---
 
+## Cluster Quick Start
+
+Get a production-ready Kubernetes stack running in 5 steps.
+
+**Prerequisites:** A running Kubernetes cluster ([Kind](https://kind.sigs.k8s.io/), [vCluster](https://www.vcluster.com/), or any cluster), `kubectl`, and `helm`.
+
+**1. Install the CLI:**
+
+```bash
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
+```
+
+**2. Install the Dorgu Operator:**
+
+```bash
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --version 0.2.0 \
+  --namespace dorgu-system \
+  --create-namespace
+```
+
+**3. Create a ClusterPersona:**
+
+```bash
+dorgu cluster init --name my-cluster --environment development
+```
+
+**4. Run the setup wizard:**
+
+```bash
+dorgu cluster setup
+```
+
+Preview without installing: `dorgu cluster setup --dry-run`
+
+**5. Verify:**
+
+```bash
+dorgu cluster status
+```
+
+### Cluster Environment Options
+
+| Option | Best For | Command |
+|--------|----------|---------|
+| Kind | Quick local testing | `kind create cluster --name dorgu-dev` |
+| vCluster | Isolated testing on existing cluster (recommended) | `vcluster create dorgu-dev -n dorgu-vcluster && vcluster connect dorgu-dev` |
+| Staging/Cloud | Full integration testing | Point `kubectl` at your cluster |
+
+> **Tip:** vCluster inherits the host cluster's image pull capabilities, avoiding TLS certificate issues common with Kind behind corporate proxies.
+
+---
+
 ## Commands
 
 ### Core Commands
@@ -123,6 +177,7 @@ dorgu generate ./my-app --dry-run
 |---------|-------------|
 | `dorgu cluster init` | Initialize ClusterPersona for cluster-wide identity |
 | `dorgu cluster status` | Show cluster status and discovered information |
+| `dorgu cluster setup` | Install production-ready Kubernetes stack via interactive wizard |
 
 ### Real-time Commands (Requires Operator with WebSocket)
 

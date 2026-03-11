@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -79,6 +80,17 @@ func runSyncStatus(cmd *cobra.Command, args []string) error {
 
 	client := ws.NewClient(syncFlags.operatorURL)
 	if err := client.Connect(ctx); err != nil {
+		if strings.Contains(err.Error(), "connection refused") {
+			output.Error(fmt.Sprintf("Could not connect to operator websocket at %s", syncFlags.operatorURL))
+			fmt.Println()
+			output.Info("The operator's websocket server may be disabled (default).")
+			output.Info("To enable it, upgrade the operator Helm chart with:")
+			output.Info("  helm upgrade dorgu-operator <chart> --set websocket.enabled=true")
+			fmt.Println()
+			output.Info("Then port-forward the service:")
+			output.Info("  kubectl port-forward -n dorgu-system svc/dorgu-operator 9090:9090")
+			return nil
+		}
 		output.Error(fmt.Sprintf("Connection failed: %v", err))
 		return nil
 	}
@@ -95,7 +107,7 @@ func runSyncStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Printf("  Name:              %s\n", cluster.Name)
 		fmt.Printf("  Environment:       %s\n", cluster.Environment)
-		fmt.Printf("  Phase:             %s\n", colorPhase(cluster.Phase))
+		fmt.Printf("  Phase:             %s\n", output.FormatPhase(cluster.Phase))
 		fmt.Printf("  Kubernetes:        %s\n", cluster.KubernetesVer)
 		fmt.Printf("  Platform:          %s\n", cluster.Platform)
 		fmt.Printf("  Nodes:             %d\n", cluster.NodeCount)
@@ -139,6 +151,17 @@ func runSyncPull(cmd *cobra.Command, args []string) error {
 
 	client := ws.NewClient(syncFlags.operatorURL)
 	if err := client.Connect(ctx); err != nil {
+		if strings.Contains(err.Error(), "connection refused") {
+			output.Error(fmt.Sprintf("Could not connect to operator websocket at %s", syncFlags.operatorURL))
+			fmt.Println()
+			output.Info("The operator's websocket server may be disabled (default).")
+			output.Info("To enable it, upgrade the operator Helm chart with:")
+			output.Info("  helm upgrade dorgu-operator <chart> --set websocket.enabled=true")
+			fmt.Println()
+			output.Info("Then port-forward the service:")
+			output.Info("  kubectl port-forward -n dorgu-system svc/dorgu-operator 9090:9090")
+			return nil
+		}
 		return fmt.Errorf("failed to connect to operator: %w", err)
 	}
 	defer client.Close()
@@ -171,8 +194,8 @@ func runSyncPull(cmd *cobra.Command, args []string) error {
 				truncate(p.AppName, 15),
 				truncate(p.Type, 10),
 				truncate(p.Tier, 10),
-				colorPhase(p.Phase),
-				colorHealth(health))
+				output.FormatPhase(p.Phase),
+				output.FormatHealth(health))
 		}
 	}
 
@@ -186,7 +209,7 @@ func runSyncPull(cmd *cobra.Command, args []string) error {
 		output.Header("ClusterPersona")
 		fmt.Printf("  Name:              %s\n", cluster.Name)
 		fmt.Printf("  Environment:       %s\n", cluster.Environment)
-		fmt.Printf("  Phase:             %s\n", colorPhase(cluster.Phase))
+		fmt.Printf("  Phase:             %s\n", output.FormatPhase(cluster.Phase))
 		fmt.Printf("  Kubernetes:        %s\n", cluster.KubernetesVer)
 		fmt.Printf("  Platform:          %s\n", cluster.Platform)
 		fmt.Printf("  Nodes:             %d\n", cluster.NodeCount)

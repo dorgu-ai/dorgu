@@ -331,6 +331,39 @@ func TestGeneratePersonaYAML_DNSSafeName(t *testing.T) {
 	}
 }
 
+func TestGeneratePersonaYAML_NoImageRunsAsRootInTechnical(t *testing.T) {
+	analysis := &types.AppAnalysis{
+		Name:     "root-app",
+		Language: "go",
+	}
+
+	cfg := config.Default()
+	yamlStr, err := GeneratePersonaYAML(analysis, "default", cfg)
+	if err != nil {
+		t.Fatalf("GeneratePersonaYAML() error = %v", err)
+	}
+
+	// Split into sections to check technical vs policies.security
+	technicalIdx := strings.Index(yamlStr, "  technical:")
+	policiesIdx := strings.Index(yamlStr, "  policies:")
+	if technicalIdx == -1 {
+		t.Fatal("expected technical section in YAML output")
+	}
+	if policiesIdx == -1 {
+		t.Fatal("expected policies section in YAML output")
+	}
+
+	technicalSection := yamlStr[technicalIdx:policiesIdx]
+	policiesSection := yamlStr[policiesIdx:]
+
+	if strings.Contains(technicalSection, "imageRunsAsRoot") {
+		t.Error("imageRunsAsRoot should NOT be in spec.technical section")
+	}
+	if !strings.Contains(policiesSection, "imageRunsAsRoot") {
+		t.Error("imageRunsAsRoot should be in spec.policies.security section")
+	}
+}
+
 func TestGeneratePersonaYAML_Policies(t *testing.T) {
 	analysis := &types.AppAnalysis{
 		Name: "policy-app",

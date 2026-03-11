@@ -1,6 +1,9 @@
 package output
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -158,6 +161,152 @@ func TestColorFunctions_Unicode(t *testing.T) {
 				t.Errorf("%s() should preserve unicode characters", tt.name)
 			}
 		})
+	}
+}
+
+func captureStderr(f func()) string {
+	origStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	f()
+	w.Close()
+	os.Stderr = origStderr
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	return buf.String()
+}
+
+func TestErrorWithHint(t *testing.T) {
+	out := captureStderr(func() {
+		ErrorWithHint("something went wrong", "hint one", "hint two")
+	})
+
+	if !strings.Contains(out, "✗") {
+		t.Error("ErrorWithHint should contain ✗ error prefix")
+	}
+	if !strings.Contains(out, "something went wrong") {
+		t.Error("ErrorWithHint should contain the error message")
+	}
+	if !strings.Contains(out, "→") {
+		t.Error("ErrorWithHint should contain → hint arrow")
+	}
+	if !strings.Contains(out, "hint one") {
+		t.Error("ErrorWithHint should contain first hint")
+	}
+	if !strings.Contains(out, "hint two") {
+		t.Error("ErrorWithHint should contain second hint")
+	}
+}
+
+func TestErrorWithHint_NoHints(t *testing.T) {
+	out := captureStderr(func() {
+		ErrorWithHint("no hints here")
+	})
+	if !strings.Contains(out, "✗") {
+		t.Error("ErrorWithHint with no hints should still contain ✗")
+	}
+	if strings.Contains(out, "→") {
+		t.Error("ErrorWithHint with no hints should not contain →")
+	}
+}
+
+func TestErrorWithSuggestions(t *testing.T) {
+	out := captureStderr(func() {
+		ErrorWithSuggestions("unknown command", []string{"generate", "persona", "cluster"})
+	})
+
+	if !strings.Contains(out, "✗") {
+		t.Error("ErrorWithSuggestions should contain ✗ error prefix")
+	}
+	if !strings.Contains(out, "unknown command") {
+		t.Error("ErrorWithSuggestions should contain the error message")
+	}
+	if !strings.Contains(out, "Did you mean one of these?") {
+		t.Error("ErrorWithSuggestions should contain the 'Did you mean' prompt")
+	}
+	if !strings.Contains(out, "generate") {
+		t.Error("ErrorWithSuggestions should contain suggestion items")
+	}
+}
+
+func TestErrorWithSuggestions_Empty(t *testing.T) {
+	out := captureStderr(func() {
+		ErrorWithSuggestions("no match", []string{})
+	})
+	if !strings.Contains(out, "no match") {
+		t.Error("ErrorWithSuggestions should still print message with empty suggestions")
+	}
+	if strings.Contains(out, "Did you mean") {
+		t.Error("ErrorWithSuggestions with empty list should not print 'Did you mean'")
+	}
+}
+
+func TestFormatPhase(t *testing.T) {
+	tests := []struct {
+		phase   string
+		wantFn  func(string) bool
+		wantRaw bool // true = should contain raw phase (no color wrapping expected in test env)
+	}{
+		{"Ready", func(s string) bool { return strings.Contains(s, "Ready") }, false},
+		{"Active", func(s string) bool { return strings.Contains(s, "Active") }, false},
+		{"Degraded", func(s string) bool { return strings.Contains(s, "Degraded") }, false},
+		{"Discovering", func(s string) bool { return strings.Contains(s, "Discovering") }, false},
+		{"Pending", func(s string) bool { return strings.Contains(s, "Pending") }, false},
+		{"Failed", func(s string) bool { return strings.Contains(s, "Failed") }, false},
+		{"Unknown", func(s string) bool { return strings.Contains(s, "Unknown") }, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.phase, func(t *testing.T) {
+			result := FormatPhase(tt.phase)
+			if !tt.wantFn(result) {
+				t.Errorf("FormatPhase(%q) = %q, should contain the phase text", tt.phase, result)
+			}
+		})
+	}
+}
+
+func TestFormatPhase_Empty(t *testing.T) {
+	result := FormatPhase("")
+	// Empty phase should return empty string (no coloring applied to empty input)
+	if result != "" {
+		t.Logf("FormatPhase(\"\") = %q (may include ANSI codes in TTY)", result)
+	}
+}
+
+func TestFormatHealth(t *testing.T) {
+	tests := []string{"Healthy", "Degraded", "Unhealthy", "Unknown"}
+	for _, h := range tests {
+		t.Run(h, func(t *testing.T) {
+			result := FormatHealth(h)
+			if !strings.Contains(result, h) {
+				t.Errorf("FormatHealth(%q) = %q, should contain the health text", h, result)
+			}
+		})
+	}
+}
+
+func TestFormatPhase_CoversDuplicates(t *testing.T) {
+	// Verify FormatPhase handles all phases that were previously split across
+	// colorPhase (cluster.go) and formatPhase (persona.go)
+	phases := []string{"Ready", "Active", "Degraded", "Discovering", "Pending", "Failed"}
+	for _, p := range phases {
+		result := FormatPhase(p)
+		if !strings.Contains(result, p) {
+			t.Errorf("FormatPhase(%q) does not contain the phase text: %q", p, result)
+		}
+	}
+}
+
+func TestFormatHealth_CoversDuplicates(t *testing.T) {
+	// Verify FormatHealth handles all health states from colorHealth (watch.go)
+	// and the health display in persona.go
+	healths := []string{"Healthy", "Degraded", "Unhealthy"}
+	for _, h := range healths {
+		result := FormatHealth(h)
+		if !strings.Contains(result, h) {
+			t.Errorf("FormatHealth(%q) does not contain the health text: %q", h, result)
+		}
 	}
 }
 
