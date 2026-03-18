@@ -12,6 +12,78 @@ import (
 // retryDelay is the delay between install retries. Overridable in tests.
 var retryDelay = 30 * time.Second
 
+// ErrorCategory classifies installation errors for retry decisions.
+// Future AI agents can use this for autonomous healing.
+type ErrorCategory string
+
+const (
+	ErrorCategoryTransient     ErrorCategory = "transient"     // network, timeout - safe to auto-retry
+	ErrorCategoryConfiguration ErrorCategory = "configuration" // S3, secrets, permissions - needs manual fix
+	ErrorCategoryUnknown       ErrorCategory = "unknown"       // default - prompt user
+)
+
+// ClassifiedError wraps an error with its category for retry decisions.
+type ClassifiedError struct {
+	Category ErrorCategory
+	Original error
+	Output   string // full helm/kubectl output
+}
+
+func (e *ClassifiedError) Error() string {
+	return e.Original.Error()
+}
+
+func (e *ClassifiedError) Unwrap() error {
+	return e.Original
+}
+
+// classifyError analyzes error output and categorizes it.
+// Returns ErrorCategory for structured decision-making by retry logic or AI agents.
+func classifyError(err error, output string) ErrorCategory {
+	if err == nil {
+		return ErrorCategoryUnknown
+	}
+
+	outputLower := strings.ToLower(output)
+	errLower := strings.ToLower(err.Error())
+
+	// Configuration/permanent errors (do NOT auto-retry)
+	configPatterns := []string{
+		"access denied",
+		"forbidden",
+		"unauthorized",
+		"permission denied",
+		"invalid configuration",
+		"secret not found",
+		"s3", "bucket",
+		"credentials", "authentication failed",
+	}
+
+	for _, pattern := range configPatterns {
+		if strings.Contains(outputLower, pattern) || strings.Contains(errLower, pattern) {
+			return ErrorCategoryConfiguration
+		}
+	}
+
+	// Transient errors (safe to auto-retry)
+	transientPatterns := []string{
+		"context deadline exceeded",
+		"connection refused",
+		"i/o timeout",
+		"temporary failure",
+		"network unreachable",
+		"dial tcp",
+	}
+
+	for _, pattern := range transientPatterns {
+		if strings.Contains(outputLower, pattern) || strings.Contains(errLower, pattern) {
+			return ErrorCategoryTransient
+		}
+	}
+
+	return ErrorCategoryUnknown
+}
+
 // Executor abstracts shell command execution for testability and dry-run support.
 type Executor interface {
 	Run(name string, args ...string) (string, error)
@@ -228,28 +300,33 @@ func InstallComponent(ex Executor, c ComponentConfig, cfg SetupConfig) InstallRe
 	args := BuildHelmArgs(c, version)
 	out, err := ex.Run("helm", args...)
 
-	// Retry once on context deadline exceeded (common with ingress-nginx on Kind)
-	if err != nil && strings.Contains(fmt.Sprintf("%v %s", err, out), "context deadline exceeded") {
-		// Clean up failed release before retry
-		retryStatus := CheckReleaseStatus(ex, c.HelmReleaseName, c.Namespace)
-		if retryStatus == ReleaseFailed || retryStatus == ReleasePending {
-			_ = CleanFailedRelease(ex, c.HelmReleaseName, c.Namespace)
+	// Smart retry: only auto-retry transient errors (network, timeout)
+	if err != nil {
+		category := classifyError(err, out)
+
+		if category == ErrorCategoryTransient {
+			// Clean up failed release before retry
+			retryStatus := CheckReleaseStatus(ex, c.HelmReleaseName, c.Namespace)
+			if retryStatus == ReleaseFailed || retryStatus == ReleasePending {
+				_ = CleanFailedRelease(ex, c.HelmReleaseName, c.Namespace)
+			}
+			time.Sleep(retryDelay)
+			out, err = ex.Run("helm", args...)
 		}
-		time.Sleep(retryDelay)
-		out, err = ex.Run("helm", args...)
 	}
 
 	duration := time.Since(start)
 
 	if err != nil {
+		category := classifyError(err, out)
 		errMsg := fmt.Sprintf("helm install %s: %v\n%s", c.HelmReleaseName, err, out)
-		if strings.Contains(fmt.Sprintf("%v %s", err, out), "context deadline exceeded") {
+		if category == ErrorCategoryTransient {
 			errMsg += fmt.Sprintf("\nHint: check pod status with: kubectl get pods -n %s", c.Namespace)
 		}
 		return InstallResult{
 			Component:  c,
 			Succeeded:  false,
-			Error:      fmt.Errorf("%s", errMsg),
+			Error:      &ClassifiedError{Category: category, Original: fmt.Errorf("%s", errMsg), Output: out},
 			Duration:   duration,
 			HelmOutput: out,
 		}

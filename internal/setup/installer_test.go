@@ -562,6 +562,173 @@ func TestInstallArgoCDBootstrap_RepoAddFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to add argo helm repo") {
 		t.Errorf("expected repo add error, got: %v", err)
+func TestClassifyError_Transient(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		output string
+	}{
+		{"context deadline exceeded in error", fmt.Errorf("context deadline exceeded"), ""},
+		{"context deadline exceeded in output", fmt.Errorf("exit 1"), "Error: context deadline exceeded"},
+		{"connection refused", fmt.Errorf("connection refused"), ""},
+		{"i/o timeout", fmt.Errorf("i/o timeout"), ""},
+		{"temporary failure", fmt.Errorf("exit 1"), "temporary failure in name resolution"},
+		{"network unreachable", fmt.Errorf("exit 1"), "network unreachable"},
+		{"dial tcp", fmt.Errorf("dial tcp 10.0.0.1:443: connect"), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cat := classifyError(tt.err, tt.output)
+			if cat != ErrorCategoryTransient {
+				t.Errorf("classifyError(%v, %q) = %q, want %q", tt.err, tt.output, cat, ErrorCategoryTransient)
+			}
+		})
+	}
+}
+
+func TestClassifyError_Configuration(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		output string
+	}{
+		{"access denied in output", fmt.Errorf("exit 1"), "Error: access denied to S3 bucket"},
+		{"forbidden", fmt.Errorf("forbidden"), ""},
+		{"unauthorized", fmt.Errorf("exit 1"), "HTTP 401 unauthorized"},
+		{"permission denied", fmt.Errorf("permission denied"), ""},
+		{"s3 in output", fmt.Errorf("exit 1"), "failed to connect to s3 endpoint"},
+		{"bucket in output", fmt.Errorf("exit 1"), "bucket not found"},
+		{"credentials", fmt.Errorf("exit 1"), "invalid credentials"},
+		{"authentication failed", fmt.Errorf("exit 1"), "authentication failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cat := classifyError(tt.err, tt.output)
+			if cat != ErrorCategoryConfiguration {
+				t.Errorf("classifyError(%v, %q) = %q, want %q", tt.err, tt.output, cat, ErrorCategoryConfiguration)
+			}
+		})
+	}
+}
+
+func TestClassifyError_Unknown(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		output string
+	}{
+		{"generic error", fmt.Errorf("something went wrong"), ""},
+		{"empty output", fmt.Errorf("exit 1"), ""},
+		{"unrecognized output", fmt.Errorf("exit 1"), "Error: unknown failure"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cat := classifyError(tt.err, tt.output)
+			if cat != ErrorCategoryUnknown {
+				t.Errorf("classifyError(%v, %q) = %q, want %q", tt.err, tt.output, cat, ErrorCategoryUnknown)
+			}
+		})
+	}
+}
+
+func TestClassifyError_NilError(t *testing.T) {
+	cat := classifyError(nil, "some output")
+	if cat != ErrorCategoryUnknown {
+		t.Errorf("classifyError(nil, ...) = %q, want %q", cat, ErrorCategoryUnknown)
+	}
+}
+
+func TestClassifiedError_Interface(t *testing.T) {
+	orig := fmt.Errorf("original error")
+	ce := &ClassifiedError{
+		Category: ErrorCategoryConfiguration,
+		Original: orig,
+		Output:   "some helm output",
+	}
+
+	if ce.Error() != "original error" {
+		t.Errorf("Error() = %q, want %q", ce.Error(), "original error")
+	}
+
+	if ce.Unwrap() != orig {
+		t.Errorf("Unwrap() did not return original error")
+	}
+
+	var err error = ce
+	if err.Error() != "original error" {
+		t.Errorf("error interface not satisfied")
+	}
+}
+
+func TestInstallComponent_NoAutoRetryForConfigError(t *testing.T) {
+	origDelay := retryDelay
+	retryDelay = 0
+	defer func() { retryDelay = origDelay }()
+
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "Error: release: not found", err: fmt.Errorf("not found")}, // pre-install status check
+			{output: "access denied to S3 bucket", err: fmt.Errorf("exit 1")},   // install fails with config error
+		},
+	}
+	comp := ComponentConfig{
+		ID:              ComponentOpenObserve,
+		HelmReleaseName: "openobserve",
+		HelmChart:       "openobserve/openobserve",
+		Namespace:       "openobserve",
+		Version:         "0.60.0",
+	}
+	cfg := SetupConfig{Timestamp: time.Now()}
+
+	result := InstallComponent(ex, comp, cfg)
+	if result.Succeeded {
+		t.Fatal("expected failure for config error")
+	}
+	if ex.callIdx != 2 {
+		t.Errorf("expected 2 calls (no retry for config error), got %d", ex.callIdx)
+	}
+	classifiedErr, ok := result.Error.(*ClassifiedError)
+	if !ok {
+		t.Fatalf("expected *ClassifiedError, got %T", result.Error)
+	}
+	if classifiedErr.Category != ErrorCategoryConfiguration {
+		t.Errorf("expected ErrorCategoryConfiguration, got %q", classifiedErr.Category)
+	}
+}
+
+func TestInstallComponent_NoAutoRetryForUnknownError(t *testing.T) {
+	origDelay := retryDelay
+	retryDelay = 0
+	defer func() { retryDelay = origDelay }()
+
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "Error: release: not found", err: fmt.Errorf("not found")}, // pre-install status check
+			{output: "something went wrong", err: fmt.Errorf("exit 1")},         // install fails with unknown error
+		},
+	}
+	comp := ComponentConfig{
+		ID:              ComponentCertManager,
+		HelmReleaseName: "cert-manager",
+		HelmChart:       "jetstack/cert-manager",
+		Namespace:       "cert-manager",
+		Version:         "v1.16.3",
+	}
+	cfg := SetupConfig{Timestamp: time.Now()}
+
+	result := InstallComponent(ex, comp, cfg)
+	if result.Succeeded {
+		t.Fatal("expected failure for unknown error")
+	}
+	if ex.callIdx != 2 {
+		t.Errorf("expected 2 calls (no retry for unknown error), got %d", ex.callIdx)
+	}
+	classifiedErr, ok := result.Error.(*ClassifiedError)
+	if !ok {
+		t.Fatalf("expected *ClassifiedError, got %T", result.Error)
+	}
+	if classifiedErr.Category != ErrorCategoryUnknown {
+		t.Errorf("expected ErrorCategoryUnknown, got %q", classifiedErr.Category)
 	}
 }
 
