@@ -95,16 +95,7 @@ func ScaffoldGitOpsRepo(cfg GitOpsConfig) error {
 	}
 
 	fmt.Println()
-	output.Header("GitOps repository scaffolded")
-	fmt.Println()
-	output.Info(fmt.Sprintf("Directory: %s", cfg.OutputDir))
-	output.Info("Next steps:")
-	output.DimPrint("  1. cd " + cfg.OutputDir)
-	output.DimPrint("  2. git init && git add -A && git commit -m 'Initial cluster GitOps scaffold'")
-	output.DimPrint("  3. git remote add origin " + cfg.RepoURL)
-	output.DimPrint("  4. git push -u origin main")
-	output.DimPrint("  5. Apply the root app: kubectl apply -f argocd/root-app.yaml")
-	fmt.Println()
+	output.Success(fmt.Sprintf("GitOps repository scaffolded at %s", cfg.OutputDir))
 
 	return nil
 }
