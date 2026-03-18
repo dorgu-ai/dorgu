@@ -12,6 +12,78 @@ import (
 // retryDelay is the delay between install retries. Overridable in tests.
 var retryDelay = 30 * time.Second
 
+// ErrorCategory classifies installation errors for retry decisions.
+// Future AI agents can use this for autonomous healing.
+type ErrorCategory string
+
+const (
+	ErrorCategoryTransient     ErrorCategory = "transient"     // network, timeout - safe to auto-retry
+	ErrorCategoryConfiguration ErrorCategory = "configuration" // S3, secrets, permissions - needs manual fix
+	ErrorCategoryUnknown       ErrorCategory = "unknown"       // default - prompt user
+)
+
+// ClassifiedError wraps an error with its category for retry decisions.
+type ClassifiedError struct {
+	Category ErrorCategory
+	Original error
+	Output   string // full helm/kubectl output
+}
+
+func (e *ClassifiedError) Error() string {
+	return e.Original.Error()
+}
+
+func (e *ClassifiedError) Unwrap() error {
+	return e.Original
+}
+
+// classifyError analyzes error output and categorizes it.
+// Returns ErrorCategory for structured decision-making by retry logic or AI agents.
+func classifyError(err error, output string) ErrorCategory {
+	if err == nil {
+		return ErrorCategoryUnknown
+	}
+
+	outputLower := strings.ToLower(output)
+	errLower := strings.ToLower(err.Error())
+
+	// Configuration/permanent errors (do NOT auto-retry)
+	configPatterns := []string{
+		"access denied",
+		"forbidden",
+		"unauthorized",
+		"permission denied",
+		"invalid configuration",
+		"secret not found",
+		"s3", "bucket",
+		"credentials", "authentication failed",
+	}
+
+	for _, pattern := range configPatterns {
+		if strings.Contains(outputLower, pattern) || strings.Contains(errLower, pattern) {
+			return ErrorCategoryConfiguration
+		}
+	}
+
+	// Transient errors (safe to auto-retry)
+	transientPatterns := []string{
+		"context deadline exceeded",
+		"connection refused",
+		"i/o timeout",
+		"temporary failure",
+		"network unreachable",
+		"dial tcp",
+	}
+
+	for _, pattern := range transientPatterns {
+		if strings.Contains(outputLower, pattern) || strings.Contains(errLower, pattern) {
+			return ErrorCategoryTransient
+		}
+	}
+
+	return ErrorCategoryUnknown
+}
+
 // Executor abstracts shell command execution for testability and dry-run support.
 type Executor interface {
 	Run(name string, args ...string) (string, error)
@@ -228,28 +300,33 @@ func InstallComponent(ex Executor, c ComponentConfig, cfg SetupConfig) InstallRe
 	args := BuildHelmArgs(c, version)
 	out, err := ex.Run("helm", args...)
 
-	// Retry once on context deadline exceeded (common with ingress-nginx on Kind)
-	if err != nil && strings.Contains(fmt.Sprintf("%v %s", err, out), "context deadline exceeded") {
-		// Clean up failed release before retry
-		retryStatus := CheckReleaseStatus(ex, c.HelmReleaseName, c.Namespace)
-		if retryStatus == ReleaseFailed || retryStatus == ReleasePending {
-			_ = CleanFailedRelease(ex, c.HelmReleaseName, c.Namespace)
+	// Smart retry: only auto-retry transient errors (network, timeout)
+	if err != nil {
+		category := classifyError(err, out)
+
+		if category == ErrorCategoryTransient {
+			// Clean up failed release before retry
+			retryStatus := CheckReleaseStatus(ex, c.HelmReleaseName, c.Namespace)
+			if retryStatus == ReleaseFailed || retryStatus == ReleasePending {
+				_ = CleanFailedRelease(ex, c.HelmReleaseName, c.Namespace)
+			}
+			time.Sleep(retryDelay)
+			out, err = ex.Run("helm", args...)
 		}
-		time.Sleep(retryDelay)
-		out, err = ex.Run("helm", args...)
 	}
 
 	duration := time.Since(start)
 
 	if err != nil {
+		category := classifyError(err, out)
 		errMsg := fmt.Sprintf("helm install %s: %v\n%s", c.HelmReleaseName, err, out)
-		if strings.Contains(fmt.Sprintf("%v %s", err, out), "context deadline exceeded") {
+		if category == ErrorCategoryTransient {
 			errMsg += fmt.Sprintf("\nHint: check pod status with: kubectl get pods -n %s", c.Namespace)
 		}
 		return InstallResult{
 			Component:  c,
 			Succeeded:  false,
-			Error:      fmt.Errorf("%s", errMsg),
+			Error:      &ClassifiedError{Category: category, Original: fmt.Errorf("%s", errMsg), Output: out},
 			Duration:   duration,
 			HelmOutput: out,
 		}
@@ -378,4 +455,42 @@ func CheckOperatorInstalled(ex Executor) error {
 	}
 
 	return fmt.Errorf("dorgu operator pod not running in dorgu-system or dorgu-operator-system namespace — ensure the operator is deployed and healthy")
+}
+
+// IsArgoCDInstalled checks if the ArgoCD Application CRD exists in the cluster.
+func IsArgoCDInstalled(ex Executor) bool {
+	out, err := ex.Run("kubectl", "api-resources", "--api-group=argoproj.io", "--no-headers")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(out, "applications")
+}
+
+// InstallArgoCDBootstrap installs ArgoCD via Helm as a prerequisite for GitOps mode.
+func InstallArgoCDBootstrap(ex Executor) error {
+	if err := AddHelmRepo(ex, "argo", "https://argoproj.github.io/argo-helm"); err != nil {
+		return fmt.Errorf("failed to add argo helm repo: %w", err)
+	}
+
+	if err := UpdateHelmRepos(ex); err != nil {
+		return fmt.Errorf("failed to update helm repos: %w", err)
+	}
+
+	argoCDConfig := ComponentConfig{
+		ID:              ComponentArgoCd,
+		HelmReleaseName: "argocd",
+		HelmChart:       "argo/argo-cd",
+		Namespace:       "argocd",
+		Version:         "7.8.28",
+		CreateNamespace: true,
+		Timeout:         "5m0s",
+	}
+
+	args := BuildHelmArgs(argoCDConfig, "7.8.28")
+	out, err := ex.Run("helm", args...)
+	if err != nil {
+		return fmt.Errorf("helm install argocd failed: %w\nOutput: %s", err, out)
+	}
+
+	return nil
 }
