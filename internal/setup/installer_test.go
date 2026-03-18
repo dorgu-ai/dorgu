@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
@@ -506,5 +507,102 @@ func TestCheckOperatorInstalled_AllGood(t *testing.T) {
 	err := CheckOperatorInstalled(ex)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDimLineWriter_FormatsLines(t *testing.T) {
+	var buf bytes.Buffer
+	w := newDimLineWriter(&buf)
+
+	_, err := w.Write([]byte("line one\nline two\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, ansiDim) {
+		t.Error("expected ANSI dim code in output")
+	}
+	if !strings.Contains(out, ansiReset) {
+		t.Error("expected ANSI reset code in output")
+	}
+	if !strings.Contains(out, "    line one") {
+		t.Errorf("expected 4-space indented line, got: %q", out)
+	}
+	if !strings.Contains(out, "    line two") {
+		t.Errorf("expected 4-space indented second line, got: %q", out)
+	}
+}
+
+func TestDimLineWriter_SkipsBlankLines(t *testing.T) {
+	var buf bytes.Buffer
+	w := newDimLineWriter(&buf)
+
+	_, err := w.Write([]byte("hello\n\n\nworld\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Errorf("expected 2 non-blank lines, got %d: %q", len(lines), out)
+	}
+}
+
+func TestDimLineWriter_HandlesPartialWrites(t *testing.T) {
+	var buf bytes.Buffer
+	w := newDimLineWriter(&buf)
+
+	// Write partial line (no newline)
+	_, _ = w.Write([]byte("partial"))
+	if buf.Len() != 0 {
+		t.Error("expected no output for partial line without newline")
+	}
+
+	// Complete the line
+	_, _ = w.Write([]byte(" complete\n"))
+	if !strings.Contains(buf.String(), "partial complete") {
+		t.Errorf("expected completed line in output, got: %q", buf.String())
+	}
+}
+
+func TestStreamingExecutor_CapturesOutput(t *testing.T) {
+	var streamBuf bytes.Buffer
+	ex := &StreamingExecutor{
+		StreamTo: &streamBuf,
+		Dim:      false,
+	}
+
+	// Use a simple command that produces output
+	out, err := ex.Run("echo", "hello streaming")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "hello streaming") {
+		t.Errorf("captured output missing expected text: %q", out)
+	}
+	if !strings.Contains(streamBuf.String(), "hello streaming") {
+		t.Errorf("streamed output missing expected text: %q", streamBuf.String())
+	}
+}
+
+func TestStreamingExecutor_DimMode(t *testing.T) {
+	var streamBuf bytes.Buffer
+	ex := &StreamingExecutor{
+		StreamTo: &streamBuf,
+		Dim:      true,
+	}
+
+	out, err := ex.Run("echo", "dim output")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "dim output") {
+		t.Errorf("captured output missing expected text: %q", out)
+	}
+	// Streamed output should have ANSI dim codes
+	if !strings.Contains(streamBuf.String(), ansiDim) {
+		t.Error("expected ANSI dim code in streamed output")
 	}
 }

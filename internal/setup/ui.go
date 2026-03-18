@@ -261,6 +261,17 @@ func PrintComponentResult(r InstallResult) {
 			}
 		}
 		output.Error(fmt.Sprintf("%s failed (%s)", r.Component.DisplayName, errMsg))
+
+		// Always show full Helm output on failure for debugging
+		if r.HelmOutput != "" {
+			output.DimPrint("  Full Helm output:")
+			for _, line := range strings.Split(r.HelmOutput, "\n") {
+				if strings.TrimSpace(line) != "" {
+					output.DimPrint("    " + line)
+				}
+			}
+		}
+
 		// Inline diagnostic hints
 		output.DimPrint(fmt.Sprintf("  → Check pod status: kubectl get pods -n %s", r.Component.Namespace))
 		output.DimPrint(fmt.Sprintf("  → Check events: kubectl get events -n %s --sort-by=.lastTimestamp", r.Component.Namespace))
