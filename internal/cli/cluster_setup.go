@@ -22,6 +22,7 @@ var clusterSetupFlags struct {
 	gitops             bool
 	gitopsOutputDir    string
 	kubeContext        string
+	verbose            bool
 }
 
 var clusterSetupCmd = &cobra.Command{
@@ -60,6 +61,7 @@ func init() {
 	clusterSetupCmd.Flags().BoolVar(&clusterSetupFlags.gitops, "gitops", false, "scaffold a GitOps repository instead of installing imperatively")
 	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.gitopsOutputDir, "gitops-output", "./dorgu-cluster-gitops", "output directory for GitOps repo scaffold")
 	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.kubeContext, "context", "", "kube-context to use (defaults to current-context)")
+	clusterSetupCmd.Flags().BoolVar(&clusterSetupFlags.verbose, "verbose", false, "stream real-time Helm output during installation (dim styling)")
 }
 
 func runClusterSetup(cmd *cobra.Command, args []string) error {
@@ -120,10 +122,15 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		output.Info("Dry-run mode: skipping operator readiness check")
 	}
 
-	// 2. Choose executor based on --dry-run
+	// 2. Choose executor based on --dry-run / --verbose
 	var ex setup.Executor
 	if clusterSetupFlags.dryRun {
 		ex = &setup.DryRunExecutor{}
+	} else if clusterSetupFlags.verbose {
+		ex = &setup.StreamingExecutor{
+			StreamTo: os.Stderr,
+			Dim:      true,
+		}
 	} else {
 		ex = &setup.OSExecutor{}
 	}
