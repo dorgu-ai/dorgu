@@ -299,7 +299,35 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		stop := setup.PrintComponentProgress(os.Stderr, c, i+1, len(cfg.Components))
 		result := setup.InstallComponent(ex, c, cfg)
 		stop()
-		setup.PrintComponentResult(result)
+
+		if !result.Succeeded {
+			if classifiedErr, ok := result.Error.(*setup.ClassifiedError); ok {
+				setup.PrintComponentResult(result)
+				action := setup.PromptFailedComponentAction(reader, c, classifiedErr)
+
+				switch action {
+				case setup.ActionRetry:
+					output.Info(fmt.Sprintf("Retrying %s...", c.DisplayName))
+					stop = setup.PrintComponentProgress(os.Stderr, c, i+1, len(cfg.Components))
+					result = setup.InstallComponent(ex, c, cfg)
+					stop()
+					setup.PrintComponentResult(result)
+
+				case setup.ActionSkip:
+					output.Info(fmt.Sprintf("Skipping %s", c.DisplayName))
+					result.Skipped = true
+
+				case setup.ActionAbort:
+					output.Warn("Installation aborted by user")
+					return fmt.Errorf("installation aborted at component %s", c.DisplayName)
+				}
+			} else {
+				setup.PrintComponentResult(result)
+			}
+		} else {
+			setup.PrintComponentResult(result)
+		}
+
 		results = append(results, result)
 
 		if result.Succeeded {

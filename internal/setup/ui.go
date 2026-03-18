@@ -279,6 +279,56 @@ func PrintComponentResult(r InstallResult) {
 	}
 }
 
+// FailedComponentAction represents user's choice when a component fails.
+type FailedComponentAction string
+
+const (
+	ActionRetry FailedComponentAction = "retry"
+	ActionSkip  FailedComponentAction = "skip"
+	ActionAbort FailedComponentAction = "abort"
+)
+
+// PromptFailedComponentAction asks user what to do when a component fails.
+// Returns: retry, skip, or abort.
+func PromptFailedComponentAction(r *bufio.Reader, c ComponentConfig, classifiedErr *ClassifiedError) FailedComponentAction {
+	fmt.Println()
+	output.Error(fmt.Sprintf("✗ %s installation failed", c.DisplayName))
+
+	// Show error category context
+	switch classifiedErr.Category {
+	case ErrorCategoryTransient:
+		output.Info("  Error appears to be transient (network/timeout)")
+	case ErrorCategoryConfiguration:
+		output.Warn("  Error appears to be a configuration issue (requires manual fix)")
+	case ErrorCategoryUnknown:
+		output.Info("  Error type unknown")
+	}
+
+	fmt.Println()
+	fmt.Println("  What would you like to do?")
+	fmt.Println("    [R]etry - try installing this component again")
+	fmt.Println("    [S]kip  - skip this component and continue with remaining components")
+	fmt.Println("    [A]bort - cancel the entire installation")
+	fmt.Println()
+
+	for {
+		fmt.Printf("  Choice [R/S/A]: ")
+		input, _ := r.ReadString('\n')
+		input = strings.ToLower(strings.TrimSpace(input))
+
+		switch input {
+		case "r", "retry":
+			return ActionRetry
+		case "s", "skip":
+			return ActionSkip
+		case "a", "abort":
+			return ActionAbort
+		default:
+			fmt.Printf("  Invalid choice %q. Enter R, S, or A.\n", input)
+		}
+	}
+}
+
 // PrintValidationResults prints ✓ / ✗ for each ValidationResult.
 func PrintValidationResults(vrs []ValidationResult) {
 	fmt.Println()
