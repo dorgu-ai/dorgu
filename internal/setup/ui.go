@@ -25,13 +25,13 @@ func PrintWelcomeBanner() {
 	fmt.Println()
 }
 
-// PromptEnvironment prompts: "? Environment [development/staging/production]:"
+// PromptEnvironment prompts: "? Environment [development/staging/production/sandbox]:"
 // Validates against known environments; retries on invalid input.
 // Default: "development".
 func PromptEnvironment(r *bufio.Reader) string {
-	validEnvs := map[string]bool{"development": true, "staging": true, "production": true}
+	validEnvs := map[string]bool{"development": true, "staging": true, "production": true, "sandbox": true}
 	for {
-		fmt.Printf("? Environment [development/staging/production]: ")
+		fmt.Printf("? Environment [development/staging/production/sandbox]: ")
 		input, _ := r.ReadString('\n')
 		input = strings.TrimSpace(input)
 		if input == "" {
@@ -40,7 +40,7 @@ func PromptEnvironment(r *bufio.Reader) string {
 		if validEnvs[input] {
 			return input
 		}
-		fmt.Printf("  Invalid environment %q. Choose: development, staging, production\n", input)
+		fmt.Printf("  Invalid environment %q. Choose: development, staging, production, sandbox\n", input)
 	}
 }
 
