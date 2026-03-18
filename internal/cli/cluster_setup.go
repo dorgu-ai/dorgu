@@ -19,7 +19,7 @@ var clusterSetupFlags struct {
 	environment        string
 	dryRun             bool
 	skipValidation     bool
-	gitops             bool
+	driver             string
 	gitopsOutputDir    string
 	kubeContext        string
 	verbose            bool
@@ -42,14 +42,15 @@ The Blessed Stack includes:
 The result is recorded as annotations on your ClusterPersona CRD. The Dorgu
 Operator will discover the installed components within 5 minutes.
 
-Use --gitops to scaffold a GitOps repository with ArgoCD Application manifests
-instead of installing components imperatively.
+Use --driver to select the installation strategy:
+  helm   — install components imperatively via Helm (default)
+  gitops — scaffold a GitOps repository with ArgoCD Application manifests
 
 Examples:
   dorgu cluster setup
   dorgu cluster setup --cluster-persona my-cluster --environment production
   dorgu cluster setup --dry-run
-  dorgu cluster setup --gitops --gitops-output ./my-cluster-gitops`,
+  dorgu cluster setup --driver gitops --gitops-output ./my-cluster-gitops`,
 	RunE: runClusterSetup,
 }
 
@@ -58,7 +59,7 @@ func init() {
 	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.environment, "environment", "", "environment override: development, staging, production")
 	clusterSetupCmd.Flags().BoolVar(&clusterSetupFlags.dryRun, "dry-run", false, "print helm commands without executing them")
 	clusterSetupCmd.Flags().BoolVar(&clusterSetupFlags.skipValidation, "skip-validation", false, "skip post-install pod health checks")
-	clusterSetupCmd.Flags().BoolVar(&clusterSetupFlags.gitops, "gitops", false, "scaffold a GitOps repository instead of installing imperatively")
+	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.driver, "driver", "helm", "installation driver: helm (default) or gitops")
 	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.gitopsOutputDir, "gitops-output", "./dorgu-cluster-gitops", "output directory for GitOps repo scaffold")
 	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.kubeContext, "context", "", "kube-context to use (defaults to current-context)")
 	clusterSetupCmd.Flags().BoolVar(&clusterSetupFlags.verbose, "verbose", false, "stream real-time Helm output during installation (dim styling)")
@@ -197,53 +198,101 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// GitOps mode: scaffold a repo instead of imperatively installing
-	if clusterSetupFlags.gitops {
-		var repoURL string
-		if !clusterSetupFlags.dryRun {
-			var err error
-			repoURL, err = setup.PromptGitRepoURL(reader)
-			if err != nil {
-				return fmt.Errorf("GitOps setup cancelled: %w", err)
-			}
-		}
-		gitopsDir := setup.PromptGitOpsOutputDir(reader, clusterSetupFlags.gitopsOutputDir)
-
-		err := setup.ScaffoldGitOpsRepo(setup.GitOpsConfig{
-			OutputDir:          gitopsDir,
-			ClusterPersonaName: personaName,
-			Environment:        environment,
-			Components:         selected,
-			DryRun:             clusterSetupFlags.dryRun,
-			RepoURL:            repoURL,
-		})
-		if err != nil {
-			return err
-		}
-		if !clusterSetupFlags.dryRun {
-			setup.ConfirmGitOpsPush(reader, repoURL, gitopsDir)
-		}
-		return nil
+	// 8. Dispatch based on driver
+	driver, err := resolveDriver()
+	if err != nil {
+		return err
 	}
 
-	// 8. Build SetupConfig
+	switch driver {
+	case "gitops":
+		return runGitOpsSetup(reader, ex, personaName, environment, selected)
+	case "helm":
+		return runHelmSetup(reader, ex, personaName, environment, selected)
+	default:
+		return fmt.Errorf("unsupported driver: %s", driver)
+	}
+}
+
+// resolveDriver determines the installation driver based on flags.
+func resolveDriver() (string, error) {
+	switch clusterSetupFlags.driver {
+	case "helm", "gitops":
+		return clusterSetupFlags.driver, nil
+	default:
+		return "", fmt.Errorf("unknown driver %q — supported drivers: helm, gitops", clusterSetupFlags.driver)
+	}
+}
+
+func runGitOpsSetup(reader *bufio.Reader, ex setup.Executor, personaName, environment string, selected []setup.ComponentConfig) error {
+	var repoURL string
+	if !clusterSetupFlags.dryRun {
+		var err error
+		repoURL, err = setup.PromptGitRepoURL(reader)
+		if err != nil {
+			return fmt.Errorf("GitOps setup cancelled: %w", err)
+		}
+	}
+	gitopsDir := setup.PromptGitOpsOutputDir(reader, clusterSetupFlags.gitopsOutputDir)
+
+	// ArgoCD bootstrap check (only in non-dry-run mode)
+	if !clusterSetupFlags.dryRun {
+		argoCDInstalled := setup.IsArgoCDInstalled(ex)
+		if !argoCDInstalled {
+			action := setup.PromptArgoCDBootstrap(reader)
+			switch action {
+			case setup.BootstrapActionInstall:
+				output.Info("Installing ArgoCD via Helm...")
+				if err := setup.InstallArgoCDBootstrap(ex); err != nil {
+					return fmt.Errorf("ArgoCD bootstrap failed: %w", err)
+				}
+				output.Success("ArgoCD installed successfully")
+
+			case setup.BootstrapActionSkip:
+				output.Warn("Proceeding without ArgoCD — you must install ArgoCD before applying root-app.yaml")
+				output.Info("To install ArgoCD manually: helm install argocd argo/argo-cd -n argocd --create-namespace")
+
+			case setup.BootstrapActionAbort:
+				output.Info("Setup aborted")
+				return nil
+			}
+		} else {
+			output.Success("ArgoCD is already installed")
+		}
+	}
+
+	err := setup.ScaffoldGitOpsRepo(setup.GitOpsConfig{
+		OutputDir:          gitopsDir,
+		ClusterPersonaName: personaName,
+		Environment:        environment,
+		Components:         selected,
+		DryRun:             clusterSetupFlags.dryRun,
+		RepoURL:            repoURL,
+	})
+	if err != nil {
+		return err
+	}
+	if !clusterSetupFlags.dryRun {
+		setup.ConfirmGitOpsPush(reader, repoURL, gitopsDir)
+	}
+	return nil
+}
+
+func runHelmSetup(reader *bufio.Reader, ex setup.Executor, personaName, environment string, selected []setup.ComponentConfig) error {
 	cfg := setup.SetupConfig{
 		ClusterPersonaName: personaName,
 		Environment:        environment,
 		Components:         selected,
 		Timestamp:          time.Now(),
-		// Skip validation in dry-run (nothing was actually installed)
-		SkipValidation: clusterSetupFlags.skipValidation || clusterSetupFlags.dryRun,
+		SkipValidation:     clusterSetupFlags.skipValidation || clusterSetupFlags.dryRun,
 	}
 
-	// 9. Print plan and confirm
 	setup.PrintInstallPlan(cfg)
 	if !setup.ConfirmProceed(reader) {
 		output.Info("Aborted.")
 		return nil
 	}
 
-	// 10. Add all helm repos and update indices
 	fmt.Println()
 	output.Header("Preparing Helm repositories...")
 	added := make(map[string]bool)
@@ -261,12 +310,10 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 	}
 	output.Success("Helm repositories ready")
 
-	// 10b. Preflight: verify chart versions exist
 	if err := setup.CheckChartAvailability(ex, cfg.Components); err != nil {
 		return fmt.Errorf("preflight chart check failed: %w", err)
 	}
 
-	// 11. Install each component (with dependency enforcement)
 	fmt.Println()
 	output.Header("Installing components...")
 	fmt.Println()
@@ -275,7 +322,6 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 	installed := make(map[setup.ComponentID]bool)
 
 	for i, c := range cfg.Components {
-		// Check dependencies: all DependsOn must be in the installed set
 		depsMet := true
 		var missingDep setup.ComponentID
 		for _, dep := range c.DependsOn {
@@ -307,13 +353,11 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// 12. Validate
 	fmt.Println()
 	output.Header("Validating installation...")
 	vrs := setup.ValidateAll(ex, results, cfg.SkipValidation)
 	setup.PrintValidationResults(vrs)
 
-	// 13. Annotate ClusterPersona (records setup intent)
 	fmt.Printf("Annotating ClusterPersona %q... ", personaName)
 	if err := setup.AnnotateClusterPersona(ex, personaName, cfg); err != nil {
 		output.Error(fmt.Sprintf("annotation failed: %v", err))
@@ -321,10 +365,8 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		output.Success("done")
 	}
 
-	// 14. Final summary
 	setup.PrintFinalSummary(results, vrs, cfg)
 
-	// In dry-run mode, show the command log
 	if drex, ok := ex.(*setup.DryRunExecutor); ok && len(drex.Log) > 0 {
 		fmt.Println()
 		output.Header("Dry-run command log")

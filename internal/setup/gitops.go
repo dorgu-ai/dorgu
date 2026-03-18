@@ -155,7 +155,7 @@ func writeComponentValues(path string, c ComponentConfig) error {
 
 var gitopsReadmeTmpl = `# Dorgu Cluster GitOps Repository
 
-This repository was scaffolded by ` + "`dorgu cluster setup --gitops`" + `.
+This repository was scaffolded by ` + "`dorgu cluster setup --driver gitops`" + `.
 
 ## Structure
 

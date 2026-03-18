@@ -379,3 +379,41 @@ func CheckOperatorInstalled(ex Executor) error {
 
 	return fmt.Errorf("dorgu operator pod not running in dorgu-system or dorgu-operator-system namespace — ensure the operator is deployed and healthy")
 }
+
+// IsArgoCDInstalled checks if the ArgoCD Application CRD exists in the cluster.
+func IsArgoCDInstalled(ex Executor) bool {
+	out, err := ex.Run("kubectl", "api-resources", "--api-group=argoproj.io", "--no-headers")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(out, "applications")
+}
+
+// InstallArgoCDBootstrap installs ArgoCD via Helm as a prerequisite for GitOps mode.
+func InstallArgoCDBootstrap(ex Executor) error {
+	if err := AddHelmRepo(ex, "argo", "https://argoproj.github.io/argo-helm"); err != nil {
+		return fmt.Errorf("failed to add argo helm repo: %w", err)
+	}
+
+	if err := UpdateHelmRepos(ex); err != nil {
+		return fmt.Errorf("failed to update helm repos: %w", err)
+	}
+
+	argoCDConfig := ComponentConfig{
+		ID:              ComponentArgoCd,
+		HelmReleaseName: "argocd",
+		HelmChart:       "argo/argo-cd",
+		Namespace:       "argocd",
+		Version:         "7.8.28",
+		CreateNamespace: true,
+		Timeout:         "5m0s",
+	}
+
+	args := BuildHelmArgs(argoCDConfig, "7.8.28")
+	out, err := ex.Run("helm", args...)
+	if err != nil {
+		return fmt.Errorf("helm install argocd failed: %w\nOutput: %s", err, out)
+	}
+
+	return nil
+}
