@@ -497,6 +497,71 @@ func TestValidateClusterPersonaExists_NotFound(t *testing.T) {
 	}
 }
 
+func TestIsArgoCDInstalled_True(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "applications   argoproj.io/v1alpha1   true   Application", err: nil},
+		},
+	}
+	if !IsArgoCDInstalled(ex) {
+		t.Error("expected ArgoCD to be detected as installed")
+	}
+}
+
+func TestIsArgoCDInstalled_False(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "", err: fmt.Errorf("exit code 1")},
+		},
+	}
+	if IsArgoCDInstalled(ex) {
+		t.Error("expected ArgoCD to be detected as NOT installed")
+	}
+}
+
+func TestIsArgoCDInstalled_NoCRD(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "workflows   argoproj.io/v1alpha1   true   Workflow", err: nil},
+		},
+	}
+	if IsArgoCDInstalled(ex) {
+		t.Error("expected ArgoCD to be detected as NOT installed when only workflows CRD present")
+	}
+}
+
+func TestInstallArgoCDBootstrap_Success(t *testing.T) {
+	ex := &DryRunExecutor{}
+	err := InstallArgoCDBootstrap(ex)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ex.Log) != 3 {
+		t.Errorf("expected 3 commands, got %d: %v", len(ex.Log), ex.Log)
+	}
+	foundInstall := false
+	for _, cmd := range ex.Log {
+		if strings.Contains(cmd, "argo/argo-cd") && strings.Contains(cmd, "upgrade --install") {
+			foundInstall = true
+		}
+	}
+	if !foundInstall {
+		t.Errorf("expected helm upgrade --install for argo/argo-cd, got: %v", ex.Log)
+	}
+}
+
+func TestInstallArgoCDBootstrap_RepoAddFails(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "network error", err: fmt.Errorf("connection refused")},
+		},
+	}
+	err := InstallArgoCDBootstrap(ex)
+	if err == nil {
+		t.Fatal("expected error when repo add fails")
+	}
+	if !strings.Contains(err.Error(), "failed to add argo helm repo") {
+		t.Errorf("expected repo add error, got: %v", err)
 func TestClassifyError_Transient(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -88,6 +88,44 @@ func ConfirmGitOpsPush(r *bufio.Reader, repoURL, outputDir string) {
 	fmt.Println()
 }
 
+// BootstrapAction represents user's choice for ArgoCD bootstrap.
+type BootstrapAction string
+
+const (
+	BootstrapActionInstall BootstrapAction = "install"
+	BootstrapActionSkip    BootstrapAction = "skip"
+	BootstrapActionAbort   BootstrapAction = "abort"
+)
+
+// PromptArgoCDBootstrap asks user how to handle missing ArgoCD in GitOps mode.
+func PromptArgoCDBootstrap(r *bufio.Reader) BootstrapAction {
+	fmt.Println()
+	output.Warn("ArgoCD is required to apply the GitOps scaffold")
+	fmt.Println()
+	fmt.Println("  Choose bootstrap method:")
+	fmt.Println("    [1] Install ArgoCD via Helm now (recommended for first-time setup)")
+	fmt.Println("    [2] Continue without ArgoCD — I will install it manually")
+	fmt.Println("    [3] Abort")
+	fmt.Println()
+
+	for {
+		fmt.Printf("  Choice [1/2/3]: ")
+		input, _ := r.ReadString('\n')
+		input = strings.TrimSpace(input)
+
+		switch input {
+		case "1", "install":
+			return BootstrapActionInstall
+		case "2", "skip", "continue":
+			return BootstrapActionSkip
+		case "3", "abort":
+			return BootstrapActionAbort
+		default:
+			fmt.Printf("  Invalid choice %q. Enter 1, 2, or 3.\n", input)
+		}
+	}
+}
+
 // printStepHeader writes a lipgloss-styled step header box to w.
 // Using lipgloss eliminates the byte-slicing truncation bug that could
 // corrupt multibyte UTF-8 characters.
