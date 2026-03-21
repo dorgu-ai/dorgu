@@ -1,3 +1,7 @@
+---
+description: Stage and commit changes with conventional commit prefixes (feat/fix/chore/refactor/docs), under 72 chars, no body.
+---
+
 # Commit
 
 Stage and commit changes in the current repository.

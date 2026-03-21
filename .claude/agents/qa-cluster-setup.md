@@ -1241,6 +1241,169 @@ kubectl delete ns dorgu-qa-vcluster
 
 ---
 
+## Phase 15: Platform Serve (`dorgu platform serve`)
+
+This phase tests the web dashboard served by `dorgu platform serve`. It requires the operator and at least one ClusterPersona to be in the cluster (Phases 2-3 must have passed).
+
+**Prerequisite check:** If the user cleaned up in Phase 14, they need to re-initialize:
+- Operator must be running
+- At least one ClusterPersona must exist (e.g. `qa-cluster`)
+
+Ask the user if they want to run this phase. If they cleaned up in Phase 14, they will need to re-create the operator and ClusterPersona first.
+
+### 15.1 Help text
+
+```bash
+dorgu platform --help
+dorgu platform serve --help
+```
+
+Ask the user to verify:
+- `dorgu platform` shows subcommand `serve`
+- `dorgu platform serve --help` shows `--port`, `--kubeconfig`, `--context`, `--verbose` flags
+- Help text includes usage examples
+
+### 15.2 Start platform on default port
+
+```bash
+dorgu platform serve &
+sleep 3
+curl -s http://localhost:8080/api/clusters | jq .
+```
+
+Ask the user to verify:
+- Server starts with log: `Dorgu Platform starting on http://localhost:8080`
+- API, WebSocket, and Frontend URLs are logged
+- `curl` returns JSON with `{"clusters": [...]}`
+- ClusterPersona data from previous phases is visible (e.g. `qa-cluster`)
+
+### 15.3 Custom port
+
+```bash
+# Stop previous instance first
+kill %1 2>/dev/null
+dorgu platform serve --port 3000 &
+sleep 3
+curl -s http://localhost:3000/api/clusters | jq .
+```
+
+Ask the user to verify:
+- Starts on port 3000
+- API returns cluster data on the custom port
+
+### 15.4 Verbose mode
+
+```bash
+kill %1 2>/dev/null
+dorgu platform serve --verbose &
+sleep 3
+```
+
+Ask the user to verify:
+- Additional logging is visible compared to non-verbose mode
+
+### 15.5 Kubeconfig and context flags
+
+```bash
+kill %1 2>/dev/null
+dorgu platform serve --kubeconfig ~/.kube/config --context <current-context> &
+sleep 3
+curl -s http://localhost:8080/api/clusters | jq .
+```
+
+Ask the user to verify:
+- Server starts with specified kubeconfig and context
+- Returns cluster data
+
+### 15.6 API: GET /api/clusters returns ClusterPersona data
+
+```bash
+curl -s http://localhost:8080/api/clusters | jq '.clusters[0]'
+```
+
+Ask the user to verify:
+- Returns `qa-cluster` (or whichever ClusterPersona exists)
+- Has `name` field populated
+- `spec` and `status` fields present (may be partially populated depending on watcher implementation)
+- If Blessed Stack was installed (Phases 7-9), check `status.addons` reflects installed components
+
+### 15.7 API: GET /api/clusters/{name}
+
+```bash
+curl -s http://localhost:8080/api/clusters/qa-cluster | jq .
+```
+
+Ask the user to verify:
+- Returns single cluster object (not wrapped in array)
+- `name` matches requested cluster
+
+```bash
+curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/clusters/nonexistent
+```
+
+Ask the user to verify:
+- Returns HTTP 404
+
+### 15.8 Frontend loads
+
+```bash
+curl -s http://localhost:8080/ | grep -i "dorgu"
+```
+
+Ask the user to verify:
+- HTML contains "Dorgu" or "dorgu"
+- If React app is embedded: page references JavaScript assets
+- If placeholder: shows "Backend is running" message with API endpoint links
+
+### 15.9 WebSocket connectivity
+
+```bash
+# If wscat is available:
+timeout 5 wscat -c ws://localhost:8080/ws 2>&1 || echo "Connection test done"
+```
+
+Or instruct the user to check server logs for WebSocket client registration when the frontend connects in a browser.
+
+Ask the user to verify:
+- WebSocket endpoint is accessible at `ws://localhost:8080/ws`
+- Server logs show client connection
+
+### 15.10 Real-time updates
+
+While platform is running, create and then delete a test ClusterPersona:
+
+```bash
+dorgu cluster init --name platform-test --environment staging
+sleep 5
+kubectl delete clusterpersona platform-test
+```
+
+Ask the user to verify:
+- Server logs show `Broadcasting WebSocket event: cluster.added - platform-test`
+- Server logs show `Broadcasting WebSocket event: cluster.deleted - platform-test`
+- If browser is open at `http://localhost:8080/`, the dashboard updates in real time
+
+### 15.11 Graceful shutdown
+
+```bash
+# Ctrl+C the running platform process (or kill %1)
+```
+
+Ask the user to verify:
+- Shutdown messages appear in logs
+- Process exits cleanly
+- Terminal prompt returns normally
+
+### 15.12 Platform cleanup
+
+```bash
+# Ensure platform process is stopped
+kill %1 2>/dev/null
+kill $(pgrep -f "dorgu platform serve") 2>/dev/null
+```
+
+---
+
 ## Scorecard tracking
 
 Throughout the session, maintain a running scorecard using the TodoWrite tool. Track results per phase as you go.
@@ -1268,8 +1431,9 @@ At the end, produce a summary like:
   Phase 12: Component Verification ...... 5/6 PASS (1 SKIP)
   Phase 13: Addon Discovery ............. 3/3 PASS
   Phase 14: Cleanup ..................... 4/4 PASS
+  Phase 15: Platform Serve .............. 12/12 PASS
   ────────────────────────────────────────────────
-  TOTAL: 62/66 PASS | 0 FAIL | 4 SKIP
+  TOTAL: 74/78 PASS | 0 FAIL | 4 SKIP
 
   Fixed since last run:
   - 5.4: Dry-run now shows real kube-context (BUG-05-4)
@@ -1292,11 +1456,185 @@ Include all user-provided notes from the session. If any tests failed, highlight
 
 ---
 
+## Bug reporting and unit test agent instructions
+
+When any test case **FAILS** during the QA session, follow this two-stage workflow:
+
+### Stage 1: Bug report
+
+Write a detailed bug report file to `docs-internal/testing/dev/bugs/` in this repository. This directory already exists with prior bug reports — follow the same naming and formatting conventions.
+
+**File naming convention:** `BUG-<phase>-<case>-<short-description>.md`
+
+Example: `BUG-15-7-platform-api-404-wrong-status-code.md`
+
+**Bug report template:**
+
+```markdown
+# BUG-<phase>-<case>: <Title>
+
+## Session Metadata
+- **Date:** <YYYY-MM-DD>
+- **Test Mode:** <local dev build / released version>
+- **Environment Type:** <Kind / vCluster / minikube / etc.>
+- **Cluster State:** <fresh / operator-installed / persona-exists>
+- **QA Agent:** dorgu qa-cluster-setup
+
+## Test Case Reference
+- **Phase:** <phase number and name>
+- **Case:** <case number and description>
+
+## Reproduction Steps
+1. <step-by-step reproduction>
+
+## Expected Behavior
+<what should happen>
+
+## Actual Behavior
+<what actually happened, including error messages and logs>
+
+## Root Cause Analysis
+<analysis of what code is responsible, with file paths and line numbers>
+
+## Affected Files
+- `<file_path>:<line_number>` — <description>
+
+## Severity
+- **Impact:** <Critical / High / Medium / Low>
+- **Scope:** <how many features/flows are affected>
+
+## Unit Test Status
+- [ ] Unit tests written
+- [ ] Unit tests verified against unfixed code (tests fail as expected)
+- [ ] Bug fix applied
+- [ ] Unit tests pass after fix
+
+## Unit Test Instructions
+
+The following unit tests should be written to reproduce this bug and catch regressions:
+
+### Test file: `<path to test file>`
+
+1. **Test case: `Test<BugDescription>`**
+   - Setup: <what state to create>
+   - Action: <what to call/trigger>
+   - Assert: <what the broken behavior produces — test should FAIL on unfixed code>
+
+2. **Test case: `Test<EdgeCase>`**
+   - Setup: <edge case scenario>
+   - Action: <what to call/trigger>
+   - Assert: <expected behavior for the edge case>
+
+### Edge cases to cover:
+- <edge case 1>
+- <edge case 2>
+```
+
+### Stage 2: Unit test agent handoff
+
+After writing the bug report, **launch a sub-agent** (using the Agent tool with `subagent_type: "general-purpose"`) with the following prompt structure:
+
+```
+You are a unit test agent. Read the bug report at <path-to-bug-report> and write unit tests that:
+
+1. Reproduce the exact bug described in the "Reproduction Steps" section
+2. Cover all edge cases listed in the "Unit Test Instructions" section
+3. Verify the tests FAIL against the current (unfixed) code — this confirms the tests correctly catch the bug
+4. Follow existing test patterns in the codebase (check existing *_test.go files for conventions — table-driven tests, testify, etc.)
+
+After writing and verifying the tests:
+- Update the bug report file: check the "Unit tests written" and "Unit tests verified against unfixed code" checkboxes
+- Do NOT fix the bug itself — a separate agent will handle fixes
+
+Test file locations:
+- Go tests: alongside the source file (e.g., `internal/setup/installer_test.go`, `internal/cli/cluster_test.go`)
+- Use `make test` to verify tests compile and run
+```
+
+The unit test agent is responsible for writing and verifying the tests only. Once the unit test agent has updated the bug report, a **separate fix agent** will review all bug reports with completed unit tests and implement the fixes.
+
+---
+
+## Cross-dependency feature requests
+
+When QA testing reveals that the dorgu CLI requires changes in another project (dorgu-operator, dorgu-platform), or another project needs changes in the dorgu CLI, write a **feature request file** instead of attempting cross-repo changes.
+
+**Feature request location:** `docs-internal/testing/dev/bugs/` (same directory as bug reports, prefixed with `FR-`)
+
+**File naming convention:** `FR-<TARGET_PROJECT>-<number>-<short-description>.md`
+
+Examples:
+- `FR-OPERATOR-01-webhook-advisory-mode-config.md` (dorgu CLI needs operator to change)
+- `FR-PLATFORM-01-clusterpersona-visualization-platform.md` (dorgu CLI needs platform to add something)
+- `FR-CLI-01-helm-verbose-streaming-output.md` (another project needs dorgu CLI to change)
+
+**Feature request template:**
+
+```markdown
+# FR-<TARGET>-<number>: <Title>
+
+## Source
+- **Requesting project:** dorgu (CLI)
+- **QA session date:** <YYYY-MM-DD>
+- **Discovered in phase:** <phase number and case>
+
+## Target Project
+- **Repository:** <dorgu-operator / dorgu-platform / dorgu>
+- **Repository path:** <absolute path, e.g., /home/poklinho/dorgu-dev/dorgu-operator>
+
+## Description
+<What is needed and why>
+
+## Current Behavior
+<What happens now that motivated this request>
+
+## Desired Behavior
+<What should happen after the change>
+
+## Required Changes
+
+### API / Functions needed:
+- `<package>.<FunctionName>(args) -> returns` — <purpose>
+- `<package>.<TypeName>` — <fields and purpose>
+
+### Files likely affected:
+- `<file_path>` — <what needs to change>
+
+## Integration Points
+<How the requesting project will consume this change>
+- Import path: `<go module or npm package>`
+- Usage example:
+  ```go
+  <code showing how the requesting project will use the new API>
+  ```
+
+## Priority
+- **Blocking QA:** <yes/no — does this block further testing?>
+- **Severity:** <Critical / High / Medium / Low>
+
+## Acceptance Criteria
+1. <criterion 1>
+2. <criterion 2>
+```
+
+### Known cross-dependencies to watch for:
+
+- **dorgu CLI → dorgu-operator:** The CLI installs the operator via Helm (`internal/setup/installer.go`), watches its WebSocket server (`internal/ws/client.go`), and depends on the CRD schema for `dorgu cluster init` and `dorgu persona generate`.
+- **dorgu CLI → dorgu-platform:** The CLI imports `github.com/dorgu-ai/dorgu-platform/pkg/platform` for the `dorgu platform serve` command (`internal/cli/platform.go`). API changes in the platform package affect the CLI.
+- **dorgu-operator → dorgu CLI:** The operator's CRD fields define what `dorgu cluster status` and `dorgu persona status` can display. CRD schema changes must be reflected in CLI output formatters.
+- **dorgu-platform → dorgu-operator:** The platform's watcher depends on the operator's ClusterPersona CRD schema for data display.
+
+When you identify a cross-dependency need during QA, write the feature request file and **inform the user** about it so they can coordinate across repositories.
+
+---
+
 ## Grounding rules
 
 - **Never run** `kubectl apply`, `kubectl delete`, `helm install`, `helm uninstall`, `dorgu cluster init`, `dorgu cluster setup`, or any cluster-modifying command yourself. Show them to the user.
 - **You may run** read-only commands: `cat`, file reads, `kubectl get` (with user permission), to assist investigation.
+- **You may write** bug report files, feature request files, and unit test files — these are artifacts of the QA process.
 - **Be patient** — some steps require waiting for operator reconciliation (30s–5min). Tell the user when to wait and how to check progress.
 - **Track everything** — every test case gets a pass/fail/skip with optional notes.
 - **Be educational** — explain what each test validates and why it matters for production readiness.
-- **File bugs** — if anything fails, help the user draft a bug report with reproduction steps.
+- **File bugs** — if anything fails, write a bug report file AND launch the unit test agent.
+- **File feature requests** — if a cross-dependency need is found, write a feature request file.

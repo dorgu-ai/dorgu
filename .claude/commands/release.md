@@ -1,6 +1,10 @@
+---
+description: Cut a new release with auto-detected version, changelog update, tagging, and GoReleaser verification.
+---
+
 # Release
 
-Cut a new Dorgu CLI release. Optionally pass a version (e.g. `/release v0.3.0`). If no version is provided, it is auto-detected from commit history.
+Cut a new release. Optionally pass a version (e.g. `/release v0.3.0`). If no version is provided, it is auto-detected from commit history.
 
 ## Step 1: Auto-detect version (if not provided)
 
@@ -27,8 +31,8 @@ Calculate the next version by parsing the latest tag and applying the bump.
 > Proposed version: `v0.3.0` (minor bump — found `feat:` commits since `v0.2.0`)
 >
 > Commits included:
-> - abc1234 feat: interactive gitops scaffolding
-> - def5678 fix: validate cluster-persona flag
+> - abc1234 feat: add interactive scaffolding
+> - def5678 fix: validate flag input
 >
 > Proceed with v0.3.0?
 
@@ -46,7 +50,6 @@ make check
 
 # Verify binary builds
 make build
-./build/dorgu version
 ```
 
 If `make check` fails, stop and fix the issues. Do not tag a failing build.
@@ -104,16 +107,10 @@ Version must follow semver (`vMAJOR.MINOR.PATCH`). Pre-releases use `-rc.N` suff
 ## Step 7: Verify the build with GoReleaser (dry run)
 
 ```bash
-make goreleaser
-# Runs: goreleaser release --snapshot --clean
+goreleaser release --snapshot --clean
 ```
 
-Check that `./dist/` contains binaries for:
-- `dorgu_linux_amd64`
-- `dorgu_linux_arm64`
-- `dorgu_darwin_amd64`
-- `dorgu_darwin_arm64`
-- `dorgu_windows_amd64`
+Check that `./dist/` contains binaries for expected platforms (linux/darwin amd64/arm64, windows amd64).
 
 ## Step 8: Push tag to trigger release workflow
 
@@ -127,14 +124,14 @@ git push origin main
 git push origin <VERSION>
 ```
 
-The `release.yaml` GitHub Actions workflow triggers on tag push and runs GoReleaser to publish binaries and create the GitHub Release.
+The release GitHub Actions workflow triggers on tag push and runs GoReleaser to publish binaries and create the GitHub Release.
 
 ## Step 9: Verify the release
 
 After CI completes:
 1. Check GitHub Releases page for `<VERSION>` with attached binaries and checksums
-2. Test install: `go install github.com/dorgu-ai/dorgu/cmd/dorgu@<VERSION>`
-3. Verify `dorgu version` output matches the tag
+2. Test install: `go install <module-path>@<VERSION>`
+3. Verify version output matches the tag
 
 ## Rollback
 

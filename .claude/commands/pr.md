@@ -1,3 +1,7 @@
+---
+description: Create a pull request from the current branch with summary, key changes, commits, and test plan.
+---
+
 # PR
 
 Create a pull request from the current branch into the target branch (default: `master`).
@@ -37,7 +41,7 @@ git diff --stat <target-branch>...HEAD
 
 Use `gh pr create` with a detailed body. The body must include:
 
-- **Summary**: 3–6 bullet points describing the major changes and why they were made
+- **Summary**: 3-6 bullet points describing the major changes and why they were made
 - **Changed files**: key files added or modified (not a raw git diff, just the meaningful ones)
 - **Commits**: full list of commit messages included in the PR
 - **Test plan**: how to verify the changes work (commands to run, things to check)
@@ -54,8 +58,8 @@ gh pr create \
 
 ## Key Changes
 
-- `path/to/file.go` — what it does
-- `path/to/other.go` — what it does
+- `path/to/file` — what it does
+- `path/to/other` — what it does
 
 ## Commits
 
@@ -64,8 +68,8 @@ gh pr create \
 
 ## Test Plan
 
-- [ ] `make check` passes
-- [ ] `dorgu cluster setup --dry-run` prints plan and command log
+- [ ] Tests pass
+- [ ] Manual verification steps
 - [ ] ...
 EOF
 )"

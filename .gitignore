@@ -109,3 +109,8 @@ testdata/fuzz/
 
 # Documentation build artifacts
 site/
+
+# Claude Code local files
+.claude/rules/
+.claude/plans/
+.claude/settings.local.json

@@ -399,11 +399,86 @@ dorgu watch personas   # Ctrl+C after verifying connection
 dorgu sync status
 ```
 
+## Phase 11 (optional): Platform dashboard
+
+This phase tests `dorgu platform serve`, the web dashboard for visualizing ClusterPersona resources. It requires Phases 4 (operator) and 7 (ClusterPersona) to have passed.
+
+### 11a. Start platform
+
+```bash
+dorgu platform serve &
+sleep 3
+```
+
+Ask the user to verify:
+- Server starts on `http://localhost:8080`
+- Logs show API, WebSocket, and Frontend URLs
+
+### 11b. API endpoints
+
+```bash
+curl -s http://localhost:8080/api/clusters | jq .
+curl -s http://localhost:8080/api/clusters/qa-cluster | jq .
+```
+
+Ask the user to verify:
+- `/api/clusters` returns `{"clusters": [...]}` with ClusterPersona data
+- `/api/clusters/qa-cluster` returns the specific cluster with `name`, `spec`, `status`
+- Content-Type is `application/json`
+
+### 11c. Frontend
+
+```bash
+curl -s http://localhost:8080/ | grep -i "dorgu"
+```
+
+Ask the user to verify:
+- Page loads (either React dashboard or placeholder HTML)
+- If React app embedded: shows "Dorgu Platform" header, cluster table renders
+- If placeholder: shows "Backend is running" message
+
+### 11d. WebSocket real-time
+
+If Phase 10 (WebSocket) was tested, verify the platform dashboard also receives real-time updates:
+- Create a new ClusterPersona while platform is running
+- Check server logs for `Broadcasting WebSocket event` messages
+- If browser is open, verify dashboard updates without manual refresh
+
+### 11e. Custom port
+
+```bash
+# Stop and restart on custom port
+kill %1 2>/dev/null
+dorgu platform serve --port 3000 &
+sleep 3
+curl -s http://localhost:3000/api/clusters | jq .
+kill %1 2>/dev/null
+```
+
+Ask the user to verify:
+- Server starts on port 3000
+- API returns data on custom port
+
+### 11f. Graceful shutdown
+
+```bash
+# Ctrl+C the platform server (or kill %1)
+kill %1 2>/dev/null
+```
+
+Ask the user to verify:
+- Clean shutdown messages in logs
+- No error output
+- Terminal returns to normal
+
 ## Cleanup
 
 ### If LOCAL (dev build):
 
 ```bash
+# Stop platform server if running (Phase 11)
+kill $(pgrep -f "dorgu platform serve") 2>/dev/null
+
 # Remove Blessed Stack components (if Phase 8 was run)
 helm uninstall cert-manager -n cert-manager 2>/dev/null
 helm uninstall ingress-nginx -n ingress-nginx 2>/dev/null
@@ -425,6 +500,9 @@ rm -rf ~/dorgu-qa-test
 ### If RELEASED version:
 
 ```bash
+# Stop platform server if running (Phase 11)
+kill $(pgrep -f "dorgu platform serve") 2>/dev/null
+
 # Remove Blessed Stack components (if Phase 8 was run)
 helm uninstall cert-manager -n cert-manager 2>/dev/null
 helm uninstall ingress-nginx -n ingress-nginx 2>/dev/null

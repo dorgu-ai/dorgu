@@ -1,3 +1,7 @@
+---
+description: Update CHANGELOG.md with commits since the last release tag using Keep a Changelog format.
+---
+
 # Changelog Update
 
 Update `CHANGELOG.md` with commits since the last release tag. The argument to this command is an optional target version (e.g. `/changelog v0.2.2`). If not provided, update the `[Unreleased]` section.
@@ -70,7 +74,7 @@ And reset `[Unreleased]` to empty:
 
 ## Step 4: Review and clean up
 
-- Write entries from the user's perspective, not the implementer's. "Fixed persona apply failing when app name contains underscores" not "Fixed RFC 1123 sanitization in persona_yaml.go".
+- Write entries from the user's perspective, not the implementer's. "Fixed setup failing when app name contains underscores" not "Fixed RFC 1123 sanitization in internal_util.go".
 - Group related commits into a single entry if they address the same feature or fix.
 - Do not include commit hashes in the final entry (they're for cross-referencing during authoring).
 - Check that the format matches existing entries in `CHANGELOG.md`.
