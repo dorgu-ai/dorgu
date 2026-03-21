@@ -67,11 +67,3 @@ func applyDefaults(cfg *Config) {
 		cfg.LLM.Model = "gpt-4"
 	}
 }
-
-// GetResourcesForProfile returns resource spec for a given profile
-func (c *Config) GetResourcesForProfile(profile string) ResourceSpec {
-	if spec, ok := c.Resources.Profiles[profile]; ok {
-		return spec
-	}
-	return c.Resources.Defaults
-}

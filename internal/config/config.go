@@ -28,6 +28,14 @@ func Default() *Config {
 	return cfg
 }
 
+// GetResourcesForProfile returns resource spec for a given profile
+func (c *Config) GetResourcesForProfile(profile string) ResourceSpec {
+	if spec, ok := c.Resources.Profiles[profile]; ok {
+		return spec
+	}
+	return c.Resources.Defaults
+}
+
 // LoadAppConfig loads the application-specific .dorgu.yaml from the given path
 func LoadAppConfig(appPath string) (*AppConfig, error) {
 	configPath := filepath.Join(appPath, ".dorgu.yaml")
