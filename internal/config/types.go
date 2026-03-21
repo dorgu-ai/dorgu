@@ -60,8 +60,8 @@ type ResourceSpec struct {
 
 // ResourceValues contains CPU and memory values
 type ResourceValues struct {
-	CPU    string `mapstructure:"cpu"`
-	Memory string `mapstructure:"memory"`
+	CPU    string `mapstructure:"cpu" yaml:"cpu"`
+	Memory string `mapstructure:"memory" yaml:"memory"`
 }
 
 // LabelConfig contains label configuration
