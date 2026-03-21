@@ -179,6 +179,33 @@ dorgu cluster status
 | `dorgu cluster status` | Show cluster status and discovered information |
 | `dorgu cluster setup` | Install production-ready Kubernetes stack via interactive wizard |
 
+### Platform Commands
+
+| Command | Description |
+|---------|-------------|
+| `dorgu platform serve` | Start ClusterPersona visualization web UI |
+
+**Platform Flags:**
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--port, -p` | HTTP server port | `8080` |
+| `--kubeconfig` | Path to kubeconfig file | `$KUBECONFIG` or `~/.kube/config` |
+| `--context` | Kubernetes context to use | current context |
+| `--verbose, -v` | Enable verbose logging | `false` |
+
+**Example:**
+
+```bash
+# Start platform on default port
+dorgu platform serve
+
+# Start on port 3000 with verbose logging
+dorgu platform serve --port 3000 --verbose
+```
+
+Once running, open http://localhost:8080 in your browser to view the dashboard.
+
 ### Real-time Commands (Requires Operator with WebSocket)
 
 | Command | Description |

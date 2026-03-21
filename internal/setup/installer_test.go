@@ -562,6 +562,9 @@ func TestInstallArgoCDBootstrap_RepoAddFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to add argo helm repo") {
 		t.Errorf("expected repo add error, got: %v", err)
+	}
+}
+
 func TestClassifyError_Transient(t *testing.T) {
 	tests := []struct {
 		name   string
