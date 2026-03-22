@@ -6,17 +6,29 @@ import (
 	"strings"
 )
 
+// gitEnvOverrides lists environment variables that override git's
+// repository discovery via -C. Git hooks set these, which silently
+// causes -C to resolve to the hook's repo instead of the target path.
+var gitEnvOverrides = map[string]bool{
+	"GIT_DIR":                          true, // overrides repo location
+	"GIT_WORK_TREE":                    true, // overrides worktree location
+	"GIT_INDEX_FILE":                   true, // overrides index (set by pre-commit hooks)
+	"GIT_OBJECT_DIRECTORY":             true, // redirects object storage
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES": true, // redirects alternate objects
+	"GIT_COMMON_DIR":                   true, // overrides common dir (worktrees)
+}
+
 // gitCommand creates a git command that operates on the given path.
-// It strips GIT_DIR and GIT_WORK_TREE from the environment so that
-// -C path is authoritative for repository discovery. Without this,
-// git hooks (pre-push, pre-commit) set GIT_DIR which causes -C to
-// be silently ignored, returning results from the wrong repository.
+// It strips git environment overrides so that -C path is authoritative
+// for repository discovery. Without this, git hooks (pre-push, pre-commit)
+// set GIT_DIR/GIT_INDEX_FILE which causes -C to be silently ignored,
+// returning results from — or writing commits to — the wrong repository.
 func gitCommand(path string, args ...string) *exec.Cmd {
 	fullArgs := append([]string{"-C", path}, args...)
 	cmd := exec.Command("git", fullArgs...)
 	for _, env := range os.Environ() {
-		if strings.HasPrefix(env, "GIT_DIR=") ||
-			strings.HasPrefix(env, "GIT_WORK_TREE=") {
+		key, _, _ := strings.Cut(env, "=")
+		if gitEnvOverrides[key] {
 			continue
 		}
 		cmd.Env = append(cmd.Env, env)
