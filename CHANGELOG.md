@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-22
+
+### Added
+
+- `dorgu platform serve` command for platform API server.
+- Driver flag (`--driver helm|gitops`) for cluster setup installation modes.
+- Interactive skip and smart retry for failed Helm components.
+- Verbose mode (`--verbose`) for real-time Helm output streaming during cluster setup.
+
+### Changed
+
+- Extract cli package into focused files: `persona_display.go`, `cluster_display.go`, `cluster_helm.go`, `cluster_gitops.go` (all files under 400 LOC).
+- Extract analyzer package: defaults/LLM enhancement, endpoint detection, app config types.
+- Extract generator package: K8s type definitions, label/annotation builders.
+- Extract config package: type definitions, defaults logic, resource profile helpers.
+- Extract setup package: executor types, kubectl operations, prompt/display functions.
+- Add YAML tags to `ResourceValues` for dual decode safety.
+
+### Fixed
+
+- Isolate git commands from hook environment variables in analyzer.
+- Remove duplicate next steps output in GitOps mode.
+- Add sandbox to valid environments in cluster setup prompt.
+- Fix missing closing braces in `installer_test.go`.
+
 ## [0.3.0] - 2026-03-11
 
 ### Added
