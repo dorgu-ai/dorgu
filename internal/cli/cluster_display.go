@@ -183,11 +183,6 @@ func clusterPhaseDot(phase string) string {
 	return dot + " " + output.FormatPhase(phase)
 }
 
-// colorPhase delegates to output.FormatPhase for backward compatibility within the cli package.
-func colorPhase(phase string) string {
-	return output.FormatPhase(phase)
-}
-
 // formatAge returns a human-readable age string from an RFC3339 timestamp.
 func formatAge(ts string) string {
 	if ts == "" {

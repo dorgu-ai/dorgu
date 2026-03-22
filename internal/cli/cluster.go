@@ -130,7 +130,6 @@ func listClusterPersonas() error {
 		"NAME", "ENVIRONMENT", "PHASE", "NODES", "APPS", "AGE")
 	fmt.Printf("  %s\n", strings.Repeat("─", 70))
 
-	headerStyle := lipgloss.NewStyle()
 	for _, item := range list.Items {
 		phaseStr := clusterPhaseDot(item.Status.Phase)
 		// Pad phase column to consistent visual width (use lipgloss Width for ANSI-safe padding)
@@ -140,7 +139,6 @@ func listClusterPersonas() error {
 			env = "-"
 		}
 		age := formatAge(item.Metadata.CreationTimestamp)
-		_ = headerStyle
 
 		fmt.Printf("  %-18s %-14s %s %-7d %-6d %s\n",
 			item.Metadata.Name,
