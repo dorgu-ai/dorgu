@@ -1,9 +1,28 @@
 package analyzer
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 )
+
+// gitCommand creates a git command that operates on the given path.
+// It strips GIT_DIR and GIT_WORK_TREE from the environment so that
+// -C path is authoritative for repository discovery. Without this,
+// git hooks (pre-push, pre-commit) set GIT_DIR which causes -C to
+// be silently ignored, returning results from the wrong repository.
+func gitCommand(path string, args ...string) *exec.Cmd {
+	fullArgs := append([]string{"-C", path}, args...)
+	cmd := exec.Command("git", fullArgs...)
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "GIT_DIR=") ||
+			strings.HasPrefix(env, "GIT_WORK_TREE=") {
+			continue
+		}
+		cmd.Env = append(cmd.Env, env)
+	}
+	return cmd
+}
 
 // DetectGitRemoteURL tries to detect the Git remote URL for a given path.
 // Returns empty string if git is not available or no remote is configured.
@@ -11,7 +30,7 @@ func DetectGitRemoteURL(path string) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		return ""
 	}
-	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+	cmd := gitCommand(path, "remote", "get-url", "origin")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -25,7 +44,7 @@ func DetectGitBranch(path string) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		return ""
 	}
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := gitCommand(path, "rev-parse", "--abbrev-ref", "HEAD")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -38,7 +57,7 @@ func IsGitRepo(path string) bool {
 	if _, err := exec.LookPath("git"); err != nil {
 		return false
 	}
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--is-inside-work-tree")
+	cmd := gitCommand(path, "rev-parse", "--is-inside-work-tree")
 	output, err := cmd.Output()
 	if err != nil {
 		return false

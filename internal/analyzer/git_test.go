@@ -7,6 +7,23 @@ import (
 	"testing"
 )
 
+// clearGitEnv unsets GIT_DIR and GIT_WORK_TREE for the duration of the test.
+// Git hooks (pre-push, pre-commit) set these variables, which causes git
+// commands with -C to silently resolve to the hook's repository instead of the
+// intended path. This led to tests accidentally creating commits on the real
+// branch (see PR #17 incident).
+func clearGitEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"GIT_DIR", "GIT_WORK_TREE"} {
+		if val, ok := os.LookupEnv(key); ok {
+			t.Cleanup(func() { os.Setenv(key, val) })
+		} else {
+			t.Cleanup(func() { os.Unsetenv(key) })
+		}
+		os.Unsetenv(key)
+	}
+}
+
 func TestNormalizeGitURL_SSH(t *testing.T) {
 	tests := []struct {
 		input string
@@ -70,6 +87,7 @@ func TestIsGitRepo(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available, skipping test")
 	}
+	clearGitEnv(t)
 
 	tmpDir := t.TempDir()
 
@@ -92,6 +110,7 @@ func TestIsGitRepo_Subdirectory(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available, skipping test")
 	}
+	clearGitEnv(t)
 
 	tmpDir := t.TempDir()
 
@@ -115,6 +134,7 @@ func TestIsGitRepo_NonExistentPath(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available, skipping test")
 	}
+	clearGitEnv(t)
 
 	if IsGitRepo("/nonexistent/path/that/does/not/exist") {
 		t.Error("IsGitRepo() = true for non-existent path, want false")
@@ -125,6 +145,7 @@ func TestDetectGitRemoteURL(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available, skipping test")
 	}
+	clearGitEnv(t)
 
 	tmpDir := t.TempDir()
 
@@ -161,6 +182,7 @@ func TestDetectGitBranch(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available, skipping test")
 	}
+	clearGitEnv(t)
 
 	tmpDir := t.TempDir()
 
