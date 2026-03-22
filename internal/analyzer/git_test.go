@@ -77,8 +77,8 @@ func TestIsGitRepo(t *testing.T) {
 		t.Error("IsGitRepo() = true for non-git directory, want false")
 	}
 
-	cmd := exec.Command("git", "init")
-	cmd.Dir = tmpDir
+	// Use gitCommand for setup so GIT_DIR from hooks doesn't leak.
+	cmd := gitCommand(tmpDir, "init")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
@@ -95,8 +95,7 @@ func TestIsGitRepo_Subdirectory(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	cmd := exec.Command("git", "init")
-	cmd.Dir = tmpDir
+	cmd := gitCommand(tmpDir, "init")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
@@ -133,8 +132,7 @@ func TestDetectGitRemoteURL(t *testing.T) {
 		t.Errorf("DetectGitRemoteURL() = %q for non-git directory, want empty", url)
 	}
 
-	cmd := exec.Command("git", "init")
-	cmd.Dir = tmpDir
+	cmd := gitCommand(tmpDir, "init")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
@@ -144,8 +142,7 @@ func TestDetectGitRemoteURL(t *testing.T) {
 		t.Errorf("DetectGitRemoteURL() = %q for git repo without remote, want empty", url)
 	}
 
-	cmd = exec.Command("git", "remote", "add", "origin", "git@github.com:test/repo.git")
-	cmd.Dir = tmpDir
+	cmd = gitCommand(tmpDir, "remote", "add", "origin", "git@github.com:test/repo.git")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("Failed to add remote: %v", err)
 	}
@@ -169,33 +166,32 @@ func TestDetectGitBranch(t *testing.T) {
 		t.Errorf("DetectGitBranch() = %q for non-git directory, want empty", branch)
 	}
 
-	cmd := exec.Command("git", "init")
-	cmd.Dir = tmpDir
+	cmd := gitCommand(tmpDir, "init")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	cmd = exec.Command("git", "config", "user.email", "test@example.com")
-	cmd.Dir = tmpDir
-	_ = cmd.Run()
+	cmd = gitCommand(tmpDir, "config", "user.email", "test@example.com")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to set git user.email: %v", err)
+	}
 
-	cmd = exec.Command("git", "config", "user.name", "Test User")
-	cmd.Dir = tmpDir
-	_ = cmd.Run()
+	cmd = gitCommand(tmpDir, "config", "user.name", "Test User")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to set git user.name: %v", err)
+	}
 
 	testFile := filepath.Join(tmpDir, "test.txt")
 	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	cmd = exec.Command("git", "add", ".")
-	cmd.Dir = tmpDir
+	cmd = gitCommand(tmpDir, "add", ".")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("Failed to git add: %v", err)
 	}
 
-	cmd = exec.Command("git", "commit", "-m", "initial")
-	cmd.Dir = tmpDir
+	cmd = gitCommand(tmpDir, "commit", "-m", "initial")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("Failed to git commit: %v", err)
 	}
