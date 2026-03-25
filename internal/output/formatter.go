@@ -18,59 +18,120 @@ var (
 
 // Success prints a success message
 func Success(msg string) {
-	fmt.Println(successStyle.Render("✓ " + msg))
+	if IsJSON() {
+		return
+	}
+	text := "✓ " + msg
+	if IsTTY() {
+		fmt.Println(successStyle.Render(text))
+	} else {
+		fmt.Println(text)
+	}
 }
 
 // Error prints an error message
 func Error(msg string) {
-	fmt.Fprintln(os.Stderr, errorStyle.Render("✗ "+msg))
+	if IsJSON() {
+		return
+	}
+	text := "✗ " + msg
+	if IsTTY() {
+		fmt.Fprintln(os.Stderr, errorStyle.Render(text))
+	} else {
+		fmt.Fprintln(os.Stderr, text)
+	}
 }
 
 // Warn prints a warning message
 func Warn(msg string) {
-	fmt.Println(warnStyle.Render("⚠ " + msg))
+	if IsJSON() {
+		return
+	}
+	text := "⚠ " + msg
+	if IsTTY() {
+		fmt.Println(warnStyle.Render(text))
+	} else {
+		fmt.Println(text)
+	}
 }
 
 // Info prints an info message
 func Info(msg string) {
-	fmt.Println(infoStyle.Render("ℹ " + msg))
+	if IsJSON() {
+		return
+	}
+	text := "ℹ " + msg
+	if IsTTY() {
+		fmt.Println(infoStyle.Render(text))
+	} else {
+		fmt.Println(text)
+	}
 }
 
 // DimPrint prints a dimmed message to stdout
 func DimPrint(msg string) {
-	fmt.Println(dimStyle.Render(msg))
+	if IsJSON() {
+		return
+	}
+	if IsTTY() {
+		fmt.Println(dimStyle.Render(msg))
+	} else {
+		fmt.Println(msg)
+	}
 }
 
 // Dim returns a dimmed string (does not print)
 func Dim(msg string) string {
-	return dimStyle.Render(msg)
+	if IsTTY() {
+		return dimStyle.Render(msg)
+	}
+	return msg
 }
 
 // Header prints a header
 func Header(msg string) {
+	if IsJSON() {
+		return
+	}
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Render(msg))
+	if IsTTY() {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Render(msg))
+	} else {
+		fmt.Println(msg)
+	}
 	fmt.Println()
 }
 
 // Green returns a green-colored string
 func Green(msg string) string {
-	return successStyle.Render(msg)
+	if IsTTY() {
+		return successStyle.Render(msg)
+	}
+	return msg
 }
 
 // Yellow returns a yellow-colored string
 func Yellow(msg string) string {
-	return warnStyle.Render(msg)
+	if IsTTY() {
+		return warnStyle.Render(msg)
+	}
+	return msg
 }
 
 // Blue returns a blue-colored string
 func Blue(msg string) string {
-	return infoStyle.Render(msg)
+	if IsTTY() {
+		return infoStyle.Render(msg)
+	}
+	return msg
 }
 
 // Red returns a red-colored string
 func Red(msg string) string {
-	return errorStyle.Render(msg)
+	if IsTTY() {
+		return errorStyle.Render(msg)
+	}
+	return msg
 }
 
 // FormatPhase returns a colored phase string for cluster and persona displays.
@@ -105,21 +166,47 @@ func FormatHealth(health string) string {
 
 // ErrorWithHint prints a styled error message followed by dimmed hint lines.
 func ErrorWithHint(msg string, hints ...string) {
-	fmt.Fprintln(os.Stderr, errorStyle.Render("✗ "+msg))
-	for _, h := range hints {
-		fmt.Fprintln(os.Stderr, dimStyle.Render("  → "+h))
+	if IsJSON() {
+		return
+	}
+	text := "✗ " + msg
+	if IsTTY() {
+		fmt.Fprintln(os.Stderr, errorStyle.Render(text))
+		for _, h := range hints {
+			fmt.Fprintln(os.Stderr, dimStyle.Render("  → "+h))
+		}
+	} else {
+		fmt.Fprintln(os.Stderr, text)
+		for _, h := range hints {
+			fmt.Fprintln(os.Stderr, "  → "+h)
+		}
 	}
 	fmt.Fprintln(os.Stderr)
 }
 
 // ErrorWithSuggestions prints an error with a list of suggested alternatives.
 func ErrorWithSuggestions(msg string, suggestions []string) {
-	fmt.Fprintln(os.Stderr, errorStyle.Render("✗ "+msg))
-	if len(suggestions) > 0 {
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, dimStyle.Render("  Did you mean one of these?"))
-		for _, s := range suggestions {
-			fmt.Fprintln(os.Stderr, infoStyle.Render("    "+s))
+	if IsJSON() {
+		return
+	}
+	text := "✗ " + msg
+	if IsTTY() {
+		fmt.Fprintln(os.Stderr, errorStyle.Render(text))
+		if len(suggestions) > 0 {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, dimStyle.Render("  Did you mean one of these?"))
+			for _, s := range suggestions {
+				fmt.Fprintln(os.Stderr, infoStyle.Render("    "+s))
+			}
+		}
+	} else {
+		fmt.Fprintln(os.Stderr, text)
+		if len(suggestions) > 0 {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "  Did you mean one of these?")
+			for _, s := range suggestions {
+				fmt.Fprintln(os.Stderr, "    "+s)
+			}
 		}
 	}
 	fmt.Fprintln(os.Stderr)

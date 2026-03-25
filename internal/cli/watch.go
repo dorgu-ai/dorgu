@@ -130,6 +130,11 @@ func runWatchPersonas(cmd *cobra.Command, args []string) error {
 			return
 		}
 
+		if output.IsJSON() {
+			output.PrintJSONLine(event)
+			return
+		}
+
 		timestamp := msg.Timestamp.Format("15:04:05")
 		switch event.EventType {
 		case "created":
@@ -186,6 +191,11 @@ func runWatchCluster(cmd *cobra.Command, args []string) error {
 			return
 		}
 
+		if output.IsJSON() {
+			output.PrintJSONLine(event)
+			return
+		}
+
 		timestamp := msg.Timestamp.Format("15:04:05")
 		switch event.EventType {
 		case "updated":
@@ -235,6 +245,11 @@ func runWatchEvents(cmd *cobra.Command, args []string) error {
 
 	// Subscribe to events topic
 	err := client.Subscribe(ctx, ws.TopicEvents, func(msg *ws.Message) {
+		if output.IsJSON() {
+			// Output raw payload as JSONL
+			fmt.Println(string(msg.Payload))
+			return
+		}
 		timestamp := msg.Timestamp.Format("15:04:05")
 		fmt.Printf("[%s] %s\n", timestamp, string(msg.Payload))
 	})

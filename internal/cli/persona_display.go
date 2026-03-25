@@ -80,6 +80,11 @@ func displayPersonaStatus(name string, rawYAML string) {
 		return
 	}
 
+	if output.IsJSON() {
+		output.PrintJSON(persona)
+		return
+	}
+
 	// Header
 	output.Header(fmt.Sprintf("ApplicationPersona: %s", name))
 
