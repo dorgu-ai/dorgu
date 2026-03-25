@@ -1,12 +1,12 @@
 package cli
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/dorgu-ai/dorgu/internal/analyzer"
@@ -61,31 +61,66 @@ func runGlobalInit() error {
 		return nil
 	}
 
-	reader := bufio.NewReader(os.Stdin)
+	// Non-interactive: use defaults
+	if !output.IsInteractive() {
+		cfg := &config.GlobalConfig{
+			Version: "1",
+			LLM:     config.GlobalLLMConfig{Provider: "gemini"},
+			Defaults: config.GlobalDefaults{
+				Namespace: "default",
+			},
+		}
+		if err := config.SaveGlobalConfig(cfg); err != nil {
+			return fmt.Errorf("failed to save global config: %w", err)
+		}
+		output.Success(fmt.Sprintf("Global config saved to %s (defaults)", configPath))
+		return nil
+	}
+
 	fmt.Println()
 	fmt.Println("Dorgu Global Configuration Setup")
 	fmt.Println("==================================")
 	fmt.Println("This sets default LLM provider and API keys. Overridable by env or app config.")
 	fmt.Println()
 
-	provider := prompt(reader, "Default LLM provider (openai, anthropic, gemini, ollama)", "gemini")
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	valid := map[string]bool{"openai": true, "anthropic": true, "gemini": true, "ollama": true}
-	if !valid[provider] {
-		provider = "gemini"
-	}
+	var (
+		provider  = "gemini"
+		apiKey    string
+		model     string
+		namespace = "default"
+		registry  string
+		orgName   string
+	)
 
-	apiKey := ""
-	if provider != "ollama" {
-		fmt.Println()
-		apiKey = prompt(reader, "API Key (leave empty to use env var)", "")
-	}
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Default LLM provider").
+				Options(
+					huh.NewOption("Gemini", "gemini"),
+					huh.NewOption("OpenAI", "openai"),
+					huh.NewOption("Anthropic", "anthropic"),
+					huh.NewOption("Ollama (local)", "ollama"),
+				).
+				Value(&provider),
+		),
+		huh.NewGroup(
+			huh.NewInput().
+				Title("API Key (leave empty to use env var)").
+				Value(&apiKey).
+				EchoMode(huh.EchoModePassword),
+		).WithHideFunc(func() bool { return provider == "ollama" }),
+		huh.NewGroup(
+			huh.NewInput().Title("Model override (leave empty for provider default)").Value(&model),
+			huh.NewInput().Title("Default Kubernetes namespace").Value(&namespace).Placeholder("default"),
+			huh.NewInput().Title("Default container registry (e.g. ghcr.io/my-org)").Value(&registry),
+			huh.NewInput().Title("Organization name").Value(&orgName),
+		),
+	)
 
-	fmt.Println()
-	model := prompt(reader, "Model override (leave empty for provider default)", "")
-	namespace := prompt(reader, "Default Kubernetes namespace", "default")
-	registry := prompt(reader, "Default container registry (e.g. ghcr.io/my-org)", "")
-	orgName := prompt(reader, "Organization name", "")
+	if err := form.Run(); err != nil {
+		return fmt.Errorf("setup cancelled")
+	}
 
 	cfg := &config.GlobalConfig{
 		Version: "1",
@@ -149,15 +184,20 @@ func runAppInit(args []string) error {
 }
 
 func interactiveAppInit(appPath string) (string, error) {
-	reader := bufio.NewReader(os.Stdin)
+	dirName := filepath.Base(appPath)
+	detectedRepo := analyzer.DetectGitRemoteURL(appPath)
+	detectedLang := detectLanguageHint(appPath)
+
+	// Non-interactive: fall back to minimal config
+	if !output.IsInteractive() {
+		return generateMinimalConfig(appPath), nil
+	}
+
 	fmt.Println()
 	fmt.Println("Dorgu Application Configuration")
 	fmt.Println("=================================")
 	fmt.Println()
 
-	dirName := filepath.Base(appPath)
-	detectedRepo := analyzer.DetectGitRemoteURL(appPath)
-	detectedLang := detectLanguageHint(appPath)
 	if detectedRepo != "" {
 		output.Info("Detected git remote: " + detectedRepo)
 	}
@@ -166,13 +206,48 @@ func interactiveAppInit(appPath string) (string, error) {
 	}
 	fmt.Println()
 
-	appName := prompt(reader, "Application name", dirName)
-	description := prompt(reader, "Description", "")
-	team := prompt(reader, "Team name", "")
-	owner := prompt(reader, "Owner email", "")
-	appType := prompt(reader, "Application type (api/web/worker/cron)", guessAppType(appPath, detectedLang))
-	repo := prompt(reader, "Repository URL", detectedRepo)
-	env := prompt(reader, "Environment (production/staging/development)", "production")
+	var (
+		appName     = dirName
+		description string
+		team        string
+		owner       string
+		appType     = guessAppType(appPath, detectedLang)
+		repo        = detectedRepo
+		env         = "production"
+	)
+
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().Title("Application name").Value(&appName).Placeholder(dirName),
+			huh.NewInput().Title("Description").Value(&description),
+			huh.NewInput().Title("Team name").Value(&team),
+			huh.NewInput().Title("Owner email").Value(&owner),
+		),
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Application type").
+				Options(
+					huh.NewOption("API", "api"),
+					huh.NewOption("Web", "web"),
+					huh.NewOption("Worker", "worker"),
+					huh.NewOption("Cron", "cron"),
+				).
+				Value(&appType),
+			huh.NewInput().Title("Repository URL").Value(&repo).Placeholder(detectedRepo),
+			huh.NewSelect[string]().
+				Title("Environment").
+				Options(
+					huh.NewOption("Production", "production"),
+					huh.NewOption("Staging", "staging"),
+					huh.NewOption("Development", "development"),
+				).
+				Value(&env),
+		),
+	)
+
+	if err := form.Run(); err != nil {
+		return "", fmt.Errorf("setup cancelled")
+	}
 
 	var sb strings.Builder
 	sb.WriteString("# Dorgu Application Configuration\n")
@@ -349,18 +424,4 @@ func guessAppType(path string, lang string) string {
 		}
 	}
 	return "api"
-}
-
-func prompt(reader *bufio.Reader, label, defaultVal string) string {
-	if defaultVal != "" {
-		fmt.Printf("%s [%s]: ", label, defaultVal)
-	} else {
-		fmt.Printf("%s: ", label)
-	}
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return defaultVal
-	}
-	return input
 }

@@ -1,66 +1,95 @@
 package setup
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/huh"
+
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
 
-// PromptEnvironment prompts: "? Environment [development/staging/production/sandbox]:"
-// Validates against known environments; retries on invalid input.
-// Default: "development".
-func PromptEnvironment(r *bufio.Reader) string {
-	validEnvs := map[string]bool{"development": true, "staging": true, "production": true, "sandbox": true}
-	for {
-		fmt.Printf("? Environment [development/staging/production/sandbox]: ")
-		input, _ := r.ReadString('\n')
-		input = strings.TrimSpace(input)
-		if input == "" {
-			return "development"
-		}
-		if validEnvs[input] {
-			return input
-		}
-		fmt.Printf("  Invalid environment %q. Choose: development, staging, production, sandbox\n", input)
+// PromptEnvironment prompts the user to select an environment.
+// Returns "development" when non-interactive.
+func PromptEnvironment() string {
+	if !output.IsInteractive() {
+		return "development"
 	}
+	var env string = "development"
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Environment").
+				Options(
+					huh.NewOption("Development", "development"),
+					huh.NewOption("Staging", "staging"),
+					huh.NewOption("Production", "production"),
+					huh.NewOption("Sandbox", "sandbox"),
+				).
+				Value(&env),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return "development"
+	}
+	return env
 }
 
 // PromptGitRepoURL prompts for the Git repository URL and validates it.
-// Retries up to 3 times on invalid input.
-func PromptGitRepoURL(r *bufio.Reader) (string, error) {
-	for attempt := 0; attempt < 3; attempt++ {
-		fmt.Printf("? Git repository URL (e.g., https://github.com/org/repo.git): ")
-		input, _ := r.ReadString('\n')
-		input = strings.TrimSpace(input)
-		if input == "" {
-			fmt.Println("  Repository URL is required.")
-			continue
-		}
-		if !strings.HasPrefix(input, "https://") && !strings.HasPrefix(input, "git@") && !strings.HasPrefix(input, "ssh://") {
-			fmt.Printf("  Invalid URL %q — must start with https://, git@, or ssh://\n", input)
-			continue
-		}
-		return input, nil
+// Returns an error when non-interactive.
+func PromptGitRepoURL() (string, error) {
+	if !output.IsInteractive() {
+		return "", fmt.Errorf("non-interactive mode: provide repository URL via flag")
 	}
-	return "", fmt.Errorf("no valid repository URL provided after 3 attempts")
+	var url string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Git repository URL").
+				Description("e.g., https://github.com/org/repo.git").
+				Value(&url).
+				Validate(func(s string) error {
+					if s == "" {
+						return fmt.Errorf("repository URL is required")
+					}
+					if !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "git@") && !strings.HasPrefix(s, "ssh://") {
+						return fmt.Errorf("must start with https://, git@, or ssh://")
+					}
+					return nil
+				}),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return "", fmt.Errorf("cancelled: %w", err)
+	}
+	return url, nil
 }
 
 // PromptGitOpsOutputDir prompts for the output directory with a default.
-func PromptGitOpsOutputDir(r *bufio.Reader, defaultDir string) string {
-	fmt.Printf("? Output directory [%s]: ", defaultDir)
-	input, _ := r.ReadString('\n')
-	input = strings.TrimSpace(input)
-	if input == "" {
+func PromptGitOpsOutputDir(defaultDir string) string {
+	if !output.IsInteractive() {
 		return defaultDir
 	}
-	return input
+	dir := defaultDir
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Output directory").
+				Value(&dir),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return defaultDir
+	}
+	if dir == "" {
+		return defaultDir
+	}
+	return dir
 }
 
 // ConfirmGitOpsPush prints push instructions after scaffolding.
-func ConfirmGitOpsPush(r *bufio.Reader, repoURL, outputDir string) {
+func ConfirmGitOpsPush(repoURL, outputDir string) {
 	fmt.Println()
 	output.Header("Next: Push to Git and apply")
 	fmt.Println()
@@ -82,38 +111,38 @@ const (
 )
 
 // PromptArgoCDBootstrap asks user how to handle missing ArgoCD in GitOps mode.
-func PromptArgoCDBootstrap(r *bufio.Reader) BootstrapAction {
+func PromptArgoCDBootstrap() BootstrapAction {
+	if !output.IsInteractive() {
+		return BootstrapActionAbort
+	}
+
 	fmt.Println()
 	output.Warn("ArgoCD is required to apply the GitOps scaffold")
 	fmt.Println()
-	fmt.Println("  Choose bootstrap method:")
-	fmt.Println("    [1] Install ArgoCD via Helm now (recommended for first-time setup)")
-	fmt.Println("    [2] Continue without ArgoCD — I will install it manually")
-	fmt.Println("    [3] Abort")
-	fmt.Println()
 
-	for {
-		fmt.Printf("  Choice [1/2/3]: ")
-		input, _ := r.ReadString('\n')
-		input = strings.TrimSpace(input)
-
-		switch input {
-		case "1", "install":
-			return BootstrapActionInstall
-		case "2", "skip", "continue":
-			return BootstrapActionSkip
-		case "3", "abort":
-			return BootstrapActionAbort
-		default:
-			fmt.Printf("  Invalid choice %q. Enter 1, 2, or 3.\n", input)
-		}
+	var action string = "install"
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Choose bootstrap method").
+				Options(
+					huh.NewOption("Install ArgoCD via Helm now (recommended)", "install"),
+					huh.NewOption("Continue without ArgoCD — I will install it manually", "skip"),
+					huh.NewOption("Abort", "abort"),
+				).
+				Value(&action),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return BootstrapActionAbort
 	}
+	return BootstrapAction(action)
 }
 
-// PromptComponentSelection prints the step header, component description, and (if not Required)
-// prompts: "Install <DisplayName>? [y/N]:". Returns true if the component should be installed.
-// For Required components, prints "[Required — will be installed]" and returns true without prompting.
-func PromptComponentSelection(r *bufio.Reader, c ComponentConfig, stepNum, totalSteps int) bool {
+// PromptComponentSelection prints the step header, component description, and
+// prompts the user to confirm installation. Returns true if the component should be installed.
+// For Required components, returns true without prompting.
+func PromptComponentSelection(c ComponentConfig, stepNum, totalSteps int) bool {
 	printStepHeader(os.Stdout, c, stepNum, totalSteps)
 
 	fmt.Println(c.WhyItMatters)
@@ -128,26 +157,42 @@ func PromptComponentSelection(r *bufio.Reader, c ComponentConfig, stepNum, total
 		return true
 	}
 
-	defaultStr := "y/N"
-	if c.DefaultEnabled {
-		defaultStr = "Y/n"
-	}
-	fmt.Printf("Install %s? [%s]: ", c.DisplayName, defaultStr)
-	input, _ := r.ReadString('\n')
-	input = strings.ToLower(strings.TrimSpace(input))
-
-	if input == "" {
+	if !output.IsInteractive() {
 		return c.DefaultEnabled
 	}
-	return input == "y" || input == "yes"
+
+	install := c.DefaultEnabled
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("Install %s?", c.DisplayName)).
+				Value(&install),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return c.DefaultEnabled
+	}
+	return install
 }
 
-// ConfirmProceed prompts: "Proceed? [y/N]:" and returns true if user confirmed.
-func ConfirmProceed(r *bufio.Reader) bool {
-	fmt.Printf("Proceed? [y/N]: ")
-	input, _ := r.ReadString('\n')
-	input = strings.ToLower(strings.TrimSpace(input))
-	return input == "y" || input == "yes"
+// ConfirmProceed prompts the user to confirm proceeding.
+// Returns false when non-interactive (safe default).
+func ConfirmProceed() bool {
+	if !output.IsInteractive() {
+		return false
+	}
+	var proceed bool
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Proceed?").
+				Value(&proceed),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return false
+	}
+	return proceed
 }
 
 // FailedComponentAction represents user's choice when a component fails.
@@ -160,12 +205,14 @@ const (
 )
 
 // PromptFailedComponentAction asks user what to do when a component fails.
-// Returns: retry, skip, or abort.
-func PromptFailedComponentAction(r *bufio.Reader, c ComponentConfig, classifiedErr *ClassifiedError) FailedComponentAction {
+func PromptFailedComponentAction(c ComponentConfig, classifiedErr *ClassifiedError) FailedComponentAction {
+	if !output.IsInteractive() {
+		return ActionAbort
+	}
+
 	fmt.Println()
 	output.Error(fmt.Sprintf("✗ %s installation failed", c.DisplayName))
 
-	// Show error category context
 	switch classifiedErr.Category {
 	case ErrorCategoryTransient:
 		output.Info("  Error appears to be transient (network/timeout)")
@@ -174,28 +221,23 @@ func PromptFailedComponentAction(r *bufio.Reader, c ComponentConfig, classifiedE
 	case ErrorCategoryUnknown:
 		output.Info("  Error type unknown")
 	}
-
-	fmt.Println()
-	fmt.Println("  What would you like to do?")
-	fmt.Println("    [R]etry - try installing this component again")
-	fmt.Println("    [S]kip  - skip this component and continue with remaining components")
-	fmt.Println("    [A]bort - cancel the entire installation")
 	fmt.Println()
 
-	for {
-		fmt.Printf("  Choice [R/S/A]: ")
-		input, _ := r.ReadString('\n')
-		input = strings.ToLower(strings.TrimSpace(input))
-
-		switch input {
-		case "r", "retry":
-			return ActionRetry
-		case "s", "skip":
-			return ActionSkip
-		case "a", "abort":
-			return ActionAbort
-		default:
-			fmt.Printf("  Invalid choice %q. Enter R, S, or A.\n", input)
-		}
+	var action string = "abort"
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("What would you like to do?").
+				Options(
+					huh.NewOption("Retry — try installing this component again", "retry"),
+					huh.NewOption("Skip — skip this component and continue", "skip"),
+					huh.NewOption("Abort — cancel the entire installation", "abort"),
+				).
+				Value(&action),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return ActionAbort
 	}
+	return FailedComponentAction(action)
 }

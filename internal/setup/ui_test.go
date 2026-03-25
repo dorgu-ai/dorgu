@@ -1,7 +1,6 @@
 package setup
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"strings"
@@ -162,86 +161,6 @@ func TestPrintFinalSummary_WithFailures(t *testing.T) {
 	}
 }
 
-func TestPromptGitRepoURL_ValidHTTPS(t *testing.T) {
-	r := bufio.NewReader(strings.NewReader("https://github.com/org/repo.git\n"))
-	url, err := PromptGitRepoURL(r)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if url != "https://github.com/org/repo.git" {
-		t.Errorf("expected https URL, got %q", url)
-	}
-}
-
-func TestPromptGitRepoURL_ValidSSH(t *testing.T) {
-	r := bufio.NewReader(strings.NewReader("git@github.com:org/repo.git\n"))
-	url, err := PromptGitRepoURL(r)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if url != "git@github.com:org/repo.git" {
-		t.Errorf("expected ssh URL, got %q", url)
-	}
-}
-
-func TestPromptGitRepoURL_InvalidThenValid(t *testing.T) {
-	input := "not-a-url\nhttps://github.com/org/repo.git\n"
-	r := bufio.NewReader(strings.NewReader(input))
-	url, err := PromptGitRepoURL(r)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if url != "https://github.com/org/repo.git" {
-		t.Errorf("expected valid URL on second attempt, got %q", url)
-	}
-}
-
-func TestPromptGitRepoURL_AllEmpty(t *testing.T) {
-	input := "\n\n\n"
-	r := bufio.NewReader(strings.NewReader(input))
-	_, err := PromptGitRepoURL(r)
-	if err == nil {
-		t.Fatal("expected error after 3 empty attempts")
-	}
-}
-
-func TestPromptGitOpsOutputDir_Default(t *testing.T) {
-	r := bufio.NewReader(strings.NewReader("\n"))
-	dir := PromptGitOpsOutputDir(r, "./default-dir")
-	if dir != "./default-dir" {
-		t.Errorf("expected default dir, got %q", dir)
-	}
-}
-
-func TestPromptGitOpsOutputDir_Custom(t *testing.T) {
-	r := bufio.NewReader(strings.NewReader("./my-custom-dir\n"))
-	dir := PromptGitOpsOutputDir(r, "./default-dir")
-	if dir != "./my-custom-dir" {
-		t.Errorf("expected custom dir, got %q", dir)
-	}
-}
-
-func TestPromptEnvironment_Valid(t *testing.T) {
-	r := bufio.NewReader(strings.NewReader("staging\n"))
-	env := PromptEnvironment(r)
-	if env != "staging" {
-		t.Errorf("expected 'staging', got %q", env)
-	}
-}
-
-func TestPromptEnvironment_Default(t *testing.T) {
-	r := bufio.NewReader(strings.NewReader("\n"))
-	env := PromptEnvironment(r)
-	if env != "development" {
-		t.Errorf("expected default 'development', got %q", env)
-	}
-}
-
-func TestPromptEnvironment_InvalidThenValid(t *testing.T) {
-	input := "invalid-env\nproduction\n"
-	r := bufio.NewReader(strings.NewReader(input))
-	env := PromptEnvironment(r)
-	if env != "production" {
-		t.Errorf("expected 'production' after invalid input, got %q", env)
-	}
-}
+// Note: Interactive prompt tests (PromptGitRepoURL, PromptEnvironment, etc.)
+// have been removed because the functions now use huh forms which require a
+// real terminal. These are tested manually and via integration tests.
