@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-26
+
+### Added
+
+- Output mode system with automatic TTY detection: human (styled), plain (piped), and JSON modes.
+- `--json` global flag for machine-readable output (for scripting, AI agents, and CI pipelines).
+- JSON output paths for: `persona status`, `sync status`, `sync pull`, `watch` (JSONL streaming), and `generate --dry-run`.
+- Interactive forms using `charmbracelet/huh` for all CLI prompts (`dorgu init`, `dorgu cluster setup`).
+- Non-interactive fallback: all prompts detect headless/piped environments and use safe defaults.
+- `IsInteractive()`, `IsTTY()`, and `IsJSON()` helpers in the output package.
+- GStack reference documentation.
+
+### Changed
+
+- Replace all `bufio.Reader` prompts with `charmbracelet/huh` forms (select menus, confirm dialogs, validated inputs).
+- Gate lipgloss colors and spinners on TTY detection — clean output when piped or in `--json` mode.
+- Upgrade `charmbracelet/lipgloss` from v0.9.1 to v1.1.0.
+- Prompt functions in `internal/setup/prompts.go` no longer require a `*bufio.Reader` parameter.
+
 ## [0.4.0] - 2026-03-22
 
 ### Added

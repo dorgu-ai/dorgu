@@ -25,12 +25,13 @@ Read these files to understand the current implementation:
 1. `internal/cli/cluster.go` — cluster status and init commands
 2. `internal/cli/cluster_setup.go` — Blessed Stack wizard flow (includes interactive GitOps wiring, preflight validation)
 3. `internal/setup/stack.go` — component definitions and versions
-4. `internal/setup/ui.go` — interactive prompts (PromptEnvironment with validation, PromptGitRepoURL, PromptGitOpsOutputDir, ConfirmGitOpsPush)
-5. `internal/setup/installer.go` — executor pattern, helm command building, release status checks, ValidateClusterPersonaExists
-6. `internal/setup/validator.go` — post-install pod validation
-7. `internal/setup/gitops.go` — GitOps scaffold generation (RepoURL field replaces placeholder)
-8. `internal/setup/gitops_test.go` — GitOps tests (includes repo URL population tests)
-9. `docs-internal/QA_TESTING_GUIDE.md` — reference checklist
+4. `internal/setup/prompts.go` — interactive prompts using `charmbracelet/huh` forms (PromptEnvironment, PromptGitRepoURL, PromptGitOpsOutputDir, ConfirmGitOpsPush, PromptComponentSelection, ConfirmProceed, PromptFailedComponentAction, PromptArgoCDBootstrap)
+5. `internal/output/mode.go` — output mode system (TTY detection, JSON mode, IsInteractive/IsTTY/IsJSON helpers)
+6. `internal/setup/installer.go` — executor pattern, helm command building, release status checks, ValidateClusterPersonaExists
+7. `internal/setup/validator.go` — post-install pod validation
+8. `internal/setup/gitops.go` — GitOps scaffold generation (RepoURL field replaces placeholder)
+9. `internal/setup/gitops_test.go` — GitOps tests (includes repo URL population tests)
+10. `docs-internal/QA_TESTING_GUIDE.md` — reference checklist
 
 ---
 
@@ -1034,26 +1035,71 @@ Ask the user to verify:
 - Fails at preflight or cluster detection with a clear error
 - Not a panic or stack trace
 
-### 11.4 Interactive prompt — invalid input handling (environment validation fix verified)
+### 11.4 Interactive prompts — huh forms behavior (v0.5.0+)
 
-During `dorgu cluster setup --dry-run`, try entering invalid inputs:
+Since v0.5.0, all prompts use `charmbracelet/huh` interactive forms instead of `bufio.Reader`.
 
-- At environment prompt: type `foobar` → should **reject with message**: `Invalid environment "foobar". Choose: development, staging, production` and **re-prompt** (loops until valid input or empty for default)
-- At environment prompt: press Enter (empty) → should default to `development`
-- At component Install? prompt: type `maybe` → should treat as N (or re-prompt)
-- At Proceed? prompt: type anything other than y/Y → should abort cleanly
+During `dorgu cluster setup --dry-run`, verify:
+
+- **Environment prompt** renders as a **select menu** (arrow keys to navigate, enter to select) with options: Development, Staging, Production, Sandbox
+- **Component Install?** renders as a **confirm dialog** (Y/N) — required components show `[Required — will be installed]` and skip the prompt
+- **Proceed?** renders as a **confirm dialog** — selecting No aborts cleanly
+- Arrow key navigation works correctly in all select menus
+- Tab/Shift-Tab navigation works between form fields in `dorgu init --global`
 
 ### 11.5 Ctrl+C handling
 
 Start `dorgu cluster setup --dry-run` and press Ctrl+C at various points:
-- During environment prompt
-- During component selection
+- During environment select menu
+- During component confirm dialog
 - During "Proceed?" confirmation
 
 Ask the user to verify:
 - CLI exits cleanly without error output
 - No partial state is left behind
-- Terminal is restored to normal (no broken prompt)
+- Terminal is restored to normal (no broken prompt — huh handles terminal restoration)
+
+### 11.6 Non-interactive and JSON output modes (v0.5.0+)
+
+Test TTY detection and `--json` flag:
+
+**Non-interactive (piped) mode:**
+```bash
+# Pipe to cat — should suppress colors and spinners
+dorgu cluster setup --dry-run 2>&1 | cat
+```
+Verify: output has no ANSI escape codes, prompts fall back to defaults (development environment, default-enabled components)
+
+**JSON output:**
+```bash
+# Persona status as JSON
+dorgu persona status <name> --json
+```
+Verify: output is valid JSON (pipe to `jq .` to check), contains persona spec and status fields
+
+```bash
+# Sync status as JSON
+dorgu sync status --json
+```
+Verify: valid JSON with cluster and personas fields
+
+```bash
+# Watch with JSON (JSONL streaming)
+dorgu watch personas --json
+```
+Verify: each line is a valid JSON object (one per event)
+
+```bash
+# Generate dry-run as JSON
+dorgu generate ./testdata/node-app --dry-run --json
+```
+Verify: outputs JSON array of generated file contents
+
+**Non-interactive init:**
+```bash
+echo "" | dorgu init --global --force
+```
+Verify: creates config with defaults (gemini provider, default namespace) without prompting
 
 ---
 

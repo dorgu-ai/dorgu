@@ -33,7 +33,7 @@
 go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
 
 # Install a specific version
-go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.2.0
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.5.0
 
 # Or download a binary from GitHub Releases (Linux, macOS, Windows)
 # https://github.com/dorgu-ai/dorgu/releases
@@ -214,6 +214,16 @@ Once running, open http://localhost:8080 in your browser to view the dashboard.
 | `dorgu watch cluster` | Watch cluster events in real-time |
 | `dorgu sync status` | Sync status from operator |
 | `dorgu sync pull` | Pull latest persona data |
+
+### Global Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--json` | Output in JSON format (for scripting, AI agents, and CI) | `false` |
+| `--no-color` | Disable colored output | `false` |
+| `--config` | Path to config file | auto-detected |
+
+The CLI automatically detects whether stdout is a terminal. When piped (e.g. `dorgu persona status my-app | jq .`), colors and spinners are suppressed. Use `--json` for structured machine-readable output.
 
 ### Generate Flags
 
@@ -471,6 +481,8 @@ Use `helm upgrade dorgu-operator ... --namespace dorgu-system` with the flags ab
 - **Git integration** — Repository URL auto-detected from `git remote`
 - **Persona validation** — Operator validates deployments against persona constraints
 - **Cluster discovery** — Automatic discovery of nodes, add-ons, and resource usage
+- **Interactive forms** — Polished terminal UI with select menus, validated inputs, and confirm dialogs (powered by charmbracelet/huh)
+- **Agent-friendly** — Automatic TTY detection, `--json` output, and non-interactive fallbacks for CI/CD and AI agents
 
 ---
 
