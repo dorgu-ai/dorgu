@@ -72,6 +72,12 @@ func init() {
 	syncCmd.AddCommand(syncPullCmd)
 }
 
+// syncStatusResult holds JSON output for sync status.
+type syncStatusResult struct {
+	Cluster  interface{} `json:"cluster,omitempty"`
+	Personas interface{} `json:"personas,omitempty"`
+}
+
 func runSyncStatus(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -99,21 +105,26 @@ func runSyncStatus(cmd *cobra.Command, args []string) error {
 	output.Success("Connected to Dorgu Operator")
 	fmt.Println()
 
+	var result syncStatusResult
+
 	// Get cluster info
 	output.Header("Cluster Status")
 	cluster, err := client.GetCluster(ctx, "")
 	if err != nil {
 		output.Warn(fmt.Sprintf("Could not get cluster info: %v", err))
 	} else {
-		fmt.Printf("  Name:              %s\n", cluster.Name)
-		fmt.Printf("  Environment:       %s\n", cluster.Environment)
-		fmt.Printf("  Phase:             %s\n", output.FormatPhase(cluster.Phase))
-		fmt.Printf("  Kubernetes:        %s\n", cluster.KubernetesVer)
-		fmt.Printf("  Platform:          %s\n", cluster.Platform)
-		fmt.Printf("  Nodes:             %d\n", cluster.NodeCount)
-		fmt.Printf("  Applications:      %d\n", cluster.ApplicationCount)
-		if len(cluster.Addons) > 0 {
-			fmt.Printf("  Addons:            %v\n", cluster.Addons)
+		result.Cluster = cluster
+		if !output.IsJSON() {
+			fmt.Printf("  Name:              %s\n", cluster.Name)
+			fmt.Printf("  Environment:       %s\n", cluster.Environment)
+			fmt.Printf("  Phase:             %s\n", output.FormatPhase(cluster.Phase))
+			fmt.Printf("  Kubernetes:        %s\n", cluster.KubernetesVer)
+			fmt.Printf("  Platform:          %s\n", cluster.Platform)
+			fmt.Printf("  Nodes:             %d\n", cluster.NodeCount)
+			fmt.Printf("  Applications:      %d\n", cluster.ApplicationCount)
+			if len(cluster.Addons) > 0 {
+				fmt.Printf("  Addons:            %v\n", cluster.Addons)
+			}
 		}
 	}
 
@@ -123,19 +134,26 @@ func runSyncStatus(cmd *cobra.Command, args []string) error {
 	personas, err := client.ListPersonas(ctx, "")
 	if err != nil {
 		output.Warn(fmt.Sprintf("Could not list personas: %v", err))
-	} else if len(personas.Personas) == 0 {
-		output.Dim("  No ApplicationPersonas found")
 	} else {
-		// Count by phase
-		phases := make(map[string]int)
-		for _, p := range personas.Personas {
-			phases[p.Phase]++
+		result.Personas = personas.Personas
+		if !output.IsJSON() {
+			if len(personas.Personas) == 0 {
+				output.Dim("  No ApplicationPersonas found")
+			} else {
+				phases := make(map[string]int)
+				for _, p := range personas.Personas {
+					phases[p.Phase]++
+				}
+				fmt.Printf("  Total:             %d\n", len(personas.Personas))
+				for phase, count := range phases {
+					fmt.Printf("  %s:          %d\n", phase, count)
+				}
+			}
 		}
+	}
 
-		fmt.Printf("  Total:             %d\n", len(personas.Personas))
-		for phase, count := range phases {
-			fmt.Printf("  %s:          %d\n", phase, count)
-		}
+	if output.IsJSON() {
+		return output.PrintJSON(result)
 	}
 
 	fmt.Println()
@@ -169,6 +187,8 @@ func runSyncPull(cmd *cobra.Command, args []string) error {
 	output.Success("Connected to Dorgu Operator")
 	fmt.Println()
 
+	var result syncStatusResult
+
 	// Pull personas
 	output.Info("Pulling ApplicationPersonas...")
 	personas, err := client.ListPersonas(ctx, syncFlags.namespace)
@@ -176,26 +196,30 @@ func runSyncPull(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list personas: %w", err)
 	}
 
-	if len(personas.Personas) == 0 {
-		output.Dim("No ApplicationPersonas found")
-	} else {
-		output.Header("ApplicationPersonas")
-		fmt.Printf("%-20s %-15s %-10s %-10s %-10s %s\n",
-			"NAMESPACE", "NAME", "TYPE", "TIER", "PHASE", "HEALTH")
-		fmt.Println("─────────────────────────────────────────────────────────────────────────────")
+	result.Personas = personas.Personas
 
-		for _, p := range personas.Personas {
-			health := p.Health
-			if health == "" {
-				health = "-"
-			}
+	if !output.IsJSON() {
+		if len(personas.Personas) == 0 {
+			output.Dim("No ApplicationPersonas found")
+		} else {
+			output.Header("ApplicationPersonas")
 			fmt.Printf("%-20s %-15s %-10s %-10s %-10s %s\n",
-				truncate(p.Namespace, 20),
-				truncate(p.AppName, 15),
-				truncate(p.Type, 10),
-				truncate(p.Tier, 10),
-				output.FormatPhase(p.Phase),
-				output.FormatHealth(health))
+				"NAMESPACE", "NAME", "TYPE", "TIER", "PHASE", "HEALTH")
+			fmt.Println("─────────────────────────────────────────────────────────────────────────────")
+
+			for _, p := range personas.Personas {
+				health := p.Health
+				if health == "" {
+					health = "-"
+				}
+				fmt.Printf("%-20s %-15s %-10s %-10s %-10s %s\n",
+					truncate(p.Namespace, 20),
+					truncate(p.AppName, 15),
+					truncate(p.Type, 10),
+					truncate(p.Tier, 10),
+					output.FormatPhase(p.Phase),
+					output.FormatHealth(health))
+			}
 		}
 	}
 
@@ -206,14 +230,21 @@ func runSyncPull(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		output.Warn(fmt.Sprintf("Could not get cluster info: %v", err))
 	} else {
-		output.Header("ClusterPersona")
-		fmt.Printf("  Name:              %s\n", cluster.Name)
-		fmt.Printf("  Environment:       %s\n", cluster.Environment)
-		fmt.Printf("  Phase:             %s\n", output.FormatPhase(cluster.Phase))
-		fmt.Printf("  Kubernetes:        %s\n", cluster.KubernetesVer)
-		fmt.Printf("  Platform:          %s\n", cluster.Platform)
-		fmt.Printf("  Nodes:             %d\n", cluster.NodeCount)
-		fmt.Printf("  Applications:      %d\n", cluster.ApplicationCount)
+		result.Cluster = cluster
+		if !output.IsJSON() {
+			output.Header("ClusterPersona")
+			fmt.Printf("  Name:              %s\n", cluster.Name)
+			fmt.Printf("  Environment:       %s\n", cluster.Environment)
+			fmt.Printf("  Phase:             %s\n", output.FormatPhase(cluster.Phase))
+			fmt.Printf("  Kubernetes:        %s\n", cluster.KubernetesVer)
+			fmt.Printf("  Platform:          %s\n", cluster.Platform)
+			fmt.Printf("  Nodes:             %d\n", cluster.NodeCount)
+			fmt.Printf("  Applications:      %d\n", cluster.ApplicationCount)
+		}
+	}
+
+	if output.IsJSON() {
+		return output.PrintJSON(result)
 	}
 
 	fmt.Println()

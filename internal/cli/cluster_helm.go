@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"time"
@@ -10,7 +9,7 @@ import (
 	"github.com/dorgu-ai/dorgu/internal/setup"
 )
 
-func runHelmSetup(reader *bufio.Reader, ex setup.Executor, personaName, environment string, selected []setup.ComponentConfig) error {
+func runHelmSetup(ex setup.Executor, personaName, environment string, selected []setup.ComponentConfig) error {
 	cfg := setup.SetupConfig{
 		ClusterPersonaName: personaName,
 		Environment:        environment,
@@ -20,7 +19,7 @@ func runHelmSetup(reader *bufio.Reader, ex setup.Executor, personaName, environm
 	}
 
 	setup.PrintInstallPlan(cfg)
-	if !setup.ConfirmProceed(reader) {
+	if !setup.ConfirmProceed() {
 		output.Info("Aborted.")
 		return nil
 	}
@@ -81,7 +80,7 @@ func runHelmSetup(reader *bufio.Reader, ex setup.Executor, personaName, environm
 		if !result.Succeeded {
 			if classifiedErr, ok := result.Error.(*setup.ClassifiedError); ok {
 				setup.PrintComponentResult(result)
-				action := setup.PromptFailedComponentAction(reader, c, classifiedErr)
+				action := setup.PromptFailedComponentAction(c, classifiedErr)
 
 				switch action {
 				case setup.ActionRetry:

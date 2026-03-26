@@ -26,7 +26,7 @@ var rootCmd = &cobra.Command{
 	Use:           "dorgu",
 	SilenceErrors: true,
 	Short:         "AI-powered Kubernetes application onboarding",
-	Long: `Dorgu analyzes your containerized applications and generates 
+	Long: `Dorgu analyzes your containerized applications and generates
 production-ready Kubernetes manifests, CI/CD pipelines, and documentation.
 
 Examples:
@@ -38,6 +38,12 @@ Examples:
 
   # Initialize org standards config
   dorgu init`,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		jsonFlag, _ := cmd.Flags().GetBool("json")
+		noColor, _ := cmd.Flags().GetBool("no-color")
+		output.Init(jsonFlag, noColor)
+		return nil
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -55,9 +61,11 @@ func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is .dorgu.yaml)")
 	rootCmd.PersistentFlags().Bool("no-color", false, "disable colored output")
+	rootCmd.PersistentFlags().Bool("json", false, "output in JSON format (for scripting and agents)")
 
 	// Bind to viper
 	_ = viper.BindPFlag("no-color", rootCmd.PersistentFlags().Lookup("no-color"))
+	_ = viper.BindPFlag("json", rootCmd.PersistentFlags().Lookup("json"))
 
 	// Add subcommands
 	rootCmd.AddCommand(versionCmd)

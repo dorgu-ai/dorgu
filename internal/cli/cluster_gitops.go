@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"fmt"
 
 	"github.com/dorgu-ai/dorgu/internal/output"
@@ -18,22 +17,22 @@ func resolveDriver() (string, error) {
 	}
 }
 
-func runGitOpsSetup(reader *bufio.Reader, ex setup.Executor, personaName, environment string, selected []setup.ComponentConfig) error {
+func runGitOpsSetup(ex setup.Executor, personaName, environment string, selected []setup.ComponentConfig) error {
 	var repoURL string
 	if !clusterSetupFlags.dryRun {
 		var err error
-		repoURL, err = setup.PromptGitRepoURL(reader)
+		repoURL, err = setup.PromptGitRepoURL()
 		if err != nil {
 			return fmt.Errorf("GitOps setup cancelled: %w", err)
 		}
 	}
-	gitopsDir := setup.PromptGitOpsOutputDir(reader, clusterSetupFlags.gitopsOutputDir)
+	gitopsDir := setup.PromptGitOpsOutputDir(clusterSetupFlags.gitopsOutputDir)
 
 	// ArgoCD bootstrap check (only in non-dry-run mode)
 	if !clusterSetupFlags.dryRun {
 		argoCDInstalled := setup.IsArgoCDInstalled(ex)
 		if !argoCDInstalled {
-			action := setup.PromptArgoCDBootstrap(reader)
+			action := setup.PromptArgoCDBootstrap()
 			switch action {
 			case setup.BootstrapActionInstall:
 				output.Info("Installing ArgoCD via Helm...")
@@ -67,7 +66,7 @@ func runGitOpsSetup(reader *bufio.Reader, ex setup.Executor, personaName, enviro
 		return err
 	}
 	if !clusterSetupFlags.dryRun {
-		setup.ConfirmGitOpsPush(reader, repoURL, gitopsDir)
+		setup.ConfirmGitOpsPush(repoURL, gitopsDir)
 	}
 	return nil
 }

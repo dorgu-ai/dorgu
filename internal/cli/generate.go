@@ -108,13 +108,18 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		effectiveNamespace = "default"
 	}
 
-	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
-	s.Suffix = " Analyzing application..."
-	s.Start()
+	var s *spinner.Spinner
+	if output.IsTTY() {
+		s = spinner.New(spinner.CharSets[14], 100*time.Millisecond)
+		s.Suffix = " Analyzing application..."
+		s.Start()
+	}
 
 	analysis, err := analyzer.Analyze(absPath, effectiveProvider)
 	if err != nil {
-		s.Stop()
+		if s != nil {
+			s.Stop()
+		}
 		return fmt.Errorf("analysis failed: %w", err)
 	}
 
@@ -129,7 +134,9 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		analysis.Name = generateFlags.name
 	}
 
-	s.Suffix = " Generating manifests..."
+	if s != nil {
+		s.Suffix = " Generating manifests..."
+	}
 
 	genOpts := generator.Options{
 		Namespace:   effectiveNamespace,
@@ -141,11 +148,15 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	files, err := generator.Generate(analysis, genOpts)
 	if err != nil {
-		s.Stop()
+		if s != nil {
+			s.Stop()
+		}
 		return fmt.Errorf("generation failed: %w", err)
 	}
 
-	s.Stop()
+	if s != nil {
+		s.Stop()
+	}
 
 	// Post-generation validation
 	if !generateFlags.skipValidation {
@@ -160,6 +171,9 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	if generateFlags.dryRun {
+		if output.IsJSON() {
+			return output.PrintJSON(files)
+		}
 		for _, f := range files {
 			fmt.Printf("--- %s ---\n", f.Path)
 			fmt.Println(f.Content)

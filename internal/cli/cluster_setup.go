@@ -1,12 +1,11 @@
 package cli
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/dorgu-ai/dorgu/internal/output"
@@ -96,12 +95,21 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 			needsConfirm, warning := setup.ValidateKubeContext(detected)
 			if needsConfirm {
 				output.Warn(warning)
-				confirmReader := bufio.NewReader(os.Stdin)
-				fmt.Printf("Are you sure you want to proceed with this context? [y/N]: ")
-				input, _ := confirmReader.ReadString('\n')
-				input = strings.ToLower(strings.TrimSpace(input))
-				if input != "y" && input != "yes" {
-					output.Info("Aborted.")
+				if output.IsInteractive() {
+					var proceed bool
+					huh.NewForm(
+						huh.NewGroup(
+							huh.NewConfirm().
+								Title("Are you sure you want to proceed with this context?").
+								Value(&proceed),
+						),
+					).Run()
+					if !proceed {
+						output.Info("Aborted.")
+						return nil
+					}
+				} else {
+					output.Info("Non-interactive mode: aborting due to risky kube-context")
 					return nil
 				}
 			}
@@ -177,17 +185,16 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 	}
 
 	// 6. Environment: use flag value or prompt interactively
-	reader := bufio.NewReader(os.Stdin)
 	environment := clusterSetupFlags.environment
 	if environment == "" {
-		environment = setup.PromptEnvironment(reader)
+		environment = setup.PromptEnvironment()
 	}
 
 	// 7. Component selection
 	allComponents := stack.Components()
 	var selected []setup.ComponentConfig
 	for i, c := range allComponents {
-		if setup.PromptComponentSelection(reader, c, i+1, len(allComponents)) {
+		if setup.PromptComponentSelection(c, i+1, len(allComponents)) {
 			selected = append(selected, c)
 		}
 	}
@@ -205,9 +212,9 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 
 	switch driver {
 	case "gitops":
-		return runGitOpsSetup(reader, ex, personaName, environment, selected)
+		return runGitOpsSetup(ex, personaName, environment, selected)
 	case "helm":
-		return runHelmSetup(reader, ex, personaName, environment, selected)
+		return runHelmSetup(ex, personaName, environment, selected)
 	default:
 		return fmt.Errorf("unsupported driver: %s", driver)
 	}

@@ -256,13 +256,18 @@ func generatePersonaFromPath(targetPath string) (string, error) {
 		effectiveProvider = cfg.LLM.Provider
 	}
 
-	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
-	s.Suffix = " Analyzing application..."
-	s.Start()
+	var s *spinner.Spinner
+	if output.IsTTY() {
+		s = spinner.New(spinner.CharSets[14], 100*time.Millisecond)
+		s.Suffix = " Analyzing application..."
+		s.Start()
+	}
 
 	analysis, err := analyzer.Analyze(absPath, effectiveProvider)
 	if err != nil {
-		s.Stop()
+		if s != nil {
+			s.Stop()
+		}
 		return "", fmt.Errorf("analysis failed: %w", err)
 	}
 
@@ -277,10 +282,14 @@ func generatePersonaFromPath(targetPath string) (string, error) {
 		analysis.Name = personaFlags.name
 	}
 
-	s.Suffix = " Generating persona..."
+	if s != nil {
+		s.Suffix = " Generating persona..."
+	}
 
 	personaYAML, err := generator.GeneratePersonaYAML(analysis, personaFlags.namespace, cfg)
-	s.Stop()
+	if s != nil {
+		s.Stop()
+	}
 	if err != nil {
 		return "", fmt.Errorf("persona generation failed: %w", err)
 	}
