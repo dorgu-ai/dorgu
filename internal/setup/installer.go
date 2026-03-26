@@ -105,8 +105,17 @@ func UpdateHelmRepos(ex Executor) error {
 }
 
 // BuildHelmArgs constructs the full arg slice for helm upgrade --install.
-// Exported for testing.
+// Exported for testing. Use BuildHelmArgsWithEnv for environment-aware builds.
 func BuildHelmArgs(c ComponentConfig, version string) []string {
+	return buildHelmArgsInternal(c, version, "")
+}
+
+// BuildHelmArgsWithEnv constructs Helm args including environment-specific overrides.
+func BuildHelmArgsWithEnv(c ComponentConfig, version, environment string) []string {
+	return buildHelmArgsInternal(c, version, environment)
+}
+
+func buildHelmArgsInternal(c ComponentConfig, version, environment string) []string {
 	timeout := c.Timeout
 	if timeout == "" {
 		timeout = "5m0s"
@@ -126,6 +135,14 @@ func BuildHelmArgs(c ComponentConfig, version string) []string {
 	}
 	if c.HelmValuesFile != "" {
 		args = append(args, "--values", c.HelmValuesFile)
+	}
+	// Apply environment-specific overrides (e.g., local mode for OpenObserve in dev/sandbox)
+	if environment != "" && c.EnvironmentOverrides != nil {
+		if overrides, ok := c.EnvironmentOverrides[environment]; ok {
+			for _, sv := range overrides {
+				args = append(args, "--set", sv)
+			}
+		}
 	}
 	return args
 }
@@ -210,7 +227,7 @@ func InstallComponent(ex Executor, c ComponentConfig, cfg SetupConfig) InstallRe
 		}
 	}
 
-	args := BuildHelmArgs(c, version)
+	args := BuildHelmArgsWithEnv(c, version, cfg.Environment)
 	out, err := ex.Run("helm", args...)
 
 	// Smart retry: only auto-retry transient errors (network, timeout)

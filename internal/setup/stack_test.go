@@ -91,6 +91,84 @@ func TestAnnotationStack(t *testing.T) {
 	}
 }
 
+func TestAnnotationStackFromResults(t *testing.T) {
+	results := []InstallResult{
+		{Component: ComponentConfig{ID: ComponentCertManager}, Succeeded: true},
+		{Component: ComponentConfig{ID: ComponentIngressNginx}, Succeeded: true},
+		{Component: ComponentConfig{ID: ComponentOpenObserve}, Succeeded: false, Skipped: true},
+		{Component: ComponentConfig{ID: ComponentArgoCd}, Succeeded: true},
+	}
+	got := AnnotationStackFromResults(results)
+	want := "cert-manager,ingress-nginx,argocd"
+	if got != want {
+		t.Errorf("AnnotationStackFromResults() = %q, want %q", got, want)
+	}
+}
+
+func TestAnnotationSkippedFromResults(t *testing.T) {
+	results := []InstallResult{
+		{Component: ComponentConfig{ID: ComponentCertManager}, Succeeded: true},
+		{Component: ComponentConfig{ID: ComponentOpenObserve}, Succeeded: false, Skipped: true},
+		{Component: ComponentConfig{ID: ComponentExternalSecrets}, Succeeded: false},
+	}
+	got := AnnotationSkippedFromResults(results)
+	want := "openobserve,external-secrets"
+	if got != want {
+		t.Errorf("AnnotationSkippedFromResults() = %q, want %q", got, want)
+	}
+}
+
+func TestAnnotationSkippedFromResults_AllSucceeded(t *testing.T) {
+	results := []InstallResult{
+		{Component: ComponentConfig{ID: ComponentCertManager}, Succeeded: true},
+	}
+	got := AnnotationSkippedFromResults(results)
+	if got != "" {
+		t.Errorf("AnnotationSkippedFromResults() = %q, want empty", got)
+	}
+}
+
+func TestOpenObserveEnvironmentOverrides(t *testing.T) {
+	components := blessedComponents()
+	var oo *ComponentConfig
+	for i := range components {
+		if components[i].ID == ComponentOpenObserve {
+			oo = &components[i]
+			break
+		}
+	}
+	if oo == nil {
+		t.Fatal("openobserve not found")
+	}
+	if oo.EnvironmentOverrides == nil {
+		t.Fatal("openobserve should have EnvironmentOverrides")
+	}
+	devOverrides, ok := oo.EnvironmentOverrides["development"]
+	if !ok || len(devOverrides) == 0 {
+		t.Fatal("openobserve should have development overrides")
+	}
+	foundLocalMode := false
+	for _, v := range devOverrides {
+		if v == "config.ZO_LOCAL_MODE=true" {
+			foundLocalMode = true
+		}
+	}
+	if !foundLocalMode {
+		t.Error("development overrides should include config.ZO_LOCAL_MODE=true")
+	}
+	sandboxOverrides, ok := oo.EnvironmentOverrides["sandbox"]
+	if !ok || len(sandboxOverrides) == 0 {
+		t.Error("openobserve should have sandbox overrides")
+	}
+	// staging/production should NOT have local mode overrides
+	if _, ok := oo.EnvironmentOverrides["staging"]; ok {
+		t.Error("staging should not have local mode overrides")
+	}
+	if _, ok := oo.EnvironmentOverrides["production"]; ok {
+		t.Error("production should not have local mode overrides")
+	}
+}
+
 func TestExternalSecretsOptional(t *testing.T) {
 	components := blessedComponents()
 	var es *ComponentConfig
