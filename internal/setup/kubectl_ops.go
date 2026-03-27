@@ -49,16 +49,23 @@ func AutoDetectClusterPersonaName(ex Executor) (string, error) {
 
 // AnnotateClusterPersona runs: kubectl annotate clusterpersona <name> --overwrite \
 //
-//	dorgu.io/setup-stack=<comma-list> \
+//	dorgu.io/setup-stack=<comma-list of installed> \
+//	dorgu.io/setup-skipped=<comma-list of skipped/failed> \
 //	dorgu.io/setup-environment=<env> \
 //	dorgu.io/setup-timestamp=<rfc3339>
-func AnnotateClusterPersona(ex Executor, name string, cfg SetupConfig) error {
+//
+// Only successfully installed components appear in setup-stack.
+func AnnotateClusterPersona(ex Executor, name string, cfg SetupConfig, results []InstallResult) error {
 	args := []string{
 		"annotate", "clusterpersona", name,
 		"--overwrite",
-		fmt.Sprintf("dorgu.io/setup-stack=%s", cfg.AnnotationStack()),
+		fmt.Sprintf("dorgu.io/setup-stack=%s", AnnotationStackFromResults(results)),
 		fmt.Sprintf("dorgu.io/setup-environment=%s", cfg.Environment),
 		fmt.Sprintf("dorgu.io/setup-timestamp=%s", cfg.Timestamp.UTC().Format("2006-01-02T15:04:05Z")),
+	}
+	skipped := AnnotationSkippedFromResults(results)
+	if skipped != "" {
+		args = append(args, fmt.Sprintf("dorgu.io/setup-skipped=%s", skipped))
 	}
 	out, err := ex.Run("kubectl", args...)
 	if err != nil {

@@ -188,6 +188,58 @@ func TestBuildHelmArgs_ComponentTimeout(t *testing.T) {
 	}
 }
 
+func TestBuildHelmArgsWithEnv_AppliesOverrides(t *testing.T) {
+	c := ComponentConfig{
+		HelmReleaseName: "openobserve",
+		HelmChart:       "openobserve/openobserve",
+		Namespace:       "openobserve",
+		EnvironmentOverrides: map[string][]string{
+			"development": {
+				"config.ZO_LOCAL_MODE=true",
+				"config.ZO_LOCAL_MODE_STORAGE=disk",
+			},
+		},
+	}
+	args := BuildHelmArgsWithEnv(c, "0.60.0", "development")
+
+	foundLocal := false
+	foundDisk := false
+	for i, a := range args {
+		if a == "--set" && i+1 < len(args) {
+			if args[i+1] == "config.ZO_LOCAL_MODE=true" {
+				foundLocal = true
+			}
+			if args[i+1] == "config.ZO_LOCAL_MODE_STORAGE=disk" {
+				foundDisk = true
+			}
+		}
+	}
+	if !foundLocal {
+		t.Errorf("--set config.ZO_LOCAL_MODE=true not found in args: %v", args)
+	}
+	if !foundDisk {
+		t.Errorf("--set config.ZO_LOCAL_MODE_STORAGE=disk not found in args: %v", args)
+	}
+}
+
+func TestBuildHelmArgsWithEnv_NoOverridesForProduction(t *testing.T) {
+	c := ComponentConfig{
+		HelmReleaseName: "openobserve",
+		HelmChart:       "openobserve/openobserve",
+		Namespace:       "openobserve",
+		EnvironmentOverrides: map[string][]string{
+			"development": {"config.ZO_LOCAL_MODE=true"},
+		},
+	}
+	args := BuildHelmArgsWithEnv(c, "0.60.0", "production")
+
+	for i, a := range args {
+		if a == "--set" && i+1 < len(args) && strings.Contains(args[i+1], "ZO_LOCAL_MODE") {
+			t.Errorf("should not apply dev overrides in production: %v", args)
+		}
+	}
+}
+
 func TestBuildHelmArgs_DefaultTimeout(t *testing.T) {
 	c := ComponentConfig{
 		HelmReleaseName: "cert-manager",

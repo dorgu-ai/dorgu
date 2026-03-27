@@ -118,7 +118,7 @@ func runHelmSetup(ex setup.Executor, personaName, environment string, selected [
 	setup.PrintValidationResults(vrs)
 
 	fmt.Printf("Annotating ClusterPersona %q... ", personaName)
-	if err := setup.AnnotateClusterPersona(ex, personaName, cfg); err != nil {
+	if err := setup.AnnotateClusterPersona(ex, personaName, cfg, results); err != nil {
 		output.Error(fmt.Sprintf("annotation failed: %v", err))
 	} else {
 		output.Success("done")

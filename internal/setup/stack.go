@@ -38,6 +38,10 @@ type ComponentConfig struct {
 	PostInstallMessage string
 	OperatorAddonName  string // matches checkAddon() pod name search in operator
 	Timeout            string // Helm --timeout value; empty uses default "5m0s"
+
+	// EnvironmentOverrides provides additional --set values per environment.
+	// Key is environment name (e.g. "development"), value is a slice of "key=value" strings.
+	EnvironmentOverrides map[string][]string
 }
 
 // SetupConfig holds the resolved configuration for a single setup run.
@@ -52,10 +56,35 @@ type SetupConfig struct {
 
 // AnnotationStack returns a comma-separated list of component IDs for the
 // dorgu.io/setup-stack annotation on ClusterPersona.
+// Deprecated: use AnnotationStackFromResults for accurate post-install annotations.
 func (c SetupConfig) AnnotationStack() string {
 	ids := make([]string, len(c.Components))
 	for i, comp := range c.Components {
 		ids[i] = string(comp.ID)
+	}
+	return strings.Join(ids, ",")
+}
+
+// AnnotationStackFromResults returns comma-separated component IDs for only
+// successfully installed components. Skipped and failed components are excluded.
+func AnnotationStackFromResults(results []InstallResult) string {
+	var ids []string
+	for _, r := range results {
+		if r.Succeeded {
+			ids = append(ids, string(r.Component.ID))
+		}
+	}
+	return strings.Join(ids, ",")
+}
+
+// AnnotationSkippedFromResults returns comma-separated component IDs for
+// components that were skipped or failed during installation.
+func AnnotationSkippedFromResults(results []InstallResult) string {
+	var ids []string
+	for _, r := range results {
+		if !r.Succeeded {
+			ids = append(ids, string(r.Component.ID))
+		}
 	}
 	return strings.Join(ids, ",")
 }
@@ -168,6 +197,16 @@ func blessedComponents() []ComponentConfig {
 			DefaultEnabled:    true,
 			DependsOn:         []ComponentID{ComponentCNPG},
 			OperatorAddonName: "openobserve",
+			EnvironmentOverrides: map[string][]string{
+				"development": {
+					"config.ZO_LOCAL_MODE=true",
+					"config.ZO_LOCAL_MODE_STORAGE=disk",
+				},
+				"sandbox": {
+					"config.ZO_LOCAL_MODE=true",
+					"config.ZO_LOCAL_MODE_STORAGE=disk",
+				},
+			},
 		},
 		{
 			ID:          ComponentArgoCd,
