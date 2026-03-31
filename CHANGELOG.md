@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-29
+
+### Added
+
+- `dorgu health` command — cluster health summary showing node status, resource saturation, control plane health, active incidents, and pending remediations. Works with or without operator (graceful degradation). Supports `--json` and `--namespace` flags.
+- `dorgu incidents list` command — list active and recent incidents with severity, category, affected persona, and phase. Supports filtering by `--severity`, `--category`, `--phase`, `--namespace`, and `--all` (include resolved).
+- `dorgu incidents describe <name>` command — detailed incident view with timeline, root cause diagnosis, confidence score, contributing signals, related events, and occurrence count.
+- Table formatter (`internal/output/table.go`) with aligned columns, colored severity/phase/health rendering, and JSON array output mode.
+- Colored diff renderer (`internal/output/diff.go`) for unified YAML diffs (terraform plan style) — foundation for Phase 2b `dorgu remediation diff`.
+- `--json` output on all new commands (health, incidents list, incidents describe).
+
+### Fixed
+
+- Address go-reviewer findings on health and incidents command error handling and output formatting.
+
 ## [0.5.0] - 2026-03-26
 
 ### Added

@@ -1,6 +1,6 @@
 # Dorgu
 
-**AI-powered Kubernetes manifest generator.** Analyze Dockerfile, Compose, and source code; get production-ready manifests, ArgoCD config, CI/CD workflows, and application personas. Optionally pair with the [Dorgu Operator](https://github.com/dorgu-ai/dorgu-operator) for cluster-side validation and insights.
+**AI-powered Kubernetes manifest generator and cluster health monitor.** Analyze Dockerfile, Compose, and source code; get production-ready manifests, ArgoCD config, CI/CD workflows, and application personas. Pair with the [Dorgu Operator](https://github.com/dorgu-ai/dorgu-operator) for cluster-side validation, health detection, incident tracking, and root cause diagnosis.
 
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -11,8 +11,10 @@
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Ecosystem Quick Start](#ecosystem-quick-start)
 - [Cluster Quick Start](#cluster-quick-start)
 - [Commands](#commands)
+- [Health & Incidents](#health--incidents)
 - [Dorgu Operator](#dorgu-operator)
 - [Persona Commands](#persona-commands)
 - [Cluster Commands](#cluster-commands)
@@ -33,7 +35,7 @@
 go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
 
 # Install a specific version
-go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.5.0
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.6.0
 
 # Or download a binary from GitHub Releases (Linux, macOS, Windows)
 # https://github.com/dorgu-ai/dorgu/releases
@@ -47,7 +49,7 @@ The Dorgu Operator provides cluster-side validation and monitoring. Install via 
 
 ```bash
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --version 0.2.0 \
+  --version 0.4.0 \
   --namespace dorgu-system \
   --create-namespace
 ```
@@ -97,6 +99,65 @@ dorgu generate ./my-app --dry-run
 
 ---
 
+## Ecosystem Quick Start
+
+Get dorgu CLI + Operator running with health detection in 5 minutes. No platform needed.
+
+**Prerequisites:** A running Kubernetes cluster ([Kind](https://kind.sigs.k8s.io/), [vCluster](https://www.vcluster.com/), or any self-managed cluster), `kubectl`, and `helm`.
+
+**1. Install the CLI:**
+
+```bash
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
+```
+
+**2. Install the Operator with health detection:**
+
+```bash
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --version 0.4.0 \
+  --namespace dorgu-system \
+  --create-namespace \
+  --set healthCheck.enabled=true \
+  --set websocket.enabled=true
+```
+
+**3. Create a ClusterPersona:**
+
+```bash
+dorgu cluster init --name my-cluster --environment development
+```
+
+**4. Check cluster health:**
+
+```bash
+# Cluster health summary (nodes, resources, control plane, incidents)
+dorgu health
+
+# JSON output for scripting
+dorgu health --json
+```
+
+**5. Deploy an app and monitor incidents:**
+
+```bash
+# Generate and apply a persona
+dorgu persona apply ./my-app -n default
+
+# Deploy the app
+kubectl apply -f k8s/ -n default
+
+# View active incidents (OOMKills, CrashLoops, node issues detected automatically)
+dorgu incidents list
+
+# Drill into a specific incident
+dorgu incidents describe <incident-name> -n default
+```
+
+The operator detects issues within 60 seconds and creates IncidentMemory CRDs with root cause diagnosis and confidence scores. No LLM or external dependencies required — detection and diagnosis are fully deterministic.
+
+---
+
 ## Cluster Quick Start
 
 Get a production-ready Kubernetes stack running in 5 steps.
@@ -113,7 +174,7 @@ go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
 
 ```bash
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --version 0.2.0 \
+  --version 0.4.0 \
   --namespace dorgu-system \
   --create-namespace
 ```
@@ -162,6 +223,24 @@ dorgu cluster status
 | `dorgu config set <key> <value>` | Set a global config value |
 | `dorgu config get <key>` | Get a single config value |
 | `dorgu version` | Show version |
+
+### Health & Incident Commands (Requires Operator)
+
+| Command | Description |
+|---------|-------------|
+| `dorgu health` | Show cluster health summary: nodes, resource saturation, control plane, active incidents |
+| `dorgu incidents list` | List active incidents with severity, category, affected persona, and phase |
+| `dorgu incidents describe <name>` | Show incident details: timeline, root cause, confidence score, contributing signals |
+
+**Filtering:**
+
+| Flag | Description | Available On |
+|------|-------------|-------------|
+| `-n, --namespace` | Filter by namespace | health, incidents |
+| `--severity` | Filter by severity (info, warning, critical) | incidents list |
+| `--category` | Filter by category | incidents list |
+| `--phase` | Filter by phase (Detected, Investigating, Resolved) | incidents list |
+| `--all` | Include resolved incidents | incidents list |
 
 ### Persona Commands (Requires Operator)
 
@@ -275,7 +354,7 @@ The Dorgu Operator is the cluster-side component that validates deployments and 
 
 ```bash
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --version 0.2.0 \
+  --version 0.4.0 \
   --namespace dorgu-system \
   --create-namespace
 ```
@@ -284,7 +363,7 @@ helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-o
 
 ```bash
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --version 0.2.0 \
+  --version 0.4.0 \
   --namespace dorgu-system \
   --create-namespace \
   --set webhook.enabled=true \
@@ -392,6 +471,57 @@ kubectl get clusterpersona -o yaml
 - Installed add-ons (ArgoCD, Prometheus, cert-manager)
 - Namespace summary
 - ApplicationPersona count
+
+---
+
+## Health & Incidents
+
+### Cluster Health
+
+View a summary of cluster health at a glance:
+
+```bash
+dorgu health
+```
+
+Output includes node status, CPU/memory saturation percentages, control plane component health, active incident count, and pending remediations.
+
+### List Incidents
+
+```bash
+# Active incidents (default)
+dorgu incidents list
+
+# Filter by severity
+dorgu incidents list --severity critical
+
+# Filter by namespace
+dorgu incidents list -n production
+
+# Include resolved incidents
+dorgu incidents list --all
+
+# JSON for scripting
+dorgu incidents list --json
+```
+
+### Describe Incident
+
+```bash
+dorgu incidents describe im-default-api-oom-a3f2 -n default
+```
+
+Shows full incident details: detection timeline (first/last seen), root cause summary with confidence score, contributing signals, affected resources, related DorguEvents, and occurrence count.
+
+### How Detection Works
+
+The operator's health check reconciler (enabled with `--set healthCheck.enabled=true`) runs every 60 seconds and:
+
+1. **Detects** signals: node conditions, pod failures (OOMKilled, CrashLoopBackOff, ImagePullBackOff), resource saturation, control plane health, and optionally metrics-server usage data
+2. **Diagnoses** root causes using deterministic rules with confidence scoring (0.0-1.0)
+3. **Creates** IncidentMemory CRDs with full context — no LLM required
+4. **Emits** K8s Events visible via `kubectl describe`
+5. **Auto-resolves** incidents when the triggering signal clears
 
 ---
 
