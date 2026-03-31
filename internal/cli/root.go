@@ -77,6 +77,8 @@ func init() {
 	rootCmd.AddCommand(watchCmd)
 	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(platformCmd)
+	rootCmd.AddCommand(newHealthCmd())
+	rootCmd.AddCommand(newIncidentsCmd())
 }
 
 // initConfig reads in config file and ENV variables if set.
