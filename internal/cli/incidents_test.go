@@ -196,11 +196,15 @@ func TestNewIncidentsCmdStructure(t *testing.T) {
 	assert.NotNil(t, listCmd.Flags().Lookup("all"))
 	assert.NotNil(t, listCmd.Flags().Lookup("limit"))
 
+	// Verify list kubeconfig flag
+	assert.NotNil(t, listCmd.Flags().Lookup("kubeconfig"))
+
 	// Verify describe subcommand
 	descCmd, _, err := cmd.Find([]string{"describe"})
 	assert.NoError(t, err)
 	assert.Equal(t, "describe <name>", descCmd.Use)
 	assert.NotNil(t, descCmd.Flags().Lookup("namespace"))
+	assert.NotNil(t, descCmd.Flags().Lookup("kubeconfig"))
 }
 
 // Helpers

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
+
+// incidentsCmdTimeout is the maximum time to wait for kubectl calls in incident commands.
+const incidentsCmdTimeout = 30 * time.Second
 
 func newIncidentsCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -55,6 +59,7 @@ Examples:
 	cmd.Flags().String("phase", "", "filter by phase (Detected, Investigating, Resolved, Recurring)")
 	cmd.Flags().Bool("all", false, "include resolved incidents (default: active only)")
 	cmd.Flags().Int("limit", 50, "maximum number of incidents to show")
+	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
 
 	return cmd
 }
@@ -75,6 +80,7 @@ Examples:
 
 	cmd.Flags().StringP("namespace", "n", "", "namespace of the incident (required)")
 	_ = cmd.MarkFlagRequired("namespace")
+	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
 
 	return cmd
 }
@@ -144,8 +150,17 @@ func runIncidentsList(cmd *cobra.Command, args []string) error {
 	phase, _ := cmd.Flags().GetString("phase")
 	showAll, _ := cmd.Flags().GetBool("all")
 	limit, _ := cmd.Flags().GetInt("limit")
+	kubeconfigFlag, _ := cmd.Flags().GetString("kubeconfig")
 
-	incidents, err := fetchIncidents(namespace)
+	kubeconfig, err := validateKubeconfig(kubeconfigFlag)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), incidentsCmdTimeout)
+	defer cancel()
+
+	incidents, err := fetchIncidents(ctx, kubeconfig, namespace)
 	if err != nil {
 		return err
 	}
@@ -186,10 +201,19 @@ func runIncidentsDescribe(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 	namespace, _ := cmd.Flags().GetString("namespace")
+	kubeconfigFlag, _ := cmd.Flags().GetString("kubeconfig")
 
-	kubectlCmd := exec.Command("kubectl", "get", "incidentmemory", name,
+	kubeconfig, err := validateKubeconfig(kubeconfigFlag)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), incidentsCmdTimeout)
+	defer cancel()
+
+	kcmd := kubectlCmd(ctx, kubeconfig, "get", "incidentmemory", name,
 		"-n", namespace, "-o", "json")
-	rawOutput, err := kubectlCmd.CombinedOutput()
+	rawOutput, err := kcmd.CombinedOutput()
 	if err != nil {
 		outputStr := strings.TrimSpace(string(rawOutput))
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
@@ -218,7 +242,7 @@ func runIncidentsDescribe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func fetchIncidents(namespace string) ([]incidentFull, error) {
+func fetchIncidents(ctx context.Context, kubeconfig, namespace string) ([]incidentFull, error) {
 	args := []string{"get", "incidentmemory", "-o", "json"}
 	if namespace != "" {
 		args = append(args, "-n", namespace)
@@ -226,7 +250,7 @@ func fetchIncidents(namespace string) ([]incidentFull, error) {
 		args = append(args, "--all-namespaces")
 	}
 
-	out, err := exec.Command("kubectl", args...).CombinedOutput()
+	out, err := kubectlCmd(ctx, kubeconfig, args...).CombinedOutput()
 	if err != nil {
 		outputStr := strings.TrimSpace(string(out))
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
@@ -282,7 +306,7 @@ func printIncidentsList(w io.Writer, incidents []incidentFull, showAll bool) {
 func printIncidentDescribe(w io.Writer, inc *incidentFull) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "Incident: %s\n", inc.Metadata.Name)
-	fmt.Fprintln(w, strings.Repeat("═", len("Incident: ")+len(inc.Metadata.Name)))
+	fmt.Fprintln(w, strings.Repeat("═", len([]rune("Incident: "+inc.Metadata.Name))))
 	fmt.Fprintln(w)
 
 	// Basic info

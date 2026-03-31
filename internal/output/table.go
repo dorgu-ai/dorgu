@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Table renders structured data as aligned columns.
@@ -62,10 +64,7 @@ func (t *Table) Render() {
 			}
 			if i < len(t.headers)-1 {
 				// Pad using visual width to account for ANSI color codes.
-				pad := widths[i] - visualLen(val)
-				if pad < 0 {
-					pad = 0
-				}
+				pad := max(widths[i]-visualLen(val), 0)
 				line.WriteString(val)
 				line.WriteString(strings.Repeat(" ", pad))
 				line.WriteString("  ")
@@ -116,29 +115,15 @@ func (t *Table) columnWidths() []int {
 	return widths
 }
 
-// visualLen returns the visible length of a string, stripping ANSI escape codes.
+// visualLen returns the visible length of a string, correctly handling ANSI escape codes.
 func visualLen(s string) int {
-	length := 0
-	inEscape := false
-	for _, r := range s {
-		if r == '\033' {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				inEscape = false
-			}
-			continue
-		}
-		length++
-	}
-	return length
+	return lipgloss.Width(s)
 }
 
 // SeverityColor returns a colored severity string.
+// Normalizes to lowercase for consistent matching regardless of CRD casing.
 func SeverityColor(severity string) string {
-	switch severity {
+	switch strings.ToLower(severity) {
 	case "critical":
 		return Red(severity)
 	case "warning":
@@ -165,15 +150,7 @@ func PhaseColor(phase string) string {
 }
 
 // HealthColor returns a colored health status string.
+// It delegates to FormatHealth in formatter.go for consistency.
 func HealthColor(health string) string {
-	switch health {
-	case "Healthy":
-		return Green(health)
-	case "Degraded":
-		return Yellow(health)
-	case "Unhealthy":
-		return Red(health)
-	default:
-		return Dim(health)
-	}
+	return FormatHealth(health)
 }

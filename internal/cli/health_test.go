@@ -185,6 +185,22 @@ func TestFriendlyComponentName(t *testing.T) {
 	assert.Equal(t, "custom", friendlyComponentName("custom"))
 }
 
+func TestValidateKubeconfig(t *testing.T) {
+	// Empty path returns empty.
+	path, err := validateKubeconfig("")
+	assert.NoError(t, err)
+	assert.Equal(t, "", path)
+
+	// Non-existent file returns error.
+	_, err = validateKubeconfig("/nonexistent/path/kubeconfig")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "kubeconfig file not found")
+
+	// Path traversal is cleaned.
+	_, err = validateKubeconfig("/tmp/../nonexistent/path")
+	assert.Error(t, err)
+}
+
 func TestNewHealthCmdFlags(t *testing.T) {
 	cmd := newHealthCmd()
 	assert.Equal(t, "health", cmd.Use)

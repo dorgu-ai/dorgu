@@ -1,17 +1,24 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
+
+// healthCmdTimeout is the maximum time to wait for each kubectl call.
+const healthCmdTimeout = 30 * time.Second
 
 func newHealthCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -100,14 +107,36 @@ func runHealth(cmd *cobra.Command, args []string) error {
 	namespace, _ := cmd.Flags().GetString("namespace")
 	kubeconfigFlag, _ := cmd.Flags().GetString("kubeconfig")
 
+	kubeconfig, err := validateKubeconfig(kubeconfigFlag)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), healthCmdTimeout)
+	defer cancel()
+
 	summary := &healthSummary{}
 
-	// Collect data.
-	summary.Nodes = fetchNodes(kubeconfigFlag)
-	summary.ResourceSaturation = fetchResourceSaturation(kubeconfigFlag)
-	summary.ControlPlane = fetchControlPlane(kubeconfigFlag)
-	summary.ActiveIncidents = fetchIncidentsBrief(kubeconfigFlag, namespace)
-	summary.PendingRemediations = fetchPendingRemediations(kubeconfigFlag, namespace)
+	// Collect data — warn on per-section failures rather than failing silently.
+	var fetchErr error
+
+	summary.Nodes, fetchErr = fetchNodes(ctx, kubeconfig)
+	if fetchErr != nil {
+		output.Warn("Could not fetch nodes: " + fetchErr.Error())
+	}
+
+	summary.ResourceSaturation, fetchErr = fetchResourceSaturation(ctx, kubeconfig)
+	if fetchErr != nil {
+		output.Warn("Could not fetch resource saturation: " + fetchErr.Error())
+	}
+
+	summary.ControlPlane, fetchErr = fetchControlPlane(ctx, kubeconfig)
+	if fetchErr != nil {
+		output.Warn("Could not fetch control plane status: " + fetchErr.Error())
+	}
+
+	summary.ActiveIncidents = fetchIncidentsBrief(ctx, kubeconfig, namespace)
+	summary.PendingRemediations = fetchPendingRemediations(ctx, kubeconfig, namespace)
 
 	if output.IsJSON() {
 		return output.PrintJSON(summary)
@@ -206,19 +235,32 @@ func printHealthSummary(w io.Writer, s *healthSummary) {
 	fmt.Fprintln(w)
 }
 
-// kubectlArgs builds a kubectl command with optional kubeconfig.
-func kubectlArgs(kubeconfig string, args ...string) *exec.Cmd {
+// validateKubeconfig validates and cleans a kubeconfig path.
+// Returns empty string if no kubeconfig was specified.
+func validateKubeconfig(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	clean := filepath.Clean(path)
+	if _, err := os.Stat(clean); err != nil {
+		return "", fmt.Errorf("kubeconfig file not found: %s", clean)
+	}
+	return clean, nil
+}
+
+// kubectlCmd builds a kubectl command with optional kubeconfig and context timeout.
+func kubectlCmd(ctx context.Context, kubeconfig string, args ...string) *exec.Cmd {
 	if kubeconfig != "" {
 		args = append([]string{"--kubeconfig", kubeconfig}, args...)
 	}
-	return exec.Command("kubectl", args...)
+	return exec.CommandContext(ctx, "kubectl", args...)
 }
 
 // fetchNodes lists cluster nodes via kubectl.
-func fetchNodes(kubeconfig string) []healthNode {
-	out, err := kubectlArgs(kubeconfig, "get", "nodes", "-o", "json").CombinedOutput()
+func fetchNodes(ctx context.Context, kubeconfig string) ([]healthNode, error) {
+	out, err := kubectlCmd(ctx, kubeconfig, "get", "nodes", "-o", "json").CombinedOutput()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 
 	var result struct {
@@ -237,7 +279,7 @@ func fetchNodes(kubeconfig string) []healthNode {
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(out, &result); err != nil {
-		return nil
+		return nil, fmt.Errorf("failed to parse node list: %w", err)
 	}
 
 	var nodes []healthNode
@@ -258,7 +300,7 @@ func fetchNodes(kubeconfig string) []healthNode {
 			Age:    formatAge(item.Metadata.CreationTimestamp),
 		})
 	}
-	return nodes
+	return nodes, nil
 }
 
 func nodeRoles(labels map[string]string) string {
@@ -271,14 +313,15 @@ func nodeRoles(labels map[string]string) string {
 	if len(roles) == 0 {
 		return "<none>"
 	}
+	sort.Strings(roles)
 	return strings.Join(roles, ",")
 }
 
 // fetchResourceSaturation gets cluster resource saturation from ClusterPersona if available.
-func fetchResourceSaturation(kubeconfig string) *resourceSaturation {
-	out, err := kubectlArgs(kubeconfig, "get", "clusterpersona", "-o", "json").CombinedOutput()
+func fetchResourceSaturation(ctx context.Context, kubeconfig string) (*resourceSaturation, error) {
+	out, err := kubectlCmd(ctx, kubeconfig, "get", "clusterpersona", "-o", "json").CombinedOutput()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 
 	var list struct {
@@ -296,12 +339,12 @@ func fetchResourceSaturation(kubeconfig string) *resourceSaturation {
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(out, &list); err != nil || len(list.Items) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	rs := list.Items[0].Status.ResourceSummary
 	if rs.AllocatableCPU == "" && rs.AllocatableMemory == "" {
-		return nil
+		return nil, nil
 	}
 
 	sat := &resourceSaturation{}
@@ -327,23 +370,18 @@ func fetchResourceSaturation(kubeconfig string) *resourceSaturation {
 			Allocatable: rs.AllocatableMemory,
 		}
 	}
-	return sat
+	return sat, nil
 }
 
 // fetchControlPlane checks control plane component health.
-func fetchControlPlane(kubeconfig string) *controlPlaneStatus {
+func fetchControlPlane(ctx context.Context, kubeconfig string) (*controlPlaneStatus, error) {
 	componentNames := []string{"kube-apiserver", "kube-scheduler", "kube-controller-manager", "etcd"}
 
 	// Check control plane pods in kube-system.
-	out, err := kubectlArgs(kubeconfig, "get", "pods", "-n", "kube-system",
+	out, err := kubectlCmd(ctx, kubeconfig, "get", "pods", "-n", "kube-system",
 		"-l", "tier=control-plane", "-o", "json").CombinedOutput()
 	if err != nil {
-		// Fallback: mark all as unknown.
-		cp := &controlPlaneStatus{Healthy: false}
-		for _, name := range componentNames {
-			cp.Components = append(cp.Components, controlPlaneComponent{Name: friendlyComponentName(name), Healthy: false})
-		}
-		return cp
+		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 
 	var podList struct {
@@ -352,35 +390,48 @@ func fetchControlPlane(kubeconfig string) *controlPlaneStatus {
 				Labels map[string]string `json:"labels"`
 			} `json:"metadata"`
 			Status struct {
-				Phase string `json:"phase"`
+				Phase             string `json:"phase"`
+				ContainerStatuses []struct {
+					Ready bool `json:"ready"`
+				} `json:"containerStatuses"`
 			} `json:"status"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(out, &podList); err != nil {
-		return nil
+		return nil, fmt.Errorf("failed to parse control plane pods: %w", err)
 	}
 
-	// Map component name → running.
-	running := make(map[string]bool)
+	// Map component name → healthy (all containers ready).
+	healthy := make(map[string]bool)
 	for _, pod := range podList.Items {
 		comp := pod.Metadata.Labels["component"]
-		if pod.Status.Phase == "Running" {
-			running[comp] = true
+		if pod.Status.Phase != "Running" {
+			continue
+		}
+		allReady := true
+		for _, cs := range pod.Status.ContainerStatuses {
+			if !cs.Ready {
+				allReady = false
+				break
+			}
+		}
+		if allReady {
+			healthy[comp] = true
 		}
 	}
 
 	cp := &controlPlaneStatus{Healthy: true}
 	for _, name := range componentNames {
-		healthy := running[name]
-		if !healthy {
+		h := healthy[name]
+		if !h {
 			cp.Healthy = false
 		}
 		cp.Components = append(cp.Components, controlPlaneComponent{
 			Name:    friendlyComponentName(name),
-			Healthy: healthy,
+			Healthy: h,
 		})
 	}
-	return cp
+	return cp, nil
 }
 
 func friendlyComponentName(name string) string {
@@ -399,7 +450,7 @@ func friendlyComponentName(name string) string {
 }
 
 // fetchIncidentsBrief lists active IncidentMemory CRDs.
-func fetchIncidentsBrief(kubeconfig, namespace string) *incidentsSummary {
+func fetchIncidentsBrief(ctx context.Context, kubeconfig, namespace string) *incidentsSummary {
 	args := []string{"get", "incidentmemory", "-o", "json"}
 	if namespace != "" {
 		args = append(args, "-n", namespace)
@@ -407,7 +458,7 @@ func fetchIncidentsBrief(kubeconfig, namespace string) *incidentsSummary {
 		args = append(args, "--all-namespaces")
 	}
 
-	out, err := kubectlArgs(kubeconfig, args...).CombinedOutput()
+	out, err := kubectlCmd(ctx, kubeconfig, args...).CombinedOutput()
 	if err != nil {
 		// CRD not installed — return zero incidents.
 		return &incidentsSummary{Count: 0}
@@ -461,7 +512,7 @@ func fetchIncidentsBrief(kubeconfig, namespace string) *incidentsSummary {
 }
 
 // fetchPendingRemediations counts pending RemediationAction CRDs.
-func fetchPendingRemediations(kubeconfig, namespace string) *remediationSummary {
+func fetchPendingRemediations(ctx context.Context, kubeconfig, namespace string) *remediationSummary {
 	args := []string{"get", "remediationaction", "-o", "json"}
 	if namespace != "" {
 		args = append(args, "-n", namespace)
@@ -469,7 +520,7 @@ func fetchPendingRemediations(kubeconfig, namespace string) *remediationSummary 
 		args = append(args, "--all-namespaces")
 	}
 
-	out, err := kubectlArgs(kubeconfig, args...).CombinedOutput()
+	out, err := kubectlCmd(ctx, kubeconfig, args...).CombinedOutput()
 	if err != nil {
 		return &remediationSummary{Count: 0}
 	}
