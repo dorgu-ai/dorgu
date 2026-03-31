@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-03-31
+
+### Fixed
+
+- Fix local git config that caused release commits to show "Test User" instead of the actual author.
+
 ## [0.6.0] - 2026-03-29
 
 ### Added
