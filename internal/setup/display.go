@@ -56,19 +56,16 @@ func printInstallPlanTo(w io.Writer, cfg SetupConfig) {
 	colVer := 11
 	colNs := 16
 
-	divComp := strings.Repeat("─", colComp)
-	divVer := strings.Repeat("─", colVer)
-	divNs := strings.Repeat("─", colNs)
+	divComp := strings.Repeat("─", colComp+2)
+	divVer := strings.Repeat("─", colVer+2)
+	divNs := strings.Repeat("─", colNs+2)
 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  Installation Plan")
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  ┌%s┬%s┬%s┐\n", strings.Repeat("─", colComp+2), strings.Repeat("─", colVer+2), strings.Repeat("─", colNs+2))
+	fmt.Fprintf(w, "  ┌%s┬%s┬%s┐\n", divComp, divVer, divNs)
 	fmt.Fprintf(w, "  │ %-*s │ %-*s │ %-*s │\n", colComp, "Component", colVer, "Version", colNs, "Namespace")
-	fmt.Fprintf(w, "  ├%s┼%s┼%s┤\n", strings.Repeat("─", colComp+2), strings.Repeat("─", colVer+2), strings.Repeat("─", colNs+2))
-	_ = divComp
-	_ = divVer
-	_ = divNs
+	fmt.Fprintf(w, "  ├%s┼%s┼%s┤\n", divComp, divVer, divNs)
 
 	for _, c := range cfg.Components {
 		version := c.Version
@@ -78,16 +75,18 @@ func printInstallPlanTo(w io.Writer, cfg SetupConfig) {
 			}
 		}
 		name := c.DisplayName
-		if len(name) > colComp {
-			name = name[:colComp-1] + "…"
+		runes := []rune(name)
+		if len(runes) > colComp {
+			name = string(runes[:colComp-1]) + "…"
 		}
 		ns := c.Namespace
-		if len(ns) > colNs {
-			ns = ns[:colNs-1] + "…"
+		nsRunes := []rune(ns)
+		if len(nsRunes) > colNs {
+			ns = string(nsRunes[:colNs-1]) + "…"
 		}
 		fmt.Fprintf(w, "  │ %-*s │ %-*s │ %-*s │\n", colComp, name, colVer, version, colNs, ns)
 	}
-	fmt.Fprintf(w, "  └%s┴%s┴%s┘\n", strings.Repeat("─", colComp+2), strings.Repeat("─", colVer+2), strings.Repeat("─", colNs+2))
+	fmt.Fprintf(w, "  └%s┴%s┴%s┘\n", divComp, divVer, divNs)
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  Environment: %s\n", cfg.Environment)
 	if cfg.ClusterPersonaName != "" {
