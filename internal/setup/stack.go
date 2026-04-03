@@ -196,6 +196,7 @@ func blessedComponents() []ComponentConfig {
 			Required:          true,
 			DefaultEnabled:    true,
 			DependsOn:         []ComponentID{ComponentCNPG},
+			Timeout:           "15m0s",
 			OperatorAddonName: "openobserve",
 			EnvironmentOverrides: map[string][]string{
 				"development": {
