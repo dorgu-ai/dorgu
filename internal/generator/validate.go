@@ -107,7 +107,13 @@ func validateDeploymentWarnings(files []GeneratedFile, analysis *types.AppAnalys
 	}
 	var manifest DeploymentManifest
 	if err := yaml.Unmarshal([]byte(deploymentContent), &manifest); err != nil {
-		return // skip if we can't parse
+		result.Issues = append(result.Issues, ValidationIssue{
+			Severity: SeverityError,
+			Category: "parse",
+			File:     "deployment.yaml",
+			Message:  fmt.Sprintf("failed to parse deployment YAML: %v", err),
+		})
+		return
 	}
 	podSpec := manifest.Spec.Template.Spec
 	runAsNonRoot := podSpec.SecurityContext != nil && podSpec.SecurityContext.RunAsNonRoot != nil && *podSpec.SecurityContext.RunAsNonRoot

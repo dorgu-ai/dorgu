@@ -239,7 +239,10 @@ Ensure all values are appropriate for a production Kubernetes deployment.`,
 
 // buildPersonaPrompt creates the prompt for persona generation
 func buildPersonaPrompt(analysis *types.AppAnalysis) string {
-	analysisJSON, _ := json.MarshalIndent(analysis, "", "  ")
+	analysisJSON, err := json.MarshalIndent(analysis, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("Error marshaling analysis: %v", err)
+	}
 
 	// Build ownership section based on app config
 	ownershipSection := `## Ownership

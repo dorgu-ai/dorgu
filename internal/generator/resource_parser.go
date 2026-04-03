@@ -11,11 +11,15 @@ func parseCPUMillis(cpu string) int64 {
 	}
 	if strings.HasSuffix(cpu, "m") {
 		var millis int64
-		_, _ = fmt.Sscanf(strings.TrimSuffix(cpu, "m"), "%d", &millis)
+		if _, err := fmt.Sscanf(strings.TrimSuffix(cpu, "m"), "%d", &millis); err != nil {
+			return 0
+		}
 		return millis
 	}
 	var cores float64
-	_, _ = fmt.Sscanf(cpu, "%f", &cores)
+	if _, err := fmt.Sscanf(cpu, "%f", &cores); err != nil {
+		return 0
+	}
 	return int64(cores * 1000)
 }
 
@@ -29,11 +33,15 @@ func parseMemoryBytes(mem string) int64 {
 	for suffix, mult := range multipliers {
 		if strings.HasSuffix(mem, suffix) {
 			var num int64
-			_, _ = fmt.Sscanf(strings.TrimSuffix(mem, suffix), "%d", &num)
+			if _, err := fmt.Sscanf(strings.TrimSuffix(mem, suffix), "%d", &num); err != nil {
+				return 0
+			}
 			return num * mult
 		}
 	}
 	var bytes int64
-	_, _ = fmt.Sscanf(mem, "%d", &bytes)
+	if _, err := fmt.Sscanf(mem, "%d", &bytes); err != nil {
+		return 0
+	}
 	return bytes
 }

@@ -216,7 +216,10 @@ func (c *Client) ListPersonas(ctx context.Context, namespace string) (*ListPerso
 		payload["namespace"] = namespace
 	}
 
-	payloadBytes, _ := json.Marshal(payload)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
 	msg := &Message{
 		Type:      MessageTypeRequest,
 		Topic:     TopicPersonas,
@@ -245,7 +248,10 @@ func (c *Client) GetCluster(ctx context.Context, name string) (*ClusterResponse,
 		payload["name"] = name
 	}
 
-	payloadBytes, _ := json.Marshal(payload)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
 	msg := &Message{
 		Type:      MessageTypeRequest,
 		Topic:     TopicCluster,
