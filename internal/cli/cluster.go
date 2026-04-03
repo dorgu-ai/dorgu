@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -106,7 +108,9 @@ func runClusterStatus(cmd *cobra.Command, args []string) error {
 }
 
 func listClusterPersonas() error {
-	kubectlCmd := exec.Command("kubectl", "get", "clusterpersona", "-o", "json")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	kubectlCmd := exec.CommandContext(ctx, "kubectl", "get", "clusterpersona", "-o", "json")
 	rawOutput, err := kubectlCmd.CombinedOutput()
 	if err != nil {
 		outputStr := strings.TrimSpace(string(rawOutput))
@@ -156,7 +160,9 @@ func listClusterPersonas() error {
 }
 
 func getClusterPersonaStatus(name string) error {
-	kubectlCmd := exec.Command("kubectl", "get", "clusterpersona", name, "-o", "yaml")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	kubectlCmd := exec.CommandContext(ctx, "kubectl", "get", "clusterpersona", name, "-o", "yaml")
 	rawOutput, err := kubectlCmd.CombinedOutput()
 	if err != nil {
 		outputStr := strings.TrimSpace(string(rawOutput))
@@ -194,7 +200,9 @@ func runClusterInit(cmd *cobra.Command, args []string) error {
 
 	// Apply via kubectl
 	output.Info("Creating ClusterPersona...")
-	kubectlCmd := exec.Command("kubectl", "apply", "-f", "-")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	kubectlCmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
 	kubectlCmd.Stdin = bytes.NewBufferString(personaYAML)
 	kubectlCmd.Stdout = os.Stdout
 	kubectlCmd.Stderr = os.Stderr
