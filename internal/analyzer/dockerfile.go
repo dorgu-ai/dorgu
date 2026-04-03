@@ -10,6 +10,11 @@ import (
 	"github.com/dorgu-ai/dorgu/internal/types"
 )
 
+var (
+	portRegex    = regexp.MustCompile(`(\d+)(?:/(\w+))?`)
+	kvPairRegex  = regexp.MustCompile(`(\w+)=(?:"([^"]*)"|'([^']*)'|(\S+))`)
+)
+
 // ParseDockerfile parses a Dockerfile and extracts relevant information
 func ParseDockerfile(path string) (*types.DockerfileAnalysis, error) {
 	file, err := os.Open(path)
@@ -103,8 +108,6 @@ func parseFrom(args string, analysis *types.DockerfileAnalysis) {
 
 // parseExpose handles EXPOSE instructions
 func parseExpose(args string, analysis *types.DockerfileAnalysis) {
-	// EXPOSE can have multiple ports: EXPOSE 80 443
-	portRegex := regexp.MustCompile(`(\d+)(?:/(\w+))?`)
 	matches := portRegex.FindAllStringSubmatch(args, -1)
 
 	for _, match := range matches {
@@ -160,9 +163,7 @@ func parseLabel(args string, analysis *types.DockerfileAnalysis) {
 func parseKeyValuePairs(args string) map[string]string {
 	result := make(map[string]string)
 
-	// Simple regex for KEY=value or KEY="value"
-	regex := regexp.MustCompile(`(\w+)=(?:"([^"]*)"|'([^']*)'|(\S+))`)
-	matches := regex.FindAllStringSubmatch(args, -1)
+	matches := kvPairRegex.FindAllStringSubmatch(args, -1)
 
 	for _, match := range matches {
 		key := match[1]

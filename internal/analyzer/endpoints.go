@@ -7,6 +7,16 @@ import (
 	"strings"
 )
 
+var (
+	routeRelevantExts = map[string]bool{
+		".js": true, ".ts": true, ".py": true, ".go": true,
+		".rb": true, ".java": true, ".rs": true,
+	}
+	metricsRelevantExts = map[string]bool{
+		".js": true, ".ts": true, ".py": true, ".go": true,
+	}
+)
+
 // detectHealthEndpoint looks for common health check endpoints
 func detectHealthEndpoint(path string, language string) string {
 	// Common health endpoint paths to search for
@@ -37,11 +47,7 @@ func detectHealthEndpoint(path string, language string) string {
 		}
 
 		ext := filepath.Ext(filePath)
-		relevantExts := map[string]bool{
-			".js": true, ".ts": true, ".py": true, ".go": true,
-			".rb": true, ".java": true, ".rs": true,
-		}
-		if !relevantExts[ext] {
+		if !routeRelevantExts[ext] {
 			return nil
 		}
 
@@ -98,10 +104,7 @@ func detectMetricsEndpoint(path string, language string) string {
 		}
 
 		ext := filepath.Ext(filePath)
-		relevantExts := map[string]bool{
-			".js": true, ".ts": true, ".py": true, ".go": true,
-		}
-		if !relevantExts[ext] {
+		if !metricsRelevantExts[ext] {
 			return nil
 		}
 

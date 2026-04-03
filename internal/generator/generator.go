@@ -8,6 +8,8 @@ import (
 	"github.com/dorgu-ai/dorgu/internal/types"
 )
 
+var httpPorts = map[int]bool{80: true, 443: true, 8080: true, 3000: true, 5000: true, 8000: true}
+
 // Options contains generation options
 type Options struct {
 	Namespace   string
@@ -130,7 +132,6 @@ func Generate(analysis *types.AppAnalysis, opts Options) ([]GeneratedFile, error
 
 // hasHTTPPort checks if any port is likely HTTP
 func hasHTTPPort(ports []types.Port) bool {
-	httpPorts := map[int]bool{80: true, 443: true, 8080: true, 3000: true, 5000: true, 8000: true}
 	for _, p := range ports {
 		if httpPorts[p.Port] || p.Purpose == "HTTP" || p.Purpose == "HTTP API" {
 			return true
