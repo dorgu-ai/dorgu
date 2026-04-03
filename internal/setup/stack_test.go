@@ -250,6 +250,45 @@ func TestOpenObserveDependsOnCNPG(t *testing.T) {
 	}
 }
 
+func TestOpenObserveTimeoutIsSet(t *testing.T) {
+	components := blessedComponents()
+	for _, c := range components {
+		if c.ID == ComponentOpenObserve {
+			if c.Timeout == "" {
+				t.Error("OpenObserve must have an explicit Timeout (deploys ~14 pods)")
+			}
+			d, err := time.ParseDuration(c.Timeout)
+			if err != nil {
+				t.Errorf("OpenObserve Timeout %q is not a valid duration: %v", c.Timeout, err)
+			}
+			if d < 10*time.Minute {
+				t.Errorf("OpenObserve Timeout %v is too short (minimum 10m for ~14 pods)", d)
+			}
+			return
+		}
+	}
+	t.Error("OpenObserve component not found in blessed stack")
+}
+
+func TestAllComplexChartsHaveAdequateTimeout(t *testing.T) {
+	components := blessedComponents()
+	for _, c := range components {
+		if len(c.DependsOn) > 0 || c.ID == ComponentOpenObserve {
+			if c.Timeout == "" {
+				t.Errorf("Component %s has dependencies or is known-heavy but no explicit Timeout", c.ID)
+			}
+			d, err := time.ParseDuration(c.Timeout)
+			if err != nil {
+				t.Errorf("Component %s Timeout %q is not a valid duration: %v", c.ID, c.Timeout, err)
+				continue
+			}
+			if d <= 5*time.Minute {
+				t.Errorf("Component %s Timeout %v should be > 5m (has dependencies or is complex)", c.ID, d)
+			}
+		}
+	}
+}
+
 // contains is a helper for substring search in tests.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
