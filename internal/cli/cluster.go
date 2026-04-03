@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
+
+var validDNSName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,252}$`)
 
 var clusterFlags struct {
 	name        string
@@ -179,8 +182,10 @@ func runClusterInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("kubectl not found in PATH; required for cluster init")
 	}
 
-	// Generate ClusterPersona YAML
-	personaYAML := generateClusterPersonaYAML(clusterFlags.name, clusterFlags.environment)
+	personaYAML, err := generateClusterPersonaYAML(clusterFlags.name, clusterFlags.environment)
+	if err != nil {
+		return err
+	}
 
 	if clusterFlags.dryRun {
 		fmt.Println(personaYAML)
@@ -202,7 +207,13 @@ func runClusterInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func generateClusterPersonaYAML(name, environment string) string {
+func generateClusterPersonaYAML(name, environment string) (string, error) {
+	if !validDNSName.MatchString(name) {
+		return "", fmt.Errorf("invalid ClusterPersona name %q: must match RFC 1123 (lowercase alphanumeric, hyphens, dots)", name)
+	}
+	if !validDNSName.MatchString(environment) {
+		return "", fmt.Errorf("invalid environment %q: must match RFC 1123 (lowercase alphanumeric, hyphens, dots)", environment)
+	}
 	return fmt.Sprintf(`apiVersion: dorgu.io/v1
 kind: ClusterPersona
 metadata:
@@ -222,5 +233,5 @@ spec:
       - app.kubernetes.io/version
   defaults:
     namespace: default
-`, name, name, environment)
+`, name, name, environment), nil
 }

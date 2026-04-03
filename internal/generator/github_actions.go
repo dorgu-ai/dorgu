@@ -2,16 +2,27 @@ package generator
 
 import (
 	"fmt"
+	"regexp"
 
 	"github.com/dorgu-ai/dorgu/internal/config"
 	"github.com/dorgu-ai/dorgu/internal/types"
 )
 
+var safeShellName = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
 // GenerateGitHubActions generates a GitHub Actions workflow
 func GenerateGitHubActions(analysis *types.AppAnalysis, cfg *config.Config) (string, error) {
+	if !safeShellName.MatchString(analysis.Name) {
+		return "", fmt.Errorf("unsafe application name %q for shell embedding: must be alphanumeric with hyphens, dots, or underscores", analysis.Name)
+	}
+
 	registry := cfg.CI.Registry
 	if registry == "" {
 		registry = "ghcr.io/${{ github.repository_owner }}"
+	}
+
+	if registry != "ghcr.io/${{ github.repository_owner }}" && !safeShellName.MatchString(registry) {
+		return "", fmt.Errorf("unsafe registry name %q for shell embedding", registry)
 	}
 
 	imageName := fmt.Sprintf("%s/%s", registry, analysis.Name)
