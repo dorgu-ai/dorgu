@@ -67,7 +67,7 @@ func LoadAppConfig(appPath string) (*AppConfig, error) {
 func HasAppConfig(appPath string) bool {
 	configPath := filepath.Join(appPath, ".dorgu.yaml")
 	info, err := os.Stat(configPath)
-	if os.IsNotExist(err) {
+	if err != nil {
 		return false
 	}
 	return info.Size() > 0
