@@ -239,14 +239,22 @@ func printFinalSummaryTo(w io.Writer, results []InstallResult, vrs []ValidationR
 	fmt.Fprintln(w)
 
 	// Health summary
-	healthy := 0
-	for _, vr := range vrs {
-		if vr.Healthy && vr.Message != "skipped" {
-			healthy++
-		}
-	}
 	if len(vrs) > 0 && succeeded > 0 {
-		fmt.Fprintf(w, "  Pods healthy: %d/%d\n", healthy, succeeded)
+		allSkipped := true
+		healthy := 0
+		for _, vr := range vrs {
+			if vr.Message != "skipped" {
+				allSkipped = false
+				if vr.Healthy {
+					healthy++
+				}
+			}
+		}
+		if cfg.SkipValidation || allSkipped {
+			fmt.Fprintf(w, "  Pods healthy: — (validation skipped)\n")
+		} else {
+			fmt.Fprintf(w, "  Pods healthy: %d/%d\n", healthy, succeeded)
+		}
 		fmt.Fprintln(w)
 	}
 
