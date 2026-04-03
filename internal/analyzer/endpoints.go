@@ -7,6 +7,16 @@ import (
 	"strings"
 )
 
+var (
+	routeRelevantExts = map[string]bool{
+		".js": true, ".ts": true, ".py": true, ".go": true,
+		".rb": true, ".java": true, ".rs": true,
+	}
+	metricsRelevantExts = map[string]bool{
+		".js": true, ".ts": true, ".py": true, ".go": true,
+	}
+)
+
 // detectHealthEndpoint looks for common health check endpoints
 func detectHealthEndpoint(path string, language string) string {
 	// Common health endpoint paths to search for
@@ -24,24 +34,20 @@ func detectHealthEndpoint(path string, language string) string {
 	// Walk through source files looking for route definitions
 	var foundPath string
 	_ = filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
 			return nil
 		}
 
-		// Skip node_modules, vendor, etc.
-		if strings.Contains(filePath, "node_modules") ||
-			strings.Contains(filePath, "vendor") ||
-			strings.Contains(filePath, ".git") {
-			return filepath.SkipDir
+		base := filepath.Base(filePath)
+		if info.IsDir() {
+			if base == "node_modules" || base == "vendor" || base == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 
-		// Only check relevant file types
 		ext := filepath.Ext(filePath)
-		relevantExts := map[string]bool{
-			".js": true, ".ts": true, ".py": true, ".go": true,
-			".rb": true, ".java": true, ".rs": true,
-		}
-		if !relevantExts[ext] {
+		if !routeRelevantExts[ext] {
 			return nil
 		}
 
@@ -85,20 +91,20 @@ func detectMetricsEndpoint(path string, language string) string {
 	// Walk through source files looking for /metrics
 	var foundPath string
 	_ = filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
 			return nil
 		}
 
-		if strings.Contains(filePath, "node_modules") ||
-			strings.Contains(filePath, "vendor") {
-			return filepath.SkipDir
+		base := filepath.Base(filePath)
+		if info.IsDir() {
+			if base == "node_modules" || base == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 
 		ext := filepath.Ext(filePath)
-		relevantExts := map[string]bool{
-			".js": true, ".ts": true, ".py": true, ".go": true,
-		}
-		if !relevantExts[ext] {
+		if !metricsRelevantExts[ext] {
 			return nil
 		}
 

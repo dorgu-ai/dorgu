@@ -2,11 +2,14 @@ package generator
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/dorgu-ai/dorgu/internal/config"
 	"github.com/dorgu-ai/dorgu/internal/llm"
 	"github.com/dorgu-ai/dorgu/internal/types"
 )
+
+var httpPorts = map[int]bool{80: true, 443: true, 8080: true, 3000: true, 5000: true, 8000: true}
 
 // Options contains generation options
 type Options struct {
@@ -130,7 +133,6 @@ func Generate(analysis *types.AppAnalysis, opts Options) ([]GeneratedFile, error
 
 // hasHTTPPort checks if any port is likely HTTP
 func hasHTTPPort(ports []types.Port) bool {
-	httpPorts := map[int]bool{80: true, 443: true, 8080: true, 3000: true, 5000: true, 8000: true}
 	for _, p := range ports {
 		if httpPorts[p.Port] || p.Purpose == "HTTP" || p.Purpose == "HTTP API" {
 			return true
@@ -267,22 +269,22 @@ func formatPorts(ports []types.Port) string {
 	if len(ports) == 0 {
 		return "No ports exposed."
 	}
-	result := ""
+	var b strings.Builder
 	for _, p := range ports {
-		result += fmt.Sprintf("- Port %d (%s): %s\n", p.Port, p.Protocol, p.Purpose)
+		fmt.Fprintf(&b, "- Port %d (%s): %s\n", p.Port, p.Protocol, p.Purpose)
 	}
-	return result
+	return b.String()
 }
 
 func formatDependencies(deps []string) string {
 	if len(deps) == 0 {
 		return "No external dependencies detected."
 	}
-	result := ""
+	var b strings.Builder
 	for _, d := range deps {
-		result += "- " + d + "\n"
+		fmt.Fprintf(&b, "- %s\n", d)
 	}
-	return result
+	return b.String()
 }
 
 func formatScalingDetails(analysis *types.AppAnalysis) string {

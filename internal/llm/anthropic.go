@@ -56,6 +56,7 @@ func (c *AnthropicClient) AnalyzeApp(analysis *types.AppAnalysis) (*types.AppAna
 	prompt := buildAnalysisPrompt(analysis)
 
 	response, err := c.complete(
+		context.Background(),
 		"You are an expert DevOps engineer analyzing containerized applications. Respond only with valid JSON, no markdown formatting.",
 		prompt,
 	)
@@ -79,6 +80,7 @@ func (c *AnthropicClient) GeneratePersona(analysis *types.AppAnalysis) (string, 
 	prompt := buildPersonaPrompt(analysis)
 
 	return c.complete(
+		context.Background(),
 		"You are a technical writer creating documentation for platform engineers.",
 		prompt,
 	)
@@ -86,10 +88,10 @@ func (c *AnthropicClient) GeneratePersona(analysis *types.AppAnalysis) (string, 
 
 // Complete sends a generic prompt and returns the completion
 func (c *AnthropicClient) Complete(ctx context.Context, prompt string) (string, error) {
-	return c.complete("", prompt)
+	return c.complete(ctx, "", prompt)
 }
 
-func (c *AnthropicClient) complete(system, prompt string) (string, error) {
+func (c *AnthropicClient) complete(ctx context.Context, system, prompt string) (string, error) {
 	reqBody := anthropicRequest{
 		Model:     c.model,
 		MaxTokens: 4096,
@@ -104,7 +106,7 @@ func (c *AnthropicClient) complete(system, prompt string) (string, error) {
 		return "", err
 	}
 
-	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return "", err
 	}

@@ -2,17 +2,22 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
+
+var validDNSName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,252}$`)
 
 var clusterFlags struct {
 	name        string
@@ -103,7 +108,9 @@ func runClusterStatus(cmd *cobra.Command, args []string) error {
 }
 
 func listClusterPersonas() error {
-	kubectlCmd := exec.Command("kubectl", "get", "clusterpersona", "-o", "json")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	kubectlCmd := exec.CommandContext(ctx, "kubectl", "get", "clusterpersona", "-o", "json")
 	rawOutput, err := kubectlCmd.CombinedOutput()
 	if err != nil {
 		outputStr := strings.TrimSpace(string(rawOutput))
@@ -153,7 +160,9 @@ func listClusterPersonas() error {
 }
 
 func getClusterPersonaStatus(name string) error {
-	kubectlCmd := exec.Command("kubectl", "get", "clusterpersona", name, "-o", "yaml")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	kubectlCmd := exec.CommandContext(ctx, "kubectl", "get", "clusterpersona", name, "-o", "yaml")
 	rawOutput, err := kubectlCmd.CombinedOutput()
 	if err != nil {
 		outputStr := strings.TrimSpace(string(rawOutput))
@@ -179,8 +188,10 @@ func runClusterInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("kubectl not found in PATH; required for cluster init")
 	}
 
-	// Generate ClusterPersona YAML
-	personaYAML := generateClusterPersonaYAML(clusterFlags.name, clusterFlags.environment)
+	personaYAML, err := generateClusterPersonaYAML(clusterFlags.name, clusterFlags.environment)
+	if err != nil {
+		return err
+	}
 
 	if clusterFlags.dryRun {
 		fmt.Println(personaYAML)
@@ -189,7 +200,9 @@ func runClusterInit(cmd *cobra.Command, args []string) error {
 
 	// Apply via kubectl
 	output.Info("Creating ClusterPersona...")
-	kubectlCmd := exec.Command("kubectl", "apply", "-f", "-")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	kubectlCmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
 	kubectlCmd.Stdin = bytes.NewBufferString(personaYAML)
 	kubectlCmd.Stdout = os.Stdout
 	kubectlCmd.Stderr = os.Stderr
@@ -202,7 +215,13 @@ func runClusterInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func generateClusterPersonaYAML(name, environment string) string {
+func generateClusterPersonaYAML(name, environment string) (string, error) {
+	if !validDNSName.MatchString(name) {
+		return "", fmt.Errorf("invalid ClusterPersona name %q: must match RFC 1123 (lowercase alphanumeric, hyphens, dots)", name)
+	}
+	if !validDNSName.MatchString(environment) {
+		return "", fmt.Errorf("invalid environment %q: must match RFC 1123 (lowercase alphanumeric, hyphens, dots)", environment)
+	}
 	return fmt.Sprintf(`apiVersion: dorgu.io/v1
 kind: ClusterPersona
 metadata:
@@ -222,5 +241,5 @@ spec:
       - app.kubernetes.io/version
   defaults:
     namespace: default
-`, name, name, environment)
+`, name, name, environment), nil
 }

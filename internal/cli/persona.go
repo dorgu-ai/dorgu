@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -166,8 +167,10 @@ func runPersonaApply(cmd *cobra.Command, args []string) error {
 
 	// Apply via kubectl — capture stderr to detect schema errors while still streaming to user
 	output.Info("Applying ApplicationPersona to cluster...")
+	applyCtx, applyCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer applyCancel()
 	var stderrCapture bytes.Buffer
-	kubectlCmd := exec.Command("kubectl", "apply", "-f", "-", "-n", personaFlags.namespace)
+	kubectlCmd := exec.CommandContext(applyCtx, "kubectl", "apply", "-f", "-", "-n", personaFlags.namespace)
 	kubectlCmd.Stdin = bytes.NewBufferString(personaYAML)
 	kubectlCmd.Stdout = os.Stdout
 	kubectlCmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
@@ -195,8 +198,10 @@ func runPersonaStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get the persona resource (Kubernetes resource name is DNS-safe; try sanitized if name has underscores)
+	getCtx, getCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer getCancel()
 	tryGet := func(n string) ([]byte, error) {
-		kubectlCmd := exec.Command("kubectl", "get", "applicationpersona", n,
+		kubectlCmd := exec.CommandContext(getCtx, "kubectl", "get", "applicationpersona", n,
 			"-n", personaFlags.namespace, "-o", "yaml")
 		return kubectlCmd.CombinedOutput()
 	}

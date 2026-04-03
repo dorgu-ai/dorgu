@@ -19,7 +19,10 @@ type Client interface {
 // NewClient creates a new LLM client based on the provider name.
 // API key resolution: env var > global config (~/.config/dorgu/config.yaml).
 func NewClient(provider string) (Client, error) {
-	globalCfg, _ := config.LoadGlobalConfig()
+	globalCfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load global config: %v\n", err)
+	}
 	apiKey := resolveAPIKey(provider, globalCfg)
 
 	switch provider {

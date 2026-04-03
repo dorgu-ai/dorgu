@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -67,7 +69,7 @@ func LoadAppConfig(appPath string) (*AppConfig, error) {
 func HasAppConfig(appPath string) bool {
 	configPath := filepath.Join(appPath, ".dorgu.yaml")
 	info, err := os.Stat(configPath)
-	if os.IsNotExist(err) {
+	if err != nil {
 		return false
 	}
 	return info.Size() > 0
@@ -79,40 +81,38 @@ func (c *AppConfig) GetInstructionsContext() string {
 		return ""
 	}
 
-	context := ""
+	var b strings.Builder
 
 	if c.App.Name != "" {
-		context += "Application Name: " + c.App.Name + "\n"
+		fmt.Fprintf(&b, "Application Name: %s\n", c.App.Name)
 	}
 	if c.App.Description != "" {
-		context += "Description: " + c.App.Description + "\n"
+		fmt.Fprintf(&b, "Description: %s\n", c.App.Description)
 	}
 	if c.App.Team != "" {
-		context += "Team: " + c.App.Team + "\n"
+		fmt.Fprintf(&b, "Team: %s\n", c.App.Team)
 	}
 	if c.App.Type != "" {
-		context += "Application Type: " + c.App.Type + "\n"
+		fmt.Fprintf(&b, "Application Type: %s\n", c.App.Type)
 	}
 	if c.Environment != "" {
-		context += "Environment: " + c.Environment + "\n"
+		fmt.Fprintf(&b, "Environment: %s\n", c.Environment)
 	}
 
-	// Add dependencies context
 	if len(c.Dependencies) > 0 {
-		context += "\nKnown Dependencies:\n"
+		b.WriteString("\nKnown Dependencies:\n")
 		for _, dep := range c.Dependencies {
 			required := ""
 			if dep.Required {
 				required = " (required)"
 			}
-			context += "- " + dep.Name + " (" + dep.Type + ")" + required + "\n"
+			fmt.Fprintf(&b, "- %s (%s)%s\n", dep.Name, dep.Type, required)
 		}
 	}
 
-	// Add custom instructions
 	if c.App.Instructions != "" {
-		context += "\nApplication-Specific Context:\n" + c.App.Instructions + "\n"
+		fmt.Fprintf(&b, "\nApplication-Specific Context:\n%s\n", c.App.Instructions)
 	}
 
-	return context
+	return b.String()
 }

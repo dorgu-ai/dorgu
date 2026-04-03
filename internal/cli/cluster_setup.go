@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -78,7 +80,9 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 
 	// 1b. Kube-context safety guard
 	if clusterSetupFlags.kubeContext != "" {
-		if _, err := exec.Command("kubectl", "config", "use-context", clusterSetupFlags.kubeContext).CombinedOutput(); err != nil {
+		ctxTimeout, cancelCtx := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancelCtx()
+		if _, err := exec.CommandContext(ctxTimeout, "kubectl", "config", "use-context", clusterSetupFlags.kubeContext).CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to switch to kube-context %q: %w", clusterSetupFlags.kubeContext, err)
 		}
 		output.Success(fmt.Sprintf("Using kube-context: %q", clusterSetupFlags.kubeContext))
@@ -97,13 +101,16 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 				output.Warn(warning)
 				if output.IsInteractive() {
 					var proceed bool
-					huh.NewForm(
-						huh.NewGroup(
-							huh.NewConfirm().
-								Title("Are you sure you want to proceed with this context?").
-								Value(&proceed),
-						),
-					).Run()
+				if err := huh.NewForm(
+					huh.NewGroup(
+						huh.NewConfirm().
+							Title("Are you sure you want to proceed with this context?").
+							Value(&proceed),
+					),
+				).Run(); err != nil {
+					output.Info("Aborted.")
+					return nil
+				}
 					if !proceed {
 						output.Info("Aborted.")
 						return nil

@@ -49,6 +49,7 @@ func (c *OllamaClient) AnalyzeApp(analysis *types.AppAnalysis) (*types.AppAnalys
 	prompt := buildAnalysisPrompt(analysis)
 
 	response, err := c.complete(
+		context.Background(),
 		"You are an expert DevOps engineer analyzing containerized applications. Respond only with valid JSON.",
 		prompt,
 		true, // JSON format
@@ -73,6 +74,7 @@ func (c *OllamaClient) GeneratePersona(analysis *types.AppAnalysis) (string, err
 	prompt := buildPersonaPrompt(analysis)
 
 	return c.complete(
+		context.Background(),
 		"You are a technical writer creating documentation for platform engineers.",
 		prompt,
 		false, // Markdown output
@@ -81,10 +83,10 @@ func (c *OllamaClient) GeneratePersona(analysis *types.AppAnalysis) (string, err
 
 // Complete sends a generic prompt and returns the completion
 func (c *OllamaClient) Complete(ctx context.Context, prompt string) (string, error) {
-	return c.complete("", prompt, false)
+	return c.complete(ctx, "", prompt, false)
 }
 
-func (c *OllamaClient) complete(system, prompt string, jsonFormat bool) (string, error) {
+func (c *OllamaClient) complete(ctx context.Context, system, prompt string, jsonFormat bool) (string, error) {
 	reqBody := ollamaRequest{
 		Model:  c.model,
 		System: system,
@@ -102,7 +104,7 @@ func (c *OllamaClient) complete(system, prompt string, jsonFormat bool) (string,
 	}
 
 	url := fmt.Sprintf("%s/api/generate", c.host)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return "", err
 	}

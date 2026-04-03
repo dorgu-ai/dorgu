@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -99,11 +100,14 @@ type Client struct {
 	conn          *websocket.Conn
 	connected     bool
 	mu            sync.RWMutex
+	writeMu       sync.Mutex
 	handlers      map[Topic]func(*Message)
 	handlersMu    sync.RWMutex
 	responses     map[string]chan *Message
 	responsesMu   sync.Mutex
 	done          chan struct{}
+	closeOnce     sync.Once
+	closed        atomic.Bool
 	reconnectWait time.Duration
 }
 
@@ -138,8 +142,10 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	c.conn = conn
 	c.connected = true
+	c.done = make(chan struct{})
+	c.closeOnce = sync.Once{}
+	c.closed.Store(false)
 
-	// Start read pump
 	go c.readPump()
 
 	return nil
@@ -154,7 +160,8 @@ func (c *Client) Close() error {
 		return nil
 	}
 
-	close(c.done)
+	c.closeOnce.Do(func() { close(c.done) })
+	c.closed.Store(true)
 	c.connected = false
 
 	if c.conn != nil {
@@ -209,7 +216,10 @@ func (c *Client) ListPersonas(ctx context.Context, namespace string) (*ListPerso
 		payload["namespace"] = namespace
 	}
 
-	payloadBytes, _ := json.Marshal(payload)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
 	msg := &Message{
 		Type:      MessageTypeRequest,
 		Topic:     TopicPersonas,
@@ -238,7 +248,10 @@ func (c *Client) GetCluster(ctx context.Context, name string) (*ClusterResponse,
 		payload["name"] = name
 	}
 
-	payloadBytes, _ := json.Marshal(payload)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
 	msg := &Message{
 		Type:      MessageTypeRequest,
 		Topic:     TopicCluster,
@@ -298,17 +311,19 @@ func (c *Client) request(ctx context.Context, msg *Message) (*Message, error) {
 // send sends a message over the WebSocket connection.
 func (c *Client) send(msg *Message) error {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-
 	if !c.connected || c.conn == nil {
+		c.mu.RUnlock()
 		return fmt.Errorf("not connected")
 	}
+	c.mu.RUnlock()
 
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
 
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	return c.conn.WriteMessage(websocket.TextMessage, data)
 }
 

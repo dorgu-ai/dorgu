@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sashabaranov/go-openai"
@@ -150,11 +151,13 @@ Dockerfile Analysis:
 	}
 
 	if analysis.Compose != nil && len(analysis.Compose.Services) > 0 {
-		composeInfo = "\nDocker Compose Services:\n"
+		var cb strings.Builder
+		cb.WriteString("\nDocker Compose Services:\n")
 		for _, svc := range analysis.Compose.Services {
-			composeInfo += fmt.Sprintf("- %s: ports=%v, depends_on=%v\n",
+			fmt.Fprintf(&cb, "- %s: ports=%v, depends_on=%v\n",
 				svc.Name, svc.Ports, svc.DependsOn)
 		}
+		composeInfo = cb.String()
 	}
 
 	if analysis.Code != nil {
@@ -176,35 +179,37 @@ Code Analysis:
 
 	// Include app config context if available
 	if analysis.AppConfig != nil {
-		appConfigInfo = "\nApplication Configuration (.dorgu.yaml):\n"
+		var ab strings.Builder
+		ab.WriteString("\nApplication Configuration (.dorgu.yaml):\n")
 		if analysis.AppConfig.Name != "" {
-			appConfigInfo += fmt.Sprintf("- Name: %s\n", analysis.AppConfig.Name)
+			fmt.Fprintf(&ab, "- Name: %s\n", analysis.AppConfig.Name)
 		}
 		if analysis.AppConfig.Description != "" {
-			appConfigInfo += fmt.Sprintf("- Description: %s\n", analysis.AppConfig.Description)
+			fmt.Fprintf(&ab, "- Description: %s\n", analysis.AppConfig.Description)
 		}
 		if analysis.AppConfig.Team != "" {
-			appConfigInfo += fmt.Sprintf("- Team: %s\n", analysis.AppConfig.Team)
+			fmt.Fprintf(&ab, "- Team: %s\n", analysis.AppConfig.Team)
 		}
 		if analysis.AppConfig.Type != "" {
-			appConfigInfo += fmt.Sprintf("- Type: %s\n", analysis.AppConfig.Type)
+			fmt.Fprintf(&ab, "- Type: %s\n", analysis.AppConfig.Type)
 		}
 		if analysis.AppConfig.Environment != "" {
-			appConfigInfo += fmt.Sprintf("- Environment: %s\n", analysis.AppConfig.Environment)
+			fmt.Fprintf(&ab, "- Environment: %s\n", analysis.AppConfig.Environment)
 		}
 		if len(analysis.AppConfig.Dependencies) > 0 {
-			appConfigInfo += "- Known Dependencies:\n"
+			ab.WriteString("- Known Dependencies:\n")
 			for _, dep := range analysis.AppConfig.Dependencies {
 				required := ""
 				if dep.Required {
 					required = " (required)"
 				}
-				appConfigInfo += fmt.Sprintf("  - %s (%s)%s\n", dep.Name, dep.Type, required)
+				fmt.Fprintf(&ab, "  - %s (%s)%s\n", dep.Name, dep.Type, required)
 			}
 		}
 		if analysis.AppConfig.Instructions != "" {
-			appConfigInfo += fmt.Sprintf("\nApplication Context from Owner:\n%s\n", analysis.AppConfig.Instructions)
+			fmt.Fprintf(&ab, "\nApplication Context from Owner:\n%s\n", analysis.AppConfig.Instructions)
 		}
+		appConfigInfo = ab.String()
 	}
 
 	return fmt.Sprintf(`Analyze this containerized application and provide deployment recommendations.
@@ -239,7 +244,10 @@ Ensure all values are appropriate for a production Kubernetes deployment.`,
 
 // buildPersonaPrompt creates the prompt for persona generation
 func buildPersonaPrompt(analysis *types.AppAnalysis) string {
-	analysisJSON, _ := json.MarshalIndent(analysis, "", "  ")
+	analysisJSON, err := json.MarshalIndent(analysis, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("Error marshaling analysis: %v", err)
+	}
 
 	// Build ownership section based on app config
 	ownershipSection := `## Ownership

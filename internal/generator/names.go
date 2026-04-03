@@ -7,6 +7,8 @@ import (
 
 const maxDNSSubdomainLen = 253
 
+var disallowedDNSChars = regexp.MustCompile(`[^a-z0-9\-.]`)
+
 // ToDNSSubdomain converts an app name to a valid Kubernetes DNS subdomain (RFC 1123).
 // Replaces underscores with hyphens, lowercases, and ensures alphanumeric start/end.
 func ToDNSSubdomain(name string) string {
@@ -15,9 +17,7 @@ func ToDNSSubdomain(name string) string {
 	}
 	s := strings.ToLower(name)
 	s = strings.ReplaceAll(s, "_", "-")
-	// Strip characters not in [a-z0-9\-.]
-	allowed := regexp.MustCompile(`[^a-z0-9\-.]`)
-	s = allowed.ReplaceAllString(s, "")
+	s = disallowedDNSChars.ReplaceAllString(s, "")
 	// Collapse multiple hyphens
 	for strings.Contains(s, "--") {
 		s = strings.ReplaceAll(s, "--", "-")
