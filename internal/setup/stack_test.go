@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -66,7 +67,7 @@ func TestVersionOverrideApplied(t *testing.T) {
 	// Check that the override version appears in the logged command
 	found := false
 	for _, cmd := range ex.Log {
-		if contains(cmd, "v1.17.0") {
+		if strings.Contains(cmd, "v1.17.0") {
 			found = true
 			break
 		}
@@ -289,16 +290,3 @@ func TestAllComplexChartsHaveAdequateTimeout(t *testing.T) {
 	}
 }
 
-// contains is a helper for substring search in tests.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
-}
-
-func containsStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}

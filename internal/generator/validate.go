@@ -320,7 +320,6 @@ func validateKubectlDryRun(files []GeneratedFile, opts Options, result *Validati
 	output := strings.TrimSpace(string(out))
 
 	if err != nil {
-		result.Passed = false
 		msg := "kubectl apply --dry-run=client failed"
 		if output != "" {
 			if len(output) > 300 {

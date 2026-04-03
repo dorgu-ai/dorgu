@@ -88,13 +88,13 @@ func TestScaffoldGitOpsRepo_ArgoAppContent(t *testing.T) {
 	content := string(data)
 
 	// Verify key fields
-	if !containsStr(content, "kind: Application") {
+	if !strings.Contains(content, "kind: Application") {
 		t.Error("ArgoCD Application YAML missing 'kind: Application'")
 	}
-	if !containsStr(content, "chart: jetstack/cert-manager") {
+	if !strings.Contains(content, "chart: jetstack/cert-manager") {
 		t.Error("ArgoCD Application YAML missing chart reference")
 	}
-	if !containsStr(content, "namespace: cert-manager") {
+	if !strings.Contains(content, "namespace: cert-manager") {
 		t.Error("ArgoCD Application YAML missing namespace")
 	}
 }
