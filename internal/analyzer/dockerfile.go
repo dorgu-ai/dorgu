@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	portRegex    = regexp.MustCompile(`(\d+)(?:/(\w+))?`)
-	kvPairRegex  = regexp.MustCompile(`(\w+)=(?:"([^"]*)"|'([^']*)'|(\S+))`)
+	portRegex   = regexp.MustCompile(`(\d+)(?:/(\w+))?`)
+	kvPairRegex = regexp.MustCompile(`(\w+)=(?:"([^"]*)"|'([^']*)'|(\S+))`)
 )
 
 // ParseDockerfile parses a Dockerfile and extracts relevant information
