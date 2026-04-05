@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-05
+
+### Added
+
+- `dorgu remediation list` command — list pending, active, and completed remediations with severity, category, confidence, and phase. Supports `--phase`, `--severity`, `--namespace`, `--all`, and `--json` flags.
+- `dorgu remediation diff <name>` command — terraform-style colored diff showing proposed Persona spec changes with explanation, rollback info, and action hints.
+- `dorgu remediation approve <name>` command — approve a pending remediation for execution. Supports `--next` flag to approve the highest-severity pending remediation without specifying a name.
+- `dorgu remediation reject <name>` command — reject a pending remediation with optional `--reason`.
+- `dorgu health --watch` — real-time streaming of health updates, incidents, and remediations via WebSocket (JSONL in `--json` mode).
+- Remediation hint in `dorgu health` output when pending remediations exist.
+
+### Fixed
+
+- Increase OpenObserve Helm install timeout to 15m for fresh installs (was defaulting to 5m, causing consistent timeouts).
+- Show "validation skipped" instead of misleading `0/N` pod count when `--skip-validation` is used.
+- Add input validation to prevent YAML injection and path traversal in user inputs.
+- Propagate context through Ollama and Anthropic HTTP requests for proper timeout handling.
+- Add `context.WithTimeout` to kubectl `exec.Command` calls.
+- Use rune-based truncation for UTF-8 safety and remove dead code.
+- Handle previously ignored errors across LLM, WebSocket, CLI, and generator packages.
+- Prevent nil dereference in `HasAppConfig` and fix WebSocket race conditions.
+
+### Changed
+
+- Replace string concatenation with `strings.Builder` for better performance in hot paths.
+- Hoist regex and map allocations to package level to reduce GC pressure.
+- Replace custom `contains` helpers with `strings.Contains` and fix `Walk` logic.
+
 ## [0.6.1] - 2026-03-31
 
 ### Fixed
