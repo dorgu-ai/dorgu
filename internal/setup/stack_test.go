@@ -289,4 +289,3 @@ func TestAllComplexChartsHaveAdequateTimeout(t *testing.T) {
 		}
 	}
 }
-

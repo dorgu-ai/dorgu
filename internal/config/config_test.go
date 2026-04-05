@@ -339,4 +339,3 @@ dependencies:
 		t.Errorf("Dependencies[0].HealthCheck = %q, want %q", cfg.Dependencies[0].HealthCheck, "SELECT 1")
 	}
 }
-

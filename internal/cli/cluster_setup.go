@@ -101,16 +101,16 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 				output.Warn(warning)
 				if output.IsInteractive() {
 					var proceed bool
-				if err := huh.NewForm(
-					huh.NewGroup(
-						huh.NewConfirm().
-							Title("Are you sure you want to proceed with this context?").
-							Value(&proceed),
-					),
-				).Run(); err != nil {
-					output.Info("Aborted.")
-					return nil
-				}
+					if err := huh.NewForm(
+						huh.NewGroup(
+							huh.NewConfirm().
+								Title("Are you sure you want to proceed with this context?").
+								Value(&proceed),
+						),
+					).Run(); err != nil {
+						output.Info("Aborted.")
+						return nil
+					}
 					if !proceed {
 						output.Info("Aborted.")
 						return nil
