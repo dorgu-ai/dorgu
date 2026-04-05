@@ -79,6 +79,7 @@ func init() {
 	rootCmd.AddCommand(platformCmd)
 	rootCmd.AddCommand(newHealthCmd())
 	rootCmd.AddCommand(newIncidentsCmd())
+	rootCmd.AddCommand(newRemediationCmd())
 }
 
 // initConfig reads in config file and ENV variables if set.

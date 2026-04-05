@@ -247,6 +247,9 @@ func printHealthSummary(w io.Writer, s *healthSummary) {
 	// Pending remediations
 	if s.PendingRemediations != nil {
 		fmt.Fprintf(w, "Pending Remediations: %d\n", s.PendingRemediations.Count)
+		if s.PendingRemediations.Count > 0 {
+			output.DimPrint("  Run 'dorgu remediation list' to review pending fixes")
+		}
 	}
 	fmt.Fprintln(w)
 }
