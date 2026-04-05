@@ -2,9 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/dorgu-ai/dorgu/internal/ws"
 )
 
 func TestPrintHealthSummary(t *testing.T) {
@@ -211,4 +215,198 @@ func TestNewHealthCmdFlags(t *testing.T) {
 
 	kc := cmd.Flags().Lookup("kubeconfig")
 	assert.NotNil(t, kc)
+
+	watch := cmd.Flags().Lookup("watch")
+	assert.NotNil(t, watch)
+	assert.Equal(t, "w", watch.Shorthand)
+	assert.Equal(t, "false", watch.DefValue)
+
+	operatorURL := cmd.Flags().Lookup("operator-url")
+	assert.NotNil(t, operatorURL)
+	assert.Equal(t, "ws://localhost:9090/ws", operatorURL.DefValue)
+}
+
+func TestPrintIncidentEvent(t *testing.T) {
+	ts := time.Date(2026, 4, 2, 10, 15, 2, 0, time.UTC)
+	event := ws.IncidentEvent{
+		EventType:   "created",
+		Name:        "im-default-api-oom-abc123",
+		Namespace:   "production",
+		Severity:    "critical",
+		Category:    "resource",
+		Signal:      "OOMKilled",
+		Phase:       "Detected",
+		PersonaName: "api-server",
+		PersonaKind: "ApplicationPersona",
+		Summary:     "Pod OOMKilled due to memory pressure",
+	}
+
+	// Capture stdout
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	printIncidentEvent(ts, event)
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+
+	assert.Contains(t, out, "10:15:02")
+	assert.Contains(t, out, "INCIDENT")
+	assert.Contains(t, out, "OOMKilled")
+	assert.Contains(t, out, "production/api-server")
+	assert.Contains(t, out, "Detected")
+}
+
+func TestPrintIncidentEvent_Resolved(t *testing.T) {
+	ts := time.Date(2026, 4, 2, 10, 25, 3, 0, time.UTC)
+	event := ws.IncidentEvent{
+		EventType:   "resolved",
+		Name:        "im-default-api-oom-abc123",
+		Namespace:   "production",
+		Severity:    "critical",
+		Signal:      "OOMKilled",
+		PersonaName: "api-server",
+		PersonaKind: "ApplicationPersona",
+	}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	printIncidentEvent(ts, event)
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+
+	assert.Contains(t, out, "10:25:03")
+	assert.Contains(t, out, "INCIDENT")
+	assert.Contains(t, out, "Resolved")
+}
+
+func TestPrintRemediationEvent(t *testing.T) {
+	ts := time.Date(2026, 4, 2, 10, 15, 5, 0, time.UTC)
+	event := ws.RemediationEvent{
+		EventType:   "created",
+		Name:        "ra-fix-oom-api",
+		Namespace:   "production",
+		Phase:       "Pending",
+		ActionType:  "persona-update",
+		Confidence:  "0.85",
+		PersonaName: "api-server",
+	}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	printRemediationEvent(ts, event)
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+
+	assert.Contains(t, out, "10:15:05")
+	assert.Contains(t, out, "REMEDY")
+	assert.Contains(t, out, "persona-update")
+	assert.Contains(t, out, "production/api-server")
+	assert.Contains(t, out, "Pending")
+}
+
+func TestPrintRemediationEvent_Completed(t *testing.T) {
+	ts := time.Date(2026, 4, 2, 10, 25, 2, 0, time.UTC)
+	event := ws.RemediationEvent{
+		EventType:   "completed",
+		Name:        "ra-fix-oom-api",
+		Namespace:   "production",
+		ActionType:  "persona-update",
+		PersonaName: "api-server",
+	}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	printRemediationEvent(ts, event)
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+
+	assert.Contains(t, out, "Completed")
+}
+
+func TestPrintHealthUpdateEvent(t *testing.T) {
+	ts := time.Date(2026, 4, 2, 10, 16, 0, 0, time.UTC)
+	event := ws.HealthUpdateEvent{
+		EventType:       "health-update",
+		ActiveIncidents: 2,
+		PendingRemedies: 1,
+		NodeCount:       3,
+		HealthyNodes:    2,
+		CPUUtilization:  "65%",
+		MemUtilization:  "78%",
+	}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	printHealthUpdateEvent(ts, event)
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+
+	assert.Contains(t, out, "10:16:00")
+	assert.Contains(t, out, "HEALTH")
+	assert.Contains(t, out, "incidents=2")
+	assert.Contains(t, out, "pending-remedies=1")
+	assert.Contains(t, out, "nodes=2/3")
+	assert.Contains(t, out, "cpu=65%")
+	assert.Contains(t, out, "mem=78%")
+}
+
+func TestPrintHealthUpdateEvent_Healthy(t *testing.T) {
+	ts := time.Date(2026, 4, 2, 10, 16, 0, 0, time.UTC)
+	event := ws.HealthUpdateEvent{
+		EventType:       "health-update",
+		ActiveIncidents: 0,
+		PendingRemedies: 0,
+	}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	printHealthUpdateEvent(ts, event)
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+
+	assert.Contains(t, out, "incidents=0")
+	assert.Contains(t, out, "pending-remedies=0")
+	assert.NotContains(t, out, "nodes=")
+	assert.NotContains(t, out, "cpu=")
 }
