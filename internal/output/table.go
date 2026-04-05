@@ -154,3 +154,21 @@ func PhaseColor(phase string) string {
 func HealthColor(health string) string {
 	return FormatHealth(health)
 }
+
+// RemediationPhaseColor returns a colored remediation phase string.
+func RemediationPhaseColor(phase string) string {
+	switch phase {
+	case "Pending":
+		return Yellow(phase)
+	case "Approved", "Applying", "Verifying":
+		return Blue(phase)
+	case "Completed":
+		return Green(phase)
+	case "RolledBack", "Failed":
+		return Red(phase)
+	case "Rejected", "Expired":
+		return Dim(phase)
+	default:
+		return phase
+	}
+}
