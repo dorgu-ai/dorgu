@@ -81,6 +81,22 @@ func classifyError(err error, output string) ErrorCategory {
 	return ErrorCategoryUnknown
 }
 
+// CheckContextDrift verifies the active kube-context matches the expected one.
+// Returns an error if context has changed (drift detected).
+func CheckContextDrift(ex Executor, expectedContext string) error {
+	if expectedContext == "" {
+		return nil
+	}
+	current, err := GetCurrentKubeContext(ex)
+	if err != nil {
+		return fmt.Errorf("failed to check kube-context: %w", err)
+	}
+	if current != expectedContext {
+		return fmt.Errorf("kube-context drift detected: expected %q but active context is %q — aborting to prevent installing to wrong cluster", expectedContext, current)
+	}
+	return nil
+}
+
 // AddHelmRepo runs: helm repo add <repoName> <repoURL>
 // Idempotent: ignores "already exists" errors.
 func AddHelmRepo(ex Executor, repoName, repoURL string) error {
@@ -201,6 +217,16 @@ func CleanFailedRelease(ex Executor, releaseName, namespace string) error {
 // Returns InstallResult with Duration and HelmOutput.
 func InstallComponent(ex Executor, c ComponentConfig, cfg SetupConfig) InstallResult {
 	start := time.Now()
+
+	// Context drift guard: abort if kube-context changed since setup started
+	if err := CheckContextDrift(ex, cfg.LockedContext); err != nil {
+		return InstallResult{
+			Component: c,
+			Succeeded: false,
+			Error:     err,
+			Duration:  time.Since(start),
+		}
+	}
 
 	// Pre-install: check for existing failed release and clean it up
 	status := CheckReleaseStatus(ex, c.HelmReleaseName, c.Namespace)

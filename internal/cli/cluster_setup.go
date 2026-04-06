@@ -62,7 +62,7 @@ func clusterSetupShouldValidateExplicitClusterPersona(dryRun bool, explicitNameF
 	if explicitNameFromFlag == "" {
 		return false
 	}
-	return !dryRun
+	return true
 }
 
 func init() {
@@ -99,13 +99,15 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 		output.Success(fmt.Sprintf("Using kube-context: %q", clusterSetupFlags.kubeContext))
 	}
 
-	// Always show current context before proceeding
+	// Always show current context before proceeding; lock it for drift detection
+	var lockedContext string
 	{
 		realEx := &setup.OSExecutor{}
 		detected, err := setup.GetCurrentKubeContext(realEx)
 		if err != nil {
-			output.Warn("Could not detect kube-context — proceeding with default")
+			output.Warn("Could not detect kube-context — proceeding without drift guard")
 		} else {
+			lockedContext = detected
 			output.Success(fmt.Sprintf("kube-context: %q", detected))
 			needsConfirm, warning := setup.ValidateKubeContext(detected)
 			if needsConfirm {
@@ -232,7 +234,7 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 	case "gitops":
 		return runGitOpsSetup(ex, personaName, environment, selected)
 	case "helm":
-		return runHelmSetup(ex, personaName, environment, selected)
+		return runHelmSetup(ex, personaName, environment, selected, lockedContext)
 	default:
 		return fmt.Errorf("unsupported driver: %s", driver)
 	}

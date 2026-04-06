@@ -52,6 +52,7 @@ type SetupConfig struct {
 	Timestamp          time.Time
 	VersionOverrides   map[ComponentID]string // e.g. {"cert-manager": "v1.17.0"}; nil = use defaults
 	SkipValidation     bool
+	LockedContext      string // kube-context captured at setup start; empty = no drift check
 }
 
 // AnnotationStack returns a comma-separated list of component IDs for the

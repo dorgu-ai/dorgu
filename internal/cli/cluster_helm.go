@@ -9,13 +9,14 @@ import (
 	"github.com/dorgu-ai/dorgu/internal/setup"
 )
 
-func runHelmSetup(ex setup.Executor, personaName, environment string, selected []setup.ComponentConfig) error {
+func runHelmSetup(ex setup.Executor, personaName, environment string, selected []setup.ComponentConfig, lockedContext string) error {
 	cfg := setup.SetupConfig{
 		ClusterPersonaName: personaName,
 		Environment:        environment,
 		Components:         selected,
 		Timestamp:          time.Now(),
 		SkipValidation:     clusterSetupFlags.skipValidation || clusterSetupFlags.dryRun,
+		LockedContext:      lockedContext,
 	}
 
 	setup.PrintInstallPlan(cfg)
