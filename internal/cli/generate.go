@@ -180,7 +180,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			fmt.Println()
 		}
 	} else {
-		if err := output.WriteFiles(generateFlags.output, files); err != nil {
+		if err := output.WriteFiles(absPath, generateFlags.output, files); err != nil {
 			return fmt.Errorf("failed to write files: %w", err)
 		}
 		output.Success("Generated manifests successfully!")

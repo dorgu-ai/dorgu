@@ -9,11 +9,13 @@ import (
 	"github.com/dorgu-ai/dorgu/internal/generator"
 )
 
-// WriteFiles writes generated files to disk
-func WriteFiles(baseDir string, files []generator.GeneratedFile) error {
-	absBase, err := filepath.Abs(baseDir)
+// WriteFiles writes generated files to disk.
+// projectRoot is the top-level project directory; files may write anywhere under it.
+// baseDir is the output subdirectory (e.g. k8s/) where most files land.
+func WriteFiles(projectRoot, baseDir string, files []generator.GeneratedFile) error {
+	absProjectRoot, err := filepath.Abs(projectRoot)
 	if err != nil {
-		return fmt.Errorf("failed to resolve base directory: %w", err)
+		return fmt.Errorf("failed to resolve project root: %w", err)
 	}
 
 	for _, file := range files {
@@ -23,8 +25,8 @@ func WriteFiles(baseDir string, files []generator.GeneratedFile) error {
 		if err != nil {
 			return fmt.Errorf("failed to resolve path %s: %w", fullPath, err)
 		}
-		if !strings.HasPrefix(absPath, absBase+string(os.PathSeparator)) && absPath != absBase {
-			return fmt.Errorf("path traversal detected: %s escapes base directory", file.Path)
+		if !strings.HasPrefix(absPath, absProjectRoot+string(os.PathSeparator)) && absPath != absProjectRoot {
+			return fmt.Errorf("path traversal detected: %s escapes project root", file.Path)
 		}
 
 		dir := filepath.Dir(fullPath)
