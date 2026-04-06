@@ -32,7 +32,7 @@ func TestWriteFiles_AllOutputs_SucceedsOutsideOutputDir(t *testing.T) {
 	projectRoot := t.TempDir()
 	k8sDir := filepath.Join(projectRoot, "k8s")
 
-	err := WriteFiles(k8sDir, mockGeneratedAll())
+	err := WriteFiles(projectRoot, k8sDir, mockGeneratedAll())
 	require.NoError(t, err, "writing CI/persona outside k8s output dir should succeed")
 
 	require.FileExists(t, filepath.Join(k8sDir, "deployment.yaml"))
@@ -55,7 +55,7 @@ func TestWriteFiles_SkipPersonaOnly_CISucceeds(t *testing.T) {
 		{Path: "../.github/workflows/deploy.yaml", Content: "name: ci\n"},
 	}
 
-	err := WriteFiles(k8sDir, files)
+	err := WriteFiles(projectRoot, k8sDir, files)
 	require.NoError(t, err)
 
 	b, err := os.ReadFile(filepath.Join(projectRoot, ".github", "workflows", "deploy.yaml"))
@@ -75,7 +75,7 @@ func TestWriteFiles_SkipCIOnly_PersonaSucceeds(t *testing.T) {
 		{Path: "persona.yaml", Content: "kind: ApplicationPersona\n"},
 	}
 
-	err := WriteFiles(k8sDir, files)
+	err := WriteFiles(projectRoot, k8sDir, files)
 	require.NoError(t, err)
 
 	require.FileExists(t, filepath.Join(projectRoot, "PERSONA.md"))
@@ -95,9 +95,25 @@ func TestWriteFiles_SkipCISkipPersona_OnlyUnderOutputDir(t *testing.T) {
 		{Path: "argocd/application.yaml", Content: "kind: Application\n"},
 	}
 
-	err := WriteFiles(k8sDir, files)
+	err := WriteFiles(projectRoot, k8sDir, files)
 	require.NoError(t, err)
 
 	require.FileExists(t, filepath.Join(k8sDir, "deployment.yaml"))
 	require.FileExists(t, filepath.Join(k8sDir, "argocd", "application.yaml"))
+}
+
+// TestWriteFiles_RejectsEscapeAboveProjectRoot ensures paths that escape projectRoot are blocked.
+func TestWriteFiles_RejectsEscapeAboveProjectRoot(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	k8sDir := filepath.Join(projectRoot, "k8s")
+
+	files := []generator.GeneratedFile{
+		{Path: "../../etc/passwd", Content: "malicious"},
+	}
+
+	err := WriteFiles(projectRoot, k8sDir, files)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "path traversal detected")
 }
