@@ -235,6 +235,9 @@ spec:
       enforceNonRoot: true
       disallowPrivileged: true
       podSecurityStandard: baseline
+    selfHealing:
+      mode: observe
+      trustLevel: 2
   conventions:
     requiredLabels:
       - app.kubernetes.io/name

@@ -896,3 +896,73 @@ func TestStreamingExecutor_DimMode(t *testing.T) {
 		t.Error("expected ANSI dim code in streamed output")
 	}
 }
+
+func TestCheckContextDrift_NoChange_Succeeds(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "kind-dorgu-dev\n", err: nil},
+		},
+	}
+	err := CheckContextDrift(ex, "kind-dorgu-dev")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCheckContextDrift_Changed_ReturnsError(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "production-cluster\n", err: nil},
+		},
+	}
+	err := CheckContextDrift(ex, "kind-dorgu-dev")
+	if err == nil {
+		t.Fatal("expected error for context drift")
+	}
+	if !strings.Contains(err.Error(), "drift detected") {
+		t.Errorf("error should mention drift, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "kind-dorgu-dev") || !strings.Contains(err.Error(), "production-cluster") {
+		t.Errorf("error should mention both contexts, got: %v", err)
+	}
+}
+
+func TestCheckContextDrift_EmptyExpected_Skips(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{}, // no calls expected
+	}
+	err := CheckContextDrift(ex, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestInstallComponent_DriftDetected_Aborts(t *testing.T) {
+	ex := &sequentialExecutor{
+		calls: []seqCall{
+			{output: "wrong-cluster\n", err: nil}, // drift check returns wrong context
+		},
+	}
+	comp := ComponentConfig{
+		ID:              ComponentCertManager,
+		HelmReleaseName: "cert-manager",
+		HelmChart:       "jetstack/cert-manager",
+		Namespace:       "cert-manager",
+		Version:         "v1.16.3",
+	}
+	cfg := SetupConfig{
+		Timestamp:     time.Now(),
+		LockedContext: "kind-dorgu-dev",
+	}
+
+	result := InstallComponent(ex, comp, cfg)
+	if result.Succeeded {
+		t.Fatal("expected failure due to context drift")
+	}
+	if !strings.Contains(result.Error.Error(), "drift detected") {
+		t.Errorf("error should mention drift, got: %v", result.Error)
+	}
+	if ex.callIdx != 1 {
+		t.Errorf("expected only 1 call (drift check), got %d", ex.callIdx)
+	}
+}
