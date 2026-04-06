@@ -54,6 +54,17 @@ Examples:
 	RunE: runClusterSetup,
 }
 
+// clusterSetupShouldValidateExplicitClusterPersona reports whether cluster setup should run
+// ValidateClusterPersonaExists for a user-provided --cluster-persona name before proceeding.
+// Regression coverage: BUG-4-1 — this must be true in dry-run when the flag is set; current
+// behavior skips validation in dry-run (returns false when dryRun is true).
+func clusterSetupShouldValidateExplicitClusterPersona(dryRun bool, explicitNameFromFlag string) bool {
+	if explicitNameFromFlag == "" {
+		return false
+	}
+	return !dryRun
+}
+
 func init() {
 	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.clusterPersonaName, "cluster-persona", "", "ClusterPersona name (auto-detected if not set)")
 	clusterSetupCmd.Flags().StringVar(&clusterSetupFlags.environment, "environment", "", "environment override: development, staging, production")
@@ -168,7 +179,7 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 			output.Success(fmt.Sprintf("ClusterPersona detected: %q", personaName))
 		}
 	} else {
-		if !clusterSetupFlags.dryRun {
+		if clusterSetupShouldValidateExplicitClusterPersona(clusterSetupFlags.dryRun, clusterSetupFlags.clusterPersonaName) {
 			checkEx := &setup.OSExecutor{}
 			if err := setup.ValidateClusterPersonaExists(checkEx, personaName); err != nil {
 				output.ErrorWithHint(
