@@ -91,8 +91,11 @@ func TestScaffoldGitOpsRepo_ArgoAppContent(t *testing.T) {
 	if !strings.Contains(content, "kind: Application") {
 		t.Error("ArgoCD Application YAML missing 'kind: Application'")
 	}
-	if !strings.Contains(content, "chart: jetstack/cert-manager") {
+	if !strings.Contains(content, "chart: cert-manager") {
 		t.Error("ArgoCD Application YAML missing chart reference")
+	}
+	if strings.Contains(content, "chart: jetstack/cert-manager") {
+		t.Error("chart field should not include repo prefix")
 	}
 	if !strings.Contains(content, "namespace: cert-manager") {
 		t.Error("ArgoCD Application YAML missing namespace")
@@ -123,6 +126,106 @@ func TestScaffoldGitOpsRepo_RepoURLPopulated(t *testing.T) {
 	}
 	if strings.Contains(string(rootApp), "<YOUR_GIT_REPO_URL>") {
 		t.Error("root-app.yaml should not contain placeholder")
+	}
+}
+
+func TestScaffoldGitOpsRepo_ChartNamesWithoutRepoPrefix(t *testing.T) {
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "gitops-output")
+
+	components := blessedComponents()
+	cfg := GitOpsConfig{
+		OutputDir:          outDir,
+		ClusterPersonaName: "test-cluster",
+		Environment:        "development",
+		Components:         components,
+		DryRun:             false,
+		RepoURL:            "https://github.com/org/test-repo.git",
+	}
+	err := ScaffoldGitOpsRepo(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, c := range components {
+		appPath := filepath.Join(outDir, "clusters/test-cluster/apps", string(c.ID)+".yaml")
+		data, err := os.ReadFile(appPath)
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", appPath, err)
+		}
+		content := string(data)
+
+		// Chart name should NOT contain "/"
+		for _, line := range strings.Split(content, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "chart:") {
+				chartValue := strings.TrimSpace(strings.TrimPrefix(trimmed, "chart:"))
+				if strings.Contains(chartValue, "/") {
+					t.Errorf("component %s: chart field %q should not contain repo prefix", c.ID, chartValue)
+				}
+			}
+		}
+	}
+}
+
+func TestScaffoldGitOpsRepo_DevEnvironmentOverrides(t *testing.T) {
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "gitops-output")
+
+	components := blessedComponents()
+	cfg := GitOpsConfig{
+		OutputDir:          outDir,
+		ClusterPersonaName: "test-cluster",
+		Environment:        "development",
+		Components:         components,
+		DryRun:             false,
+		RepoURL:            "https://github.com/org/test-repo.git",
+	}
+	err := ScaffoldGitOpsRepo(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// OpenObserve should have dev overrides
+	ooPath := filepath.Join(outDir, "clusters/test-cluster/values/openobserve.yaml")
+	data, err := os.ReadFile(ooPath)
+	if err != nil {
+		t.Fatalf("failed to read openobserve values: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "config.ZO_LOCAL_MODE") {
+		t.Error("openobserve values should contain ZO_LOCAL_MODE for development environment")
+	}
+}
+
+func TestScaffoldGitOpsRepo_ProductionNoDevOverrides(t *testing.T) {
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "gitops-output")
+
+	components := blessedComponents()
+	cfg := GitOpsConfig{
+		OutputDir:          outDir,
+		ClusterPersonaName: "test-cluster",
+		Environment:        "production",
+		Components:         components,
+		DryRun:             false,
+		RepoURL:            "https://github.com/org/test-repo.git",
+	}
+	err := ScaffoldGitOpsRepo(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	ooPath := filepath.Join(outDir, "clusters/test-cluster/values/openobserve.yaml")
+	data, err := os.ReadFile(ooPath)
+	if err != nil {
+		t.Fatalf("failed to read openobserve values: %v", err)
+	}
+	content := string(data)
+
+	if strings.Contains(content, "ZO_LOCAL_MODE") {
+		t.Error("openobserve values should NOT contain ZO_LOCAL_MODE for production environment")
 	}
 }
 

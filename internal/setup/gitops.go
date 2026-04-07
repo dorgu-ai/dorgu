@@ -77,7 +77,7 @@ func ScaffoldGitOpsRepo(cfg GitOpsConfig) error {
 	// Per-component ArgoCD Application + values override files
 	for _, c := range cfg.Components {
 		valuesPath := filepath.Join(cfg.OutputDir, "clusters", cfg.ClusterPersonaName, "values", string(c.ID)+".yaml")
-		if err := writeComponentValues(valuesPath, c); err != nil {
+		if err := writeComponentValues(valuesPath, c, cfg.Environment); err != nil {
 			return err
 		}
 		output.Success(fmt.Sprintf("clusters/%s/values/%s.yaml", cfg.ClusterPersonaName, c.ID))
@@ -116,8 +116,22 @@ func printGitOpsStructure(cfg GitOpsConfig) {
 	}
 }
 
+// chartName strips the repo prefix from a Helm chart reference.
+// e.g. "jetstack/cert-manager" → "cert-manager"
+func chartName(helmChart string) string {
+	parts := strings.SplitN(helmChart, "/", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return helmChart
+}
+
+var gitopsFuncMap = template.FuncMap{
+	"chartName": chartName,
+}
+
 func writeTemplateFile(path, tmplStr string, data interface{}) error {
-	tmpl, err := template.New(filepath.Base(path)).Parse(tmplStr)
+	tmpl, err := template.New(filepath.Base(path)).Funcs(gitopsFuncMap).Parse(tmplStr)
 	if err != nil {
 		return fmt.Errorf("template parse error for %s: %w", path, err)
 	}
@@ -132,7 +146,7 @@ func writeTemplateFile(path, tmplStr string, data interface{}) error {
 	return nil
 }
 
-func writeComponentValues(path string, c ComponentConfig) error {
+func writeComponentValues(path string, c ComponentConfig, environment string) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("failed to create %s: %w", path, err)
@@ -148,6 +162,18 @@ func writeComponentValues(path string, c ComponentConfig) error {
 		parts := strings.SplitN(sv, "=", 2)
 		if len(parts) == 2 {
 			fmt.Fprintf(f, "%s: %s\n", parts[0], parts[1])
+		}
+	}
+
+	if environment != "" && c.EnvironmentOverrides != nil {
+		if overrides, ok := c.EnvironmentOverrides[environment]; ok {
+			fmt.Fprintf(f, "\n# Environment overrides (%s)\n", environment)
+			for _, sv := range overrides {
+				parts := strings.SplitN(sv, "=", 2)
+				if len(parts) == 2 {
+					fmt.Fprintf(f, "%s: %s\n", parts[0], parts[1])
+				}
+			}
 		}
 	}
 	return nil
@@ -211,7 +237,7 @@ spec:
   project: default
   source:
     repoURL: {{.Component.HelmRepo}}
-    chart: {{.Component.HelmChart}}
+    chart: {{chartName .Component.HelmChart}}
     targetRevision: {{.Component.Version}}
     helm:
       releaseName: {{.Component.HelmReleaseName}}

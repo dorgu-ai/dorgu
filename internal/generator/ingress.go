@@ -87,7 +87,7 @@ func GenerateIngress(analysis *types.AppAnalysis, namespace string, cfg *config.
 	}
 
 	// Determine host from app config or generate from org config
-	host := analysis.Name + cfg.Ingress.DomainSuffix
+	host := ToDNSSubdomain(analysis.Name) + cfg.Ingress.DomainSuffix
 	if analysis.AppConfig != nil && analysis.AppConfig.Ingress != nil && analysis.AppConfig.Ingress.Host != "" {
 		host = analysis.AppConfig.Ingress.Host
 	}
