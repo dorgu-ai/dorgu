@@ -64,8 +64,12 @@ Walk through each phase from `QA-1-generic-cli-operator.md` in order:
 8. **Phase 8: Deployment Validation** — deploy app, reconciliation, degrade/recover
 9. **Phase 9: ClusterPersona** — init, status, discovery
 10. **Phase 10: Health & Incidents** — health, incidents, remediation (basic/empty)
-11. **Phase 11: Real-time Commands** — watch, sync, health --watch
+11. **Phase 11: Real-time Commands** — watch, sync, health --watch (requires `--set websocket.enabled=true` on operator install)
 12. **Phase 12: Cleanup** — delete resources, uninstall
+
+### Special notes
+
+- **Phase 11 (Real-time Commands):** WebSocket must be enabled on the operator for watch/sync/health --watch. Ensure the operator was installed with `--set websocket.enabled=true`. If not, upgrade: `helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator --namespace dorgu-system --set websocket.enabled=true`.
 
 For each test case:
 - Show the command(s) from the checklist

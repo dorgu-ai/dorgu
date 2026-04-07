@@ -181,6 +181,8 @@ helm install dorgu-operator \
 
 > **Note:** Helm chart pulls succeed inside vCluster because it inherits the host cluster's network and image pull configuration, bypassing TLS issues that affect Kind.
 
+> **WebSocket:** If testing Phase 15.9+ (WebSocket connectivity, real-time updates) or any `dorgu watch`/`dorgu sync` commands, add `--set websocket.enabled=true` to the operator install command above.
+
 ### 2.2 Verify CRDs exist
 
 ```bash
