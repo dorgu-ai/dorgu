@@ -927,6 +927,14 @@ func TestCheckContextDrift_Changed_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestCheckContextDrift_DryRunSkipped(t *testing.T) {
+	ex := &DryRunExecutor{}
+	err := CheckContextDrift(ex, "some-locked-context")
+	if err != nil {
+		t.Errorf("expected nil error for dry-run, got: %v", err)
+	}
+}
+
 func TestCheckContextDrift_EmptyExpected_Skips(t *testing.T) {
 	ex := &sequentialExecutor{
 		calls: []seqCall{}, // no calls expected

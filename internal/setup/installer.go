@@ -87,6 +87,10 @@ func CheckContextDrift(ex Executor, expectedContext string) error {
 	if expectedContext == "" {
 		return nil
 	}
+	// Skip drift check for dry-run — the DryRunExecutor doesn't run real commands
+	if _, isDryRun := ex.(*DryRunExecutor); isDryRun {
+		return nil
+	}
 	current, err := GetCurrentKubeContext(ex)
 	if err != nil {
 		return fmt.Errorf("failed to check kube-context: %w", err)
