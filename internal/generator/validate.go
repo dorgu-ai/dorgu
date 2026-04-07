@@ -247,7 +247,7 @@ func validateHPAMinMax(result *ValidationResult, analysis *types.AppAnalysis) {
 }
 
 func validateIngressHost(analysis *types.AppAnalysis, opts Options, result *ValidationResult) {
-	host := analysis.Name + opts.Config.Ingress.DomainSuffix
+	host := ToDNSSubdomain(analysis.Name) + opts.Config.Ingress.DomainSuffix
 	if analysis.AppConfig != nil && analysis.AppConfig.Ingress != nil && analysis.AppConfig.Ingress.Host != "" {
 		host = analysis.AppConfig.Ingress.Host
 	}

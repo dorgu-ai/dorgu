@@ -239,7 +239,7 @@ func writeNetworking(sb *strings.Builder, analysis *types.AppAnalysis, cfg *conf
 		if ing.Host != "" {
 			sb.WriteString(fmt.Sprintf("      host: %s\n", ing.Host))
 		} else if analysis.Name != "" {
-			sb.WriteString(fmt.Sprintf("      host: %s%s\n", analysis.Name, cfg.Ingress.DomainSuffix))
+			sb.WriteString(fmt.Sprintf("      host: %s%s\n", ToDNSSubdomain(analysis.Name), cfg.Ingress.DomainSuffix))
 		}
 		if len(ing.Paths) > 0 {
 			sb.WriteString("      paths:\n")
