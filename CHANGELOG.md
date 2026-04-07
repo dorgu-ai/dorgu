@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-04-07
+
+### Fixed
+
+- Fix generated ingress host using underscores instead of hyphens for app names with underscores. Host is now DNS-sanitized via `ToDNSSubdomain()` to produce RFC1123-compliant values.
+- Fix GitOps ArgoCD Application manifests using chart names with repo prefix (e.g., `argo/argo-cd` instead of `argo-cd`), causing all component apps to fail chart fetch.
+- Fix GitOps scaffold missing environment-specific overrides for OpenObserve (ZO_LOCAL_MODE) in development environment.
+- Fix false-positive kube-context drift detection during `dorgu cluster setup --dry-run`. Drift check is now skipped for dry-run executor.
+- Fix `dorgu cluster status --json` returning tabular output instead of JSON.
+
+### Added
+
+- `dorgu persona list` command — list ApplicationPersonas across namespaces with table and `--json` output modes.
+- Stream Helm output with dim styling during ArgoCD bootstrap install in GitOps driver (no `--verbose` flag required).
+
 ## [0.7.1] - 2026-04-07
 
 ### Fixed
