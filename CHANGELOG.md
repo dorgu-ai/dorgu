@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-04-07
+
+### Fixed
+
+- Fix `dorgu generate` failing with `path traversal detected` when CI or persona outputs write files outside the output subdirectory. The path traversal guard now anchors to the project root instead of the output subdir.
+- Fix `dorgu cluster setup --dry-run` not validating explicit `--cluster-persona` flag. Preflight now fails fast with a clear error when the specified ClusterPersona does not exist, even in dry-run mode.
+- Fix `dorgu cluster init` not setting `selfHealing` defaults on ClusterPersona. Init now populates `selfHealing.mode: observe` and `selfHealing.trustLevel: 2`.
+
+### Added
+
+- Kube-context drift guard for `dorgu cluster setup`. The active kube-context is captured at start and re-checked before each Helm operation. If the context changes mid-run, setup aborts with a clear error to prevent installing to the wrong cluster.
+
 ## [0.7.0] - 2026-04-05
 
 ### Added
