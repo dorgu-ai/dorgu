@@ -85,6 +85,7 @@ For each test case:
 ### Special notes for this test suite
 
 - **Phase 6 (Full Installation):** OpenObserve can take up to 15 minutes on a fresh cluster. Warn the user and suggest monitoring with `kubectl get pods -n openobserve -w`.
+- **Phase 11 (Health Detection with --watch):** WebSocket must be enabled on the operator for `--watch` mode. Ensure the operator was installed with `--set websocket.enabled=true`. If not, upgrade: `helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator --namespace dorgu-system --set websocket.enabled=true`.
 - **Phase 12 (Incident Lifecycle):** The OOM test requires deploying a stress container with tight memory limits. Help the user set this up per the checklist instructions.
 - **Phase 13 (Remediation Lifecycle):** This is the core Phase 2b test. Pay close attention to the state machine progression (Pending → Approved → Applying → Verifying → Completed/RolledBack).
 - **Phase 16 (Cleanup):** Ask the user if they want to proceed to QA-4 (Addon Reconciliation). If yes, skip cleanup steps 16.2–16.4.

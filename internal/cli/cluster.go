@@ -128,7 +128,16 @@ func listClusterPersonas() error {
 	}
 
 	if len(list.Items) == 0 {
+		if output.IsJSON() {
+			fmt.Println(string(rawOutput))
+			return nil
+		}
 		output.Info("No ClusterPersona resources found. Create one with: dorgu cluster init --name <name>")
+		return nil
+	}
+
+	if output.IsJSON() {
+		fmt.Println(string(rawOutput))
 		return nil
 	}
 
@@ -162,7 +171,13 @@ func listClusterPersonas() error {
 func getClusterPersonaStatus(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	kubectlCmd := exec.CommandContext(ctx, "kubectl", "get", "clusterpersona", name, "-o", "yaml")
+
+	outputFormat := "yaml"
+	if output.IsJSON() {
+		outputFormat = "json"
+	}
+
+	kubectlCmd := exec.CommandContext(ctx, "kubectl", "get", "clusterpersona", name, "-o", outputFormat)
 	rawOutput, err := kubectlCmd.CombinedOutput()
 	if err != nil {
 		outputStr := strings.TrimSpace(string(rawOutput))
@@ -176,6 +191,11 @@ func getClusterPersonaStatus(name string) error {
 			return fmt.Errorf("ClusterPersona CRD is not installed on this cluster. Install the Dorgu Operator first")
 		}
 		return fmt.Errorf("failed to get cluster persona: %s", outputStr)
+	}
+
+	if output.IsJSON() {
+		fmt.Println(string(rawOutput))
+		return nil
 	}
 
 	displayClusterPersonaStatus(name, string(rawOutput))

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/dorgu-ai/dorgu/internal/output"
 	"github.com/dorgu-ai/dorgu/internal/setup"
@@ -36,7 +37,11 @@ func runGitOpsSetup(ex setup.Executor, personaName, environment string, selected
 			switch action {
 			case setup.BootstrapActionInstall:
 				output.Info("Installing ArgoCD via Helm...")
-				if err := setup.InstallArgoCDBootstrap(ex); err != nil {
+				streamEx := &setup.StreamingExecutor{
+					StreamTo: os.Stderr,
+					Dim:      true,
+				}
+				if err := setup.InstallArgoCDBootstrap(streamEx); err != nil {
 					return fmt.Errorf("ArgoCD bootstrap failed: %w", err)
 				}
 				output.Success("ArgoCD installed successfully")

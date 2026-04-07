@@ -118,6 +118,7 @@ func init() {
 	personaCmd.AddCommand(personaGenerateCmd)
 	personaCmd.AddCommand(personaApplyCmd)
 	personaCmd.AddCommand(personaStatusCmd)
+	personaCmd.AddCommand(personaListCmd)
 }
 
 func runPersonaGenerate(cmd *cobra.Command, args []string) error {
