@@ -127,6 +127,12 @@ func runHelmSetup(ex setup.Executor, personaName, environment string, selected [
 
 	setup.PrintFinalSummary(results, vrs, cfg)
 
+	// Print Quick Access summary for components with web UIs.
+	// Skipped in dry-run since the cluster reads would fail or be meaningless.
+	if _, isDryRun := ex.(*setup.DryRunExecutor); !isDryRun {
+		printQuickAccessSummary(personaName)
+	}
+
 	if drex, ok := ex.(*setup.DryRunExecutor); ok && len(drex.Log) > 0 {
 		fmt.Println()
 		output.Header("Dry-run command log")
@@ -137,4 +143,48 @@ func runHelmSetup(ex setup.Executor, personaName, environment string, selected [
 	}
 
 	return nil
+}
+
+// printQuickAccessSummary prints port-forward and credential commands for any
+// installed component that exposes a web UI. Always uses a real OS executor
+// (the install ex may be a StreamingExecutor that we don't want for kubectl
+// reads). Failures are non-fatal — setup itself already succeeded.
+func printQuickAccessSummary(personaName string) {
+	infoEx := &setup.OSExecutor{}
+	infos, err := setup.GetInstalledComponentsInfo(infoEx, personaName)
+	if err != nil || len(infos) == 0 {
+		return
+	}
+
+	hasWebUI := false
+	for _, info := range infos {
+		if info.PortForwardCmd != "" {
+			hasWebUI = true
+			break
+		}
+	}
+	if !hasWebUI {
+		return
+	}
+
+	fmt.Println()
+	output.Header("Quick Access")
+	for _, info := range infos {
+		if info.PortForwardCmd == "" {
+			continue
+		}
+		fmt.Printf("  %s %s\n", output.Green("●"), info.DisplayName)
+		fmt.Printf("    %s %s\n", output.Dim("Port-forward:"), info.PortForwardCmd)
+		if info.WebUIURL != "" {
+			fmt.Printf("    %s %s\n", output.Dim("Access:      "), info.WebUIURL)
+		}
+		if info.Username != "" {
+			fmt.Printf("    %s %s\n", output.Dim("Username:    "), info.Username)
+		}
+		if info.CredentialCmd != "" {
+			fmt.Printf("    %s %s\n", output.Dim("Password:    "), info.CredentialCmd)
+		}
+		fmt.Println()
+	}
+	output.Info("Run 'dorgu cluster info' anytime to see full access details.")
 }

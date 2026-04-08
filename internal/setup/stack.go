@@ -17,6 +17,34 @@ const (
 	ComponentExternalSecrets ComponentID = "external-secrets"
 )
 
+// ComponentAccess describes how to access a component after installation.
+// A nil ComponentAccess means the component has no user-facing UI.
+type ComponentAccess struct {
+	// WebUIPort is the container port serving the web interface (0 = no web UI).
+	WebUIPort int
+	// ServiceName is the Kubernetes service name to port-forward to
+	// (defaults to HelmReleaseName if empty).
+	ServiceName string
+	// DefaultCredentials describes how to retrieve initial login credentials.
+	DefaultCredentials *CredentialInfo
+}
+
+// CredentialInfo describes how to retrieve credentials for a component.
+type CredentialInfo struct {
+	// SecretName is the Kubernetes secret containing the credentials.
+	SecretName string
+	// UsernameKey is the data key for username (empty = fixed username in UsernameValue).
+	UsernameKey string
+	// UsernameValue is a fixed username (used when username is not in a secret).
+	UsernameValue string
+	// PasswordKey is the data key for the password.
+	PasswordKey string
+	// Namespace overrides the component namespace for the secret (empty = use component namespace).
+	Namespace string
+	// Notes is additional guidance (e.g., "Change password after first login").
+	Notes string
+}
+
 // ComponentConfig describes a single Helm-installable stack component.
 type ComponentConfig struct {
 	ID                 ComponentID
@@ -42,6 +70,11 @@ type ComponentConfig struct {
 	// EnvironmentOverrides provides additional --set values per environment.
 	// Key is environment name (e.g. "development"), value is a slice of "key=value" strings.
 	EnvironmentOverrides map[string][]string
+
+	// Access describes how a user reaches the component after install
+	// (web UI port, port-forward target service, credential lookup).
+	// nil = no user-facing access (e.g., cert-manager, CNPG).
+	Access *ComponentAccess
 }
 
 // SetupConfig holds the resolved configuration for a single setup run.
@@ -209,6 +242,16 @@ func blessedComponents() []ComponentConfig {
 					"config.ZO_LOCAL_MODE_STORAGE=disk",
 				},
 			},
+			Access: &ComponentAccess{
+				WebUIPort:   5080,
+				ServiceName: "openobserve",
+				DefaultCredentials: &CredentialInfo{
+					SecretName:    "openobserve",
+					UsernameValue: "root@example.com",
+					PasswordKey:   "ZO_ROOT_USER_PASSWORD",
+					Notes:         "Default email is root@example.com",
+				},
+			},
 		},
 		{
 			ID:          ComponentArgoCd,
@@ -234,6 +277,16 @@ to Git is all it takes to deploy.`,
 			DefaultEnabled:    true,
 			DependsOn:         []ComponentID{},
 			OperatorAddonName: "argocd",
+			Access: &ComponentAccess{
+				WebUIPort:   443,
+				ServiceName: "argocd-server",
+				DefaultCredentials: &CredentialInfo{
+					SecretName:    "argocd-initial-admin-secret",
+					UsernameValue: "admin",
+					PasswordKey:   "password",
+					Notes:         "Change password after first login: argocd account update-password",
+				},
+			},
 		},
 		{
 			ID:                ComponentExternalSecrets,
