@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-04-08
+
+### Added
+
+- `dorgu cluster info` command — show access URLs, port-forward commands, and credential retrieval instructions for all installed blessed stack components. Supports `--json` output.
+- Post-install "Quick Access" summary printed after `dorgu cluster setup` completes, showing port-forward and credential commands for components with web UIs.
+- Next steps section now mentions `dorgu cluster info` for easy discoverability.
+
 ## [0.7.2] - 2026-04-07
 
 ### Fixed
