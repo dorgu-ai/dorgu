@@ -263,6 +263,7 @@ func printFinalSummaryTo(w io.Writer, results []InstallResult, vrs []ValidationR
 	if cfg.ClusterPersonaName != "" {
 		fmt.Fprintf(w, "  %s View ClusterPersona:    kubectl get clusterpersona %s -o yaml\n", output.Dim("→"), cfg.ClusterPersonaName)
 	}
+	fmt.Fprintf(w, "  %s Access component UIs:   dorgu cluster info\n", output.Dim("→"))
 	fmt.Fprintf(w, "  %s Monitor with ArgoCD:    dorgu sync\n", output.Dim("→"))
 	fmt.Fprintln(w)
 }

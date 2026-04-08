@@ -83,6 +83,7 @@ func init() {
 	clusterCmd.AddCommand(clusterStatusCmd)
 	clusterCmd.AddCommand(clusterInitCmd)
 	clusterCmd.AddCommand(clusterSetupCmd)
+	clusterCmd.AddCommand(clusterInfoCmd)
 }
 
 func runClusterStatus(cmd *cobra.Command, args []string) error {
