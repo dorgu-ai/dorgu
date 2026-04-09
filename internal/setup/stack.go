@@ -206,7 +206,7 @@ func blessedComponents() []ComponentConfig {
 			HelmChart:         "cnpg/cloudnative-pg",
 			HelmReleaseName:   "cnpg",
 			Namespace:         "cnpg-system",
-			Version:           "0.23.0",
+			Version:           "0.24.0", // 0.23.0 had CRD annotation size bug (poolers.postgresql.cnpg.io > 256KiB)
 			HelmSetValues:     []string{},
 			CreateNamespace:   true,
 			Required:          true,
