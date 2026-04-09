@@ -229,6 +229,62 @@ func TestScaffoldGitOpsRepo_ProductionNoDevOverrides(t *testing.T) {
 	}
 }
 
+func TestGitOpsREADME_ExcludesValuesFromDryRun(t *testing.T) {
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "gitops-output")
+	cfg := GitOpsConfig{
+		OutputDir:          outDir,
+		ClusterPersonaName: "test-cluster",
+		Environment:        "development",
+		Components:         blessedComponents()[:1],
+		DryRun:             false,
+		RepoURL:            "https://github.com/org/test-repo.git",
+	}
+	if err := ScaffoldGitOpsRepo(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(outDir, "README.md"))
+	if err != nil {
+		t.Fatalf("failed to read README.md: %v", err)
+	}
+	content := string(data)
+
+	// Validate section must reference apps/ for dry-run
+	if !strings.Contains(content, "apps/") {
+		t.Error("README should reference apps/ in validation instructions")
+	}
+	// README must warn against applying values/
+	if !strings.Contains(content, "Do NOT") || !strings.Contains(content, "values/") {
+		t.Error("README should warn against applying values/ directly")
+	}
+}
+
+func TestGitOpsApplication_HasServerSideApply(t *testing.T) {
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "gitops-output")
+	cfg := GitOpsConfig{
+		OutputDir:          outDir,
+		ClusterPersonaName: "test-cluster",
+		Environment:        "development",
+		Components:         blessedComponents()[:1],
+		DryRun:             false,
+		RepoURL:            "https://github.com/org/test-repo.git",
+	}
+	if err := ScaffoldGitOpsRepo(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	appPath := filepath.Join(outDir, "clusters/test-cluster/apps/cert-manager.yaml")
+	data, err := os.ReadFile(appPath)
+	if err != nil {
+		t.Fatalf("failed to read app: %v", err)
+	}
+	if !strings.Contains(string(data), "ServerSideApply=true") {
+		t.Error("ArgoCD Application should include ServerSideApply=true sync option")
+	}
+}
+
 func TestScaffoldGitOpsRepo_MissingRepoURL(t *testing.T) {
 	dir := t.TempDir()
 	cfg := GitOpsConfig{

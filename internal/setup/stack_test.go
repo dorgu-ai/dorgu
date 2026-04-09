@@ -271,6 +271,18 @@ func TestOpenObserveTimeoutIsSet(t *testing.T) {
 	t.Error("OpenObserve component not found in blessed stack")
 }
 
+func TestCNPGChartVersion_NotBroken(t *testing.T) {
+	for _, c := range DefaultStack().Components() {
+		if c.ID == ComponentCNPG {
+			if c.Version == "0.23.0" {
+				t.Error("CNPG chart 0.23.0 has CRD annotation size bug (poolers.postgresql.cnpg.io > 256KiB) — bump version")
+			}
+			return
+		}
+	}
+	t.Error("cnpg not found in DefaultStack().Components()")
+}
+
 func TestAllComplexChartsHaveAdequateTimeout(t *testing.T) {
 	components := blessedComponents()
 	for _, c := range components {

@@ -81,6 +81,41 @@ func (d *dimLineWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+// TailExecutor captures output and shows only the last N lines plus a truncation notice.
+// Used for verbose-by-default commands like ArgoCD bootstrap where full output floods the wizard.
+type TailExecutor struct {
+	StreamTo  io.Writer // where to stream (e.g., os.Stderr)
+	Dim       bool      // if true, applies dim ANSI codes per line
+	TailLines int       // number of tail lines to show (0 = show all)
+}
+
+func (e *TailExecutor) Run(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	out, err := cmd.CombinedOutput()
+	fullOutput := string(out)
+
+	if e.TailLines > 0 && e.StreamTo != nil {
+		lines := strings.Split(strings.TrimRight(fullOutput, "\n"), "\n")
+		start := 0
+		if len(lines) > e.TailLines {
+			start = len(lines) - e.TailLines
+			fmt.Fprintf(e.StreamTo, "  ... (%d lines truncated, use --verbose for full output)\n", start)
+		}
+		for _, line := range lines[start:] {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if e.Dim {
+				fmt.Fprintf(e.StreamTo, "%s    %s%s\n", ansiDim, line, ansiReset)
+			} else {
+				fmt.Fprintf(e.StreamTo, "  %s\n", line)
+			}
+		}
+	}
+
+	return fullOutput, err
+}
+
 // DryRunExecutor logs commands without executing them — used with --dry-run flag.
 type DryRunExecutor struct {
 	Log []string

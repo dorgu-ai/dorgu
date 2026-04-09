@@ -187,13 +187,23 @@ This repository was scaffolded by ` + "`dorgu cluster setup --driver gitops`" + 
 
 - ` + "`argocd/root-app.yaml`" + ` — ArgoCD App-of-Apps that discovers all component applications
 - ` + "`clusters/{{.ClusterPersonaName}}/apps/`" + ` — one ArgoCD Application per component
-- ` + "`clusters/{{.ClusterPersonaName}}/values/`" + ` — Helm value overrides per component
+- ` + "`clusters/{{.ClusterPersonaName}}/values/`" + ` — Helm value overrides (consumed by ArgoCD, not Kubernetes resources)
 
 ## Getting Started
 
 1. Push this repo to your Git remote
 2. Apply the root application: ` + "`kubectl apply -f argocd/root-app.yaml`" + `
 3. ArgoCD will sync all components automatically
+
+## Validate
+
+Dry-run the ArgoCD Application manifests to check for errors:
+
+    kubectl apply --dry-run=client -f argocd/root-app.yaml
+    kubectl apply --dry-run=client -f clusters/{{.ClusterPersonaName}}/apps/
+
+**Do NOT** include ` + "`values/`" + ` in dry-run commands — those files are plain Helm overrides consumed
+by ArgoCD, not Kubernetes resources. Applying them directly will fail validation.
 
 ## Customizing Components
 
@@ -250,4 +260,5 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
 `
