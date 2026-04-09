@@ -99,6 +99,27 @@ type HealthUpdateEvent struct {
 	MemUtilization  string `json:"memUtilization"`
 }
 
+// IncidentSummary is a summary of an IncidentMemory resource.
+type IncidentSummary struct {
+	Namespace   string `json:"namespace"`
+	Name        string `json:"name"`
+	Severity    string `json:"severity"`
+	Category    string `json:"category"`
+	Signal      string `json:"signal"`
+	Phase       string `json:"phase"`
+	PersonaName string `json:"personaName"`
+}
+
+// RemediationSummary is a summary of a RemediationAction resource.
+type RemediationSummary struct {
+	Namespace   string `json:"namespace"`
+	Name        string `json:"name"`
+	Phase       string `json:"phase"`
+	ActionType  string `json:"actionType"`
+	Confidence  string `json:"confidence"`
+	PersonaName string `json:"personaName"`
+}
+
 // PersonaSummary is a summary of an ApplicationPersona.
 type PersonaSummary struct {
 	Namespace string `json:"namespace"`
@@ -278,6 +299,72 @@ func (c *Client) ListPersonas(ctx context.Context, namespace string) (*ListPerso
 	}
 
 	return &result, nil
+}
+
+// ListIncidents requests a list of active incidents.
+func (c *Client) ListIncidents(ctx context.Context, namespace string) ([]IncidentSummary, error) {
+	payload := map[string]string{}
+	if namespace != "" {
+		payload["namespace"] = namespace
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	msg := &Message{
+		Type:      MessageTypeRequest,
+		Topic:     TopicIncidents,
+		RequestID: generateRequestID(),
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+
+	resp, err := c.request(ctx, msg)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Incidents []IncidentSummary `json:"incidents"`
+	}
+	if err := json.Unmarshal(resp.Payload, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse incidents response: %w", err)
+	}
+	return result.Incidents, nil
+}
+
+// ListRemediations requests a list of pending remediations.
+func (c *Client) ListRemediations(ctx context.Context, namespace string) ([]RemediationSummary, error) {
+	payload := map[string]string{}
+	if namespace != "" {
+		payload["namespace"] = namespace
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	msg := &Message{
+		Type:      MessageTypeRequest,
+		Topic:     TopicRemediations,
+		RequestID: generateRequestID(),
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+
+	resp, err := c.request(ctx, msg)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Remediations []RemediationSummary `json:"remediations"`
+	}
+	if err := json.Unmarshal(resp.Payload, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse remediations response: %w", err)
+	}
+	return result.Remediations, nil
 }
 
 // GetCluster requests cluster information.

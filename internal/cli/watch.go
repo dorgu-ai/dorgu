@@ -110,7 +110,7 @@ func runWatchPersonas(cmd *cobra.Command, args []string) error {
 
 	client := ws.NewClient(watchFlags.operatorURL)
 	if err := client.Connect(ctx); err != nil {
-		return fmt.Errorf("failed to connect to operator: %w", err)
+		return handleWSConnectError(err, watchFlags.operatorURL)
 	}
 	defer client.Close()
 
@@ -176,7 +176,7 @@ func runWatchCluster(cmd *cobra.Command, args []string) error {
 
 	client := ws.NewClient(watchFlags.operatorURL)
 	if err := client.Connect(ctx); err != nil {
-		return fmt.Errorf("failed to connect to operator: %w", err)
+		return handleWSConnectError(err, watchFlags.operatorURL)
 	}
 	defer client.Close()
 
@@ -235,7 +235,7 @@ func runWatchEvents(cmd *cobra.Command, args []string) error {
 
 	client := ws.NewClient(watchFlags.operatorURL)
 	if err := client.Connect(ctx); err != nil {
-		return fmt.Errorf("failed to connect to operator: %w", err)
+		return handleWSConnectError(err, watchFlags.operatorURL)
 	}
 	defer client.Close()
 

@@ -83,12 +83,14 @@ type saturationDetail struct {
 
 type controlPlaneStatus struct {
 	Healthy    bool                    `json:"healthy"`
+	External   bool                    `json:"external,omitempty"` // true when control plane is not self-hosted
 	Components []controlPlaneComponent `json:"components"`
 }
 
 type controlPlaneComponent struct {
 	Name    string `json:"name"`
 	Healthy bool   `json:"healthy"`
+	Status  string `json:"status,omitempty"` // "external" when inferred healthy
 }
 
 type incidentsSummary struct {
@@ -205,7 +207,11 @@ func printHealthSummary(w io.Writer, s *healthSummary) {
 		if !s.ControlPlane.Healthy {
 			healthStr = output.HealthColor("Unhealthy")
 		}
-		fmt.Fprintf(w, "Control Plane: %s\n", healthStr)
+		if s.ControlPlane.External {
+			fmt.Fprintf(w, "Control Plane: %s (external/managed)\n", healthStr)
+		} else {
+			fmt.Fprintf(w, "Control Plane: %s\n", healthStr)
+		}
 
 		var parts []string
 		for _, c := range s.ControlPlane.Components {
@@ -213,7 +219,11 @@ func printHealthSummary(w io.Writer, s *healthSummary) {
 			if !c.Healthy {
 				icon = output.Red("✗")
 			}
-			parts = append(parts, fmt.Sprintf("%s %s", icon, c.Name))
+			label := c.Name
+			if c.Status == "external" {
+				label = c.Name + " (inferred)"
+			}
+			parts = append(parts, fmt.Sprintf("%s %s", icon, label))
 		}
 		if len(parts) > 0 {
 			fmt.Fprintf(w, "  %s\n", strings.Join(parts, "    "))
@@ -342,7 +352,12 @@ func fetchResourceSaturation(ctx context.Context, kubeconfig string) (*resourceS
 	if err != nil {
 		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
+	return parseResourceSaturation(out)
+}
 
+// parseResourceSaturation parses ClusterPersona list JSON into a resourceSaturation.
+// Extracted for unit testability without requiring kubectl.
+func parseResourceSaturation(out []byte) (*resourceSaturation, error) {
 	var list struct {
 		Items []struct {
 			Status struct {
@@ -369,8 +384,12 @@ func fetchResourceSaturation(ctx context.Context, kubeconfig string) (*resourceS
 	sat := &resourceSaturation{}
 	if rs.AllocatableCPU != "" {
 		pct := rs.CPUUtilization
-		if pct == "" {
-			pct = "-"
+		if pct == "" || rs.UsedCPU == "" || rs.UsedCPU == "0" {
+			if rs.UsedCPU == "" || rs.UsedCPU == "0" {
+				pct = "n/a"
+			} else {
+				pct = "-"
+			}
 		}
 		sat.CPU = &saturationDetail{
 			Percentage:  pct,
@@ -380,8 +399,12 @@ func fetchResourceSaturation(ctx context.Context, kubeconfig string) (*resourceS
 	}
 	if rs.AllocatableMemory != "" {
 		pct := rs.MemoryUtilization
-		if pct == "" {
-			pct = "-"
+		if pct == "" || rs.UsedMemory == "" || rs.UsedMemory == "0" {
+			if rs.UsedMemory == "" || rs.UsedMemory == "0" {
+				pct = "n/a"
+			} else {
+				pct = "-"
+			}
 		}
 		sat.Memory = &saturationDetail{
 			Percentage:  pct,
@@ -392,17 +415,26 @@ func fetchResourceSaturation(ctx context.Context, kubeconfig string) (*resourceS
 	return sat, nil
 }
 
+// controlPlaneComponentNames is the canonical list of self-hosted control plane components.
+var controlPlaneComponentNames = []string{
+	"kube-apiserver", "kube-scheduler", "kube-controller-manager", "etcd",
+}
+
 // fetchControlPlane checks control plane component health.
 func fetchControlPlane(ctx context.Context, kubeconfig string) (*controlPlaneStatus, error) {
-	componentNames := []string{"kube-apiserver", "kube-scheduler", "kube-controller-manager", "etcd"}
-
 	// Check control plane pods in kube-system.
 	out, err := kubectlCmd(ctx, kubeconfig, "get", "pods", "-n", "kube-system",
 		"-l", "tier=control-plane", "-o", "json").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
+	return parseControlPlanePods(out)
+}
 
+// parseControlPlanePods parses kubectl pod list output into a controlPlaneStatus.
+// If no tier=control-plane pods are found, the control plane is inferred as external
+// (vCluster, managed K8s like EKS/GKE/AKS, or k3s). Extracted for unit testability.
+func parseControlPlanePods(out []byte) (*controlPlaneStatus, error) {
 	var podList struct {
 		Items []struct {
 			Metadata struct {
@@ -418,6 +450,20 @@ func fetchControlPlane(ctx context.Context, kubeconfig string) (*controlPlaneSta
 	}
 	if err := json.Unmarshal(out, &podList); err != nil {
 		return nil, fmt.Errorf("failed to parse control plane pods: %w", err)
+	}
+
+	// If no control-plane pods found, the control plane is external
+	// (vCluster, managed K8s like EKS/GKE/AKS, or k3s).
+	if len(podList.Items) == 0 {
+		cp := &controlPlaneStatus{Healthy: true, External: true}
+		for _, name := range controlPlaneComponentNames {
+			cp.Components = append(cp.Components, controlPlaneComponent{
+				Name:    friendlyComponentName(name),
+				Healthy: true,
+				Status:  "external",
+			})
+		}
+		return cp, nil
 	}
 
 	// Map component name → healthy (all containers ready).
@@ -440,7 +486,7 @@ func fetchControlPlane(ctx context.Context, kubeconfig string) (*controlPlaneSta
 	}
 
 	cp := &controlPlaneStatus{Healthy: true}
-	for _, name := range componentNames {
+	for _, name := range controlPlaneComponentNames {
 		h := healthy[name]
 		if !h {
 			cp.Healthy = false
@@ -583,9 +629,7 @@ func runHealthWatch(cmd *cobra.Command, _ []string) error {
 
 	client := ws.NewClient(operatorURL)
 	if err := client.Connect(ctx); err != nil {
-		output.ErrorWithHint("Cannot connect to operator WebSocket",
-			"Ensure the operator is running with --enable-websocket")
-		return fmt.Errorf("failed to connect to operator: %w", err)
+		return handleWSConnectError(err, operatorURL)
 	}
 	defer client.Close()
 
@@ -650,6 +694,24 @@ func runHealthWatch(cmd *cobra.Command, _ []string) error {
 		printHealthUpdateEvent(msg.Timestamp, event)
 	}); err != nil {
 		return fmt.Errorf("failed to subscribe to health updates: %w", err)
+	}
+
+	// Emit initial health snapshot for JSON mode so the first output is immediate.
+	if output.IsJSON() {
+		if incidentsResp, err := client.ListIncidents(ctx, namespace); err == nil {
+			for _, inc := range incidentsResp {
+				_ = output.PrintJSONLine(map[string]any{
+					"type": "incident", "eventType": "snapshot", "data": inc,
+				})
+			}
+		}
+		if remediationsResp, err := client.ListRemediations(ctx, namespace); err == nil {
+			for _, rem := range remediationsResp {
+				_ = output.PrintJSONLine(map[string]any{
+					"type": "remediation", "eventType": "snapshot", "data": rem,
+				})
+			}
+		}
 	}
 
 	// Block until context cancellation.

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/dorgu-ai/dorgu/internal/ws"
 )
@@ -382,6 +383,90 @@ func TestPrintHealthUpdateEvent(t *testing.T) {
 	assert.Contains(t, out, "nodes=2/3")
 	assert.Contains(t, out, "cpu=65%")
 	assert.Contains(t, out, "mem=78%")
+}
+
+func TestParseControlPlanePods_NoPodsExternalInferred(t *testing.T) {
+	out := []byte(`{"items":[]}`)
+	cp, err := parseControlPlanePods(out)
+	require.NoError(t, err)
+	assert.True(t, cp.Healthy)
+	assert.True(t, cp.External)
+	assert.Len(t, cp.Components, 4)
+	for _, c := range cp.Components {
+		assert.True(t, c.Healthy)
+		assert.Equal(t, "external", c.Status)
+	}
+}
+
+func TestParseControlPlanePods_SelfHostedHealthy(t *testing.T) {
+	out := []byte(`{"items":[
+		{"metadata":{"labels":{"component":"kube-apiserver"}},"status":{"phase":"Running","containerStatuses":[{"ready":true}]}},
+		{"metadata":{"labels":{"component":"kube-scheduler"}},"status":{"phase":"Running","containerStatuses":[{"ready":true}]}},
+		{"metadata":{"labels":{"component":"kube-controller-manager"}},"status":{"phase":"Running","containerStatuses":[{"ready":true}]}},
+		{"metadata":{"labels":{"component":"etcd"}},"status":{"phase":"Running","containerStatuses":[{"ready":true}]}}
+	]}`)
+	cp, err := parseControlPlanePods(out)
+	require.NoError(t, err)
+	assert.True(t, cp.Healthy)
+	assert.False(t, cp.External)
+	assert.Len(t, cp.Components, 4)
+	for _, c := range cp.Components {
+		assert.True(t, c.Healthy)
+		assert.Empty(t, c.Status)
+	}
+}
+
+func TestParseControlPlanePods_ParseError(t *testing.T) {
+	_, err := parseControlPlanePods([]byte(`invalid json`))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse control plane pods")
+}
+
+func TestPrintHealthSummaryExternalControlPlane(t *testing.T) {
+	summary := &healthSummary{
+		ControlPlane: &controlPlaneStatus{
+			Healthy:  true,
+			External: true,
+			Components: []controlPlaneComponent{
+				{Name: "API Server", Healthy: true, Status: "external"},
+				{Name: "Scheduler", Healthy: true, Status: "external"},
+				{Name: "Controller Manager", Healthy: true, Status: "external"},
+				{Name: "etcd", Healthy: true, Status: "external"},
+			},
+		},
+		ActiveIncidents:     &incidentsSummary{Count: 0},
+		PendingRemediations: &remediationSummary{Count: 0},
+	}
+
+	var buf bytes.Buffer
+	printHealthSummary(&buf, summary)
+	out := buf.String()
+
+	assert.Contains(t, out, "external/managed")
+	assert.Contains(t, out, "(inferred)")
+}
+
+func TestParseResourceSaturation_EmptyUsed_ShowsNA(t *testing.T) {
+	out := []byte(`{"items":[{"status":{"resourceSummary":{"allocatableCPU":"4000m","allocatableMemory":"8Gi","usedCPU":"","usedMemory":"","cpuUtilization":"","memoryUtilization":""}}}]}`)
+	sat, err := parseResourceSaturation(out)
+	require.NoError(t, err)
+	require.NotNil(t, sat)
+	require.NotNil(t, sat.CPU)
+	assert.Equal(t, "n/a", sat.CPU.Percentage)
+	require.NotNil(t, sat.Memory)
+	assert.Equal(t, "n/a", sat.Memory.Percentage)
+}
+
+func TestParseResourceSaturation_WithValues(t *testing.T) {
+	out := []byte(`{"items":[{"status":{"resourceSummary":{"allocatableCPU":"4000m","allocatableMemory":"8Gi","usedCPU":"2000m","usedMemory":"4Gi","cpuUtilization":"50%","memoryUtilization":"50%"}}}]}`)
+	sat, err := parseResourceSaturation(out)
+	require.NoError(t, err)
+	require.NotNil(t, sat)
+	require.NotNil(t, sat.CPU)
+	assert.Equal(t, "50%", sat.CPU.Percentage)
+	assert.Equal(t, "2000m", sat.CPU.Used)
+	require.NotNil(t, sat.Memory)
+	assert.Equal(t, "50%", sat.Memory.Percentage)
 }
 
 func TestPrintHealthUpdateEvent_Healthy(t *testing.T) {
