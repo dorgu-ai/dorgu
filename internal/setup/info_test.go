@@ -201,10 +201,10 @@ func TestGetComponentInfo_ServiceNotFound(t *testing.T) {
 }
 
 func TestGetComponentInfo_LoadBalancerExternalIP(t *testing.T) {
-	c := findComponent(t, ComponentIngressNginx) // no Access — but we still parse svc state
-	// ingress-nginx default service name is the helm release name
+	c := findComponent(t, ComponentIngressNginx)
+	// ingress-nginx chart creates a service named ingress-nginx-controller
 	ex := newScriptedExecutor()
-	ex.addResponse("kubectl get svc ingress-nginx -n ingress-nginx -o json", ingressLBJSON, nil)
+	ex.addResponse("kubectl get svc ingress-nginx-controller -n ingress-nginx -o json", ingressLBJSON, nil)
 
 	info := GetComponentInfo(ex, c)
 
@@ -247,18 +247,22 @@ func TestGetInstalledComponentsInfo_FiltersToInstalled(t *testing.T) {
 	}
 }
 
-func TestGetInstalledComponentsInfo_EmptyAnnotation(t *testing.T) {
+func TestGetInstalledComponentsInfo_EmptyAnnotation_NoArgoCD(t *testing.T) {
 	ex := newScriptedExecutor()
 	ex.addResponse(
 		`kubectl get clusterpersona empty -o jsonpath={.metadata.annotations.dorgu\.io/setup-stack}`,
 		"", nil)
+	// ArgoCD fallback returns empty items list (no Applications installed)
+	ex.addResponse(
+		"kubectl get applications.argoproj.io -l dorgu.io/cluster-persona=empty -A -o json",
+		`{"items":[]}`, nil)
 
-	infos, err := GetInstalledComponentsInfo(ex, "empty")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := GetInstalledComponentsInfo(ex, "empty")
+	if err == nil {
+		t.Fatal("expected error when no annotation and no ArgoCD apps found")
 	}
-	if len(infos) != 0 {
-		t.Errorf("len(infos) = %d, want 0", len(infos))
+	if !strings.Contains(err.Error(), "no installed components") {
+		t.Errorf("error should mention no installed components, got: %v", err)
 	}
 }
 
@@ -327,6 +331,122 @@ func TestParseInstalledIDs(t *testing.T) {
 				t.Errorf("parseInstalledIDs(%q) missing %q", tc.in, id)
 			}
 		}
+	}
+}
+
+func TestGetInstalledComponentsInfo_GitOpsFallbackArgoCD(t *testing.T) {
+	ex := newScriptedExecutor()
+	// ClusterPersona has no setup-stack annotation
+	ex.addResponse(
+		`kubectl get clusterpersona my-cluster -o jsonpath={.metadata.annotations.dorgu\.io/setup-stack}`,
+		"", nil)
+	// ArgoCD returns an Application for cert-manager
+	argoAppJSON := `{"items":[{"metadata":{"name":"cert-manager","labels":{"dorgu.io/cluster-persona":"my-cluster"}},"status":{"health":{"status":"Healthy"},"sync":{"status":"Synced"}}}]}`
+	ex.addResponse(
+		"kubectl get applications.argoproj.io -l dorgu.io/cluster-persona=my-cluster -A -o json",
+		argoAppJSON, nil)
+	// GetComponentInfo will query the cert-manager service
+	ex.addResponse("kubectl get svc cert-manager -n cert-manager -o json",
+		`{"spec":{"type":"ClusterIP","clusterIP":"10.96.0.10","ports":[]},"status":{"loadBalancer":{}}}`, nil)
+
+	infos, err := GetInstalledComponentsInfo(ex, "my-cluster")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(infos) == 0 {
+		t.Fatal("expected at least one component from ArgoCD discovery")
+	}
+	if infos[0].ID != ComponentCertManager {
+		t.Errorf("infos[0].ID = %q, want cert-manager", infos[0].ID)
+	}
+	if !strings.Contains(infos[0].Notes, "ArgoCD") {
+		t.Errorf("Notes should mention ArgoCD, got %q", infos[0].Notes)
+	}
+	if !strings.Contains(infos[0].Notes, "Healthy") {
+		t.Errorf("Notes should contain ArgoCD health status, got %q", infos[0].Notes)
+	}
+}
+
+func TestGetInstalledComponentsInfo_NoAnnotation_NoArgoCD_ClearMessage(t *testing.T) {
+	ex := newScriptedExecutor()
+	ex.addResponse(
+		`kubectl get clusterpersona my-cluster -o jsonpath={.metadata.annotations.dorgu\.io/setup-stack}`,
+		"", nil)
+	// ArgoCD call fails (e.g. ArgoCD CRD not installed)
+	ex.addResponse(
+		"kubectl get applications.argoproj.io -l dorgu.io/cluster-persona=my-cluster -A -o json",
+		"", fmt.Errorf("exit status 1"))
+
+	_, err := GetInstalledComponentsInfo(ex, "my-cluster")
+	if err == nil {
+		t.Fatal("expected error when no annotation and ArgoCD unavailable")
+	}
+	if !strings.Contains(err.Error(), "GitOps") {
+		t.Errorf("error should mention GitOps driver, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "no installed components") {
+		t.Errorf("error should mention no installed components, got: %v", err)
+	}
+}
+
+func TestGetComponentInfo_ServiceNameFallbackByLabel(t *testing.T) {
+	c := findComponent(t, ComponentIngressNginx)
+	ex := newScriptedExecutor()
+	// Primary lookup by service name fails
+	ex.addResponse("kubectl get svc ingress-nginx-controller -n ingress-nginx -o json",
+		`Error from server (NotFound)`, fmt.Errorf("exit status 1"))
+	// Label-based fallback succeeds (returns list with one service)
+	ex.addResponse("kubectl get svc -n ingress-nginx -l app.kubernetes.io/instance=ingress-nginx -o json",
+		`{"items":[`+ingressLBJSON+`]}`, nil)
+
+	info := GetComponentInfo(ex, c)
+	if info.ServiceError != "" {
+		t.Errorf("ServiceError should be empty after label fallback, got: %q", info.ServiceError)
+	}
+	if info.ExternalIP != "192.168.1.100" {
+		t.Errorf("ExternalIP = %q, want 192.168.1.100", info.ExternalIP)
+	}
+	if info.ServiceType != "LoadBalancer" {
+		t.Errorf("ServiceType = %q, want LoadBalancer", info.ServiceType)
+	}
+}
+
+func TestGetComponentInfo_NoService_OperatorOnly(t *testing.T) {
+	c := findComponent(t, ComponentCNPG) // no Access (operator/controller only)
+	ex := newScriptedExecutor()
+	// Primary lookup fails
+	ex.addResponse("kubectl get svc cnpg -n cnpg-system -o json",
+		`Error from server (NotFound)`, fmt.Errorf("exit status 1"))
+	// Label-based fallback also fails
+	ex.addResponse("kubectl get svc -n cnpg-system -l app.kubernetes.io/instance=cnpg -o json",
+		"", fmt.Errorf("exit status 1"))
+
+	info := GetComponentInfo(ex, c)
+	if info.ServiceError != "" {
+		t.Errorf("ServiceError should be empty for operator-only component, got: %q", info.ServiceError)
+	}
+	if !strings.Contains(info.Notes, "No user-facing service") {
+		t.Errorf("Notes should say 'No user-facing service', got: %q", info.Notes)
+	}
+}
+
+func TestGetComponentInfo_CleanErrorMessage(t *testing.T) {
+	c := findComponent(t, ComponentArgoCd) // has WebUIPort=443
+	ex := newScriptedExecutor()
+	// Primary lookup fails with raw API error
+	ex.addResponse("kubectl get svc argocd-server -n argocd -o json",
+		`Error from server (NotFound): services "argocd-server" not found`,
+		fmt.Errorf("exit status 1"))
+	// Label-based fallback also fails
+	ex.addResponse("kubectl get svc -n argocd -l app.kubernetes.io/instance=argocd -o json",
+		"", fmt.Errorf("exit status 1"))
+
+	info := GetComponentInfo(ex, c)
+	if info.ServiceError == "" {
+		t.Errorf("ServiceError should be set when service is not found for component with WebUIPort")
+	}
+	if strings.Contains(info.ServiceError, "Error from server") {
+		t.Errorf("ServiceError contains raw API text; want clean message, got: %q", info.ServiceError)
 	}
 }
 

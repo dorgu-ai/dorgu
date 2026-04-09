@@ -108,8 +108,7 @@ func printComponentInfo(info setup.ComponentInfo) {
 	fmt.Printf("  %-13s %s\n", "Namespace:", info.Namespace)
 
 	if info.ServiceError != "" {
-		fmt.Printf("  %-13s %s\n", "Service:", output.Yellow("not found"))
-		fmt.Printf("  %-13s %s\n", "Detail:", output.Dim(truncate(info.ServiceError, 80)))
+		fmt.Printf("  %-13s %s\n", "Service:", output.Yellow(info.ServiceError))
 	} else if info.ServiceName != "" {
 		svcLine := info.ServiceName
 		if info.ServiceType != "" {
@@ -140,7 +139,8 @@ func printComponentInfo(info setup.ComponentInfo) {
 
 	// Components without a web UI: show a brief status line so the user knows
 	// it was installed but has nothing to access interactively.
-	if info.PortForwardCmd == "" && info.CredentialCmd == "" && info.ExternalIP == "" {
+	// Suppress when Notes already describes the service state (e.g. "No user-facing service").
+	if info.PortForwardCmd == "" && info.CredentialCmd == "" && info.ExternalIP == "" && info.Notes == "" {
 		fmt.Printf("  %-13s %s\n", "Status:", output.Dim("Running (no web UI)"))
 	}
 

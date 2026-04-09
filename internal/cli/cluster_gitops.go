@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/dorgu-ai/dorgu/internal/output"
 	"github.com/dorgu-ai/dorgu/internal/setup"
@@ -80,6 +81,23 @@ func runGitOpsSetup(ex setup.Executor, personaName, environment string, selected
 		return err
 	}
 	if !clusterSetupFlags.dryRun {
+		// Record scaffolded components on the ClusterPersona so 'dorgu cluster info'
+		// can report them without waiting for ArgoCD to sync.
+		results := make([]setup.InstallResult, len(selected))
+		for i, c := range selected {
+			results[i] = setup.InstallResult{Component: c, Succeeded: true}
+		}
+		setupCfg := setup.SetupConfig{
+			ClusterPersonaName: personaName,
+			Environment:        environment,
+			Timestamp:          time.Now(),
+		}
+		if annotateErr := setup.AnnotateClusterPersona(ex, personaName, setupCfg, results); annotateErr != nil {
+			output.Warn("Could not annotate ClusterPersona with setup info: " + annotateErr.Error())
+		}
+		if driverErr := setup.AnnotateDriver(ex, personaName, "gitops"); driverErr != nil {
+			output.Warn("Could not record setup driver on ClusterPersona: " + driverErr.Error())
+		}
 		setup.ConfirmGitOpsPush(repoURL, gitopsDir)
 	}
 	return nil

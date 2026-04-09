@@ -195,6 +195,11 @@ func blessedComponents() []ComponentConfig {
 			DependsOn:         []ComponentID{ComponentCertManager},
 			OperatorAddonName: "ingress-nginx",
 			Timeout:           "10m0s",
+			Access: &ComponentAccess{
+				// The ingress-nginx Helm chart creates a service named
+				// "ingress-nginx-controller", not the release name.
+				ServiceName: "ingress-nginx-controller",
+			},
 		},
 		{
 			ID:                ComponentCNPG,
