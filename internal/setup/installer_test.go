@@ -974,3 +974,21 @@ func TestInstallComponent_DriftDetected_Aborts(t *testing.T) {
 		t.Errorf("expected only 1 call (drift check), got %d", ex.callIdx)
 	}
 }
+
+func TestAnnotateDriver(t *testing.T) {
+	ex := newScriptedExecutor()
+	ex.addResponse(
+		"kubectl annotate clusterpersona my-cluster dorgu.io/setup-driver=gitops --overwrite",
+		"clusterpersona.dorgu.io/my-cluster annotated", nil)
+
+	err := AnnotateDriver(ex, "my-cluster", "gitops")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ex.calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(ex.calls))
+	}
+	if !strings.Contains(ex.calls[0], "dorgu.io/setup-driver=gitops") {
+		t.Errorf("call %q missing expected annotation", ex.calls[0])
+	}
+}

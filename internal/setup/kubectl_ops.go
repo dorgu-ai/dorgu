@@ -74,6 +74,13 @@ func AnnotateClusterPersona(ex Executor, name string, cfg SetupConfig, results [
 	return nil
 }
 
+// AnnotateDriver records which setup driver was used on the ClusterPersona.
+func AnnotateDriver(ex Executor, name, driver string) error {
+	_, err := ex.Run("kubectl", "annotate", "clusterpersona", name,
+		"dorgu.io/setup-driver="+driver, "--overwrite")
+	return err
+}
+
 // GetCurrentKubeContext runs: kubectl config current-context
 func GetCurrentKubeContext(ex Executor) (string, error) {
 	out, err := ex.Run("kubectl", "config", "current-context")

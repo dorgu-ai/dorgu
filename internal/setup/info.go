@@ -76,14 +76,32 @@ func GetComponentInfo(ex Executor, c ComponentConfig) ComponentInfo {
 	}
 	info.ServiceName = svcName
 
-	// 1. Query service
+	// 1. Query service by name; on failure try label-based discovery.
 	out, err := ex.Run("kubectl", "get", "svc", svcName, "-n", c.Namespace, "-o", "json")
 	if err != nil {
-		info.ServiceError = strings.TrimSpace(out)
-		if info.ServiceError == "" {
-			info.ServiceError = err.Error()
+		labelOut, labelErr := ex.Run("kubectl", "get", "svc", "-n", c.Namespace,
+			"-l", fmt.Sprintf("app.kubernetes.io/instance=%s", c.HelmReleaseName),
+			"-o", "json")
+		if labelErr == nil {
+			var svcList struct {
+				Items []json.RawMessage `json:"items"`
+			}
+			if json.Unmarshal([]byte(labelOut), &svcList) == nil && len(svcList.Items) > 0 {
+				out = string(svcList.Items[0])
+				err = nil
+			}
 		}
-	} else {
+		if err != nil {
+			// Set a clean, actionable message instead of raw API server text.
+			if c.Access == nil || c.Access.WebUIPort == 0 {
+				info.Notes = "No user-facing service (operator/controller only)"
+			} else {
+				info.ServiceError = fmt.Sprintf("service %q not found in namespace %s", svcName, c.Namespace)
+			}
+		}
+	}
+
+	if err == nil {
 		var svc k8sService
 		if jerr := json.Unmarshal([]byte(out), &svc); jerr == nil {
 			info.ServiceType = svc.Spec.Type
@@ -161,7 +179,16 @@ func GetInstalledComponentsInfo(ex Executor, clusterPersonaName string) ([]Compo
 
 	installedIDs := parseInstalledIDs(stackAnnotation)
 	if len(installedIDs) == 0 {
-		return nil, nil
+		// Try ArgoCD Application discovery as fallback (GitOps driver installs).
+		argoApps, fallbackErr := discoverFromArgoCD(ex, clusterPersonaName)
+		if fallbackErr == nil && len(argoApps) > 0 {
+			return argoApps, nil
+		}
+		return nil, fmt.Errorf(
+			"ClusterPersona %q has no installed components recorded yet.\n"+
+				"If you used GitOps driver, components will appear after ArgoCD syncs.\n"+
+				"Run 'dorgu cluster status --addons' to check addon discovery.",
+			clusterPersonaName)
 	}
 
 	stack := DefaultStack()
@@ -203,6 +230,59 @@ func suggestLocalPort(targetPort int) int {
 	default:
 		return 8000 + targetPort
 	}
+}
+
+// discoverFromArgoCD queries ArgoCD Applications labeled for a specific
+// ClusterPersona and maps them to ComponentInfo records.
+// Returns nil, nil when ArgoCD is not installed or no matching Applications exist.
+func discoverFromArgoCD(ex Executor, clusterPersonaName string) ([]ComponentInfo, error) {
+	out, err := ex.Run("kubectl", "get", "applications.argoproj.io",
+		"-l", "dorgu.io/cluster-persona="+clusterPersonaName,
+		"-A", "-o", "json")
+	if err != nil {
+		return nil, err
+	}
+
+	var appList struct {
+		Items []struct {
+			Metadata struct {
+				Name   string            `json:"name"`
+				Labels map[string]string `json:"labels"`
+			} `json:"metadata"`
+			Status struct {
+				Health struct {
+					Status string `json:"status"`
+				} `json:"health"`
+				Sync struct {
+					Status string `json:"status"`
+				} `json:"sync"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out), &appList); err != nil {
+		return nil, err
+	}
+
+	allComponents := DefaultStack().Components()
+	componentMap := make(map[ComponentID]ComponentConfig, len(allComponents))
+	for _, c := range allComponents {
+		componentMap[c.ID] = c
+	}
+
+	var infos []ComponentInfo
+	for _, app := range appList.Items {
+		for id, c := range componentMap {
+			if strings.Contains(app.Metadata.Name, string(id)) {
+				info := GetComponentInfo(ex, c)
+				info.Notes = fmt.Sprintf("Managed by ArgoCD (sync: %s, health: %s)",
+					app.Status.Sync.Status, app.Status.Health.Status)
+				infos = append(infos, info)
+				break
+			}
+		}
+	}
+
+	return infos, nil
 }
 
 // targetPortString normalises the targetPort field which may be an int or string.
