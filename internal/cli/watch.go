@@ -23,19 +23,16 @@ var watchCmd = &cobra.Command{
 	Use:   "watch",
 	Short: "Watch real-time updates from the Dorgu Operator",
 	Long: `Connect to the Dorgu Operator via WebSocket and stream
-real-time updates about personas, cluster state, and events.
+real-time updates about personas, incidents, remediations, cluster state, and events.
 
 Requires the Dorgu Operator to be running with WebSocket enabled
 (--enable-websocket flag).
 
 Examples:
-  # Watch all persona updates
   dorgu watch personas
-
-  # Watch cluster state changes
+  dorgu watch incidents
+  dorgu watch remediations
   dorgu watch cluster
-
-  # Watch validation events
   dorgu watch events`,
 }
 
@@ -76,6 +73,30 @@ Examples:
 	RunE: runWatchEvents,
 }
 
+var watchIncidentsCmd = &cobra.Command{
+	Use:   "incidents",
+	Short: "Watch IncidentMemory updates in real-time",
+	Long: `Stream real-time updates about incident detection, updates, and resolution.
+
+Examples:
+  dorgu watch incidents
+  dorgu watch incidents -n production
+  dorgu watch incidents --operator-url ws://localhost:9090/ws`,
+	RunE: runWatchIncidents,
+}
+
+var watchRemediationsCmd = &cobra.Command{
+	Use:   "remediations",
+	Short: "Watch RemediationAction updates in real-time",
+	Long: `Stream real-time updates about remediation proposals, approvals,
+and execution outcomes.
+
+Examples:
+  dorgu watch remediations
+  dorgu watch remediations -n production`,
+	RunE: runWatchRemediations,
+}
+
 func init() {
 	// Common flags
 	watchCmd.PersistentFlags().StringVar(&watchFlags.operatorURL, "operator-url", "ws://localhost:9090/ws",
@@ -84,15 +105,26 @@ func init() {
 	// Personas flags
 	watchPersonasCmd.Flags().StringVarP(&watchFlags.namespace, "namespace", "n", "",
 		"Filter by namespace (optional)")
+	watchPersonasCmd.Flags().String("name", "", "Watch a specific persona by name")
 
 	// Events flags
 	watchEventsCmd.Flags().StringVarP(&watchFlags.namespace, "namespace", "n", "",
+		"Filter by namespace (optional)")
+
+	// Incidents flags
+	watchIncidentsCmd.Flags().StringVarP(&watchFlags.namespace, "namespace", "n", "",
+		"Filter by namespace (optional)")
+
+	// Remediations flags
+	watchRemediationsCmd.Flags().StringVarP(&watchFlags.namespace, "namespace", "n", "",
 		"Filter by namespace (optional)")
 
 	// Register subcommands
 	watchCmd.AddCommand(watchPersonasCmd)
 	watchCmd.AddCommand(watchClusterCmd)
 	watchCmd.AddCommand(watchEventsCmd)
+	watchCmd.AddCommand(watchIncidentsCmd)
+	watchCmd.AddCommand(watchRemediationsCmd)
 }
 
 func runWatchPersonas(cmd *cobra.Command, args []string) error {
@@ -108,6 +140,8 @@ func runWatchPersonas(cmd *cobra.Command, args []string) error {
 		cancel()
 	}()
 
+	nameFilter, _ := cmd.Flags().GetString("name")
+
 	client := ws.NewClient(watchFlags.operatorURL)
 	if err := client.Connect(ctx); err != nil {
 		return handleWSConnectError(err, watchFlags.operatorURL)
@@ -115,6 +149,27 @@ func runWatchPersonas(cmd *cobra.Command, args []string) error {
 	defer client.Close()
 
 	output.Success("Connected to Dorgu Operator")
+
+	// Print initial persona list on connect.
+	if personasResp, err := client.ListPersonas(ctx, watchFlags.namespace); err == nil && len(personasResp.Personas) > 0 {
+		if output.IsJSON() {
+			for _, p := range personasResp.Personas {
+				_ = output.PrintJSONLine(map[string]any{
+					"eventType": "snapshot",
+					"persona":   p,
+				})
+			}
+		} else {
+			fmt.Printf("Current personas (%d):\n", len(personasResp.Personas))
+			for _, p := range personasResp.Personas {
+				healthColor := output.FormatHealth(p.Health)
+				fmt.Printf("  %s %s/%s (phase: %s, health: %s)\n",
+					output.Blue("●"), p.Namespace, p.Name, p.Phase, healthColor)
+			}
+			fmt.Println()
+		}
+	}
+
 	output.Info("Watching ApplicationPersona updates... (Ctrl+C to stop)")
 	fmt.Println()
 
@@ -127,6 +182,9 @@ func runWatchPersonas(cmd *cobra.Command, args []string) error {
 
 		// Filter by namespace if specified
 		if watchFlags.namespace != "" && event.Namespace != watchFlags.namespace {
+			return
+		}
+		if nameFilter != "" && event.Name != nameFilter {
 			return
 		}
 
@@ -157,6 +215,136 @@ func runWatchPersonas(cmd *cobra.Command, args []string) error {
 	}
 
 	// Wait for context cancellation
+	<-ctx.Done()
+	return nil
+}
+
+func runWatchIncidents(cmd *cobra.Command, args []string) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		output.Info("Stopping watch...")
+		cancel()
+	}()
+
+	client := ws.NewClient(watchFlags.operatorURL)
+	if err := client.Connect(ctx); err != nil {
+		return handleWSConnectError(err, watchFlags.operatorURL)
+	}
+	defer client.Close()
+
+	output.Success("Connected to Dorgu Operator")
+
+	// Print initial incident list on connect.
+	if incidents, err := client.ListIncidents(ctx, watchFlags.namespace); err == nil && len(incidents) > 0 {
+		if output.IsJSON() {
+			for _, inc := range incidents {
+				_ = output.PrintJSONLine(map[string]any{"eventType": "snapshot", "incident": inc})
+			}
+		} else {
+			fmt.Printf("Active incidents (%d):\n", len(incidents))
+			for _, inc := range incidents {
+				fmt.Printf("  %s %s/%s [%s] %s\n",
+					output.SeverityIcon(inc.Severity), inc.Namespace, inc.PersonaName,
+					output.SeverityColor(inc.Severity), inc.Signal)
+			}
+			fmt.Println()
+		}
+	}
+
+	output.Info("Watching incidents... (Ctrl+C to stop)")
+	fmt.Println()
+
+	err := client.Subscribe(ctx, ws.TopicIncidents, func(msg *ws.Message) {
+		var event ws.IncidentEvent
+		if err := json.Unmarshal(msg.Payload, &event); err != nil {
+			return
+		}
+
+		if watchFlags.namespace != "" && event.Namespace != watchFlags.namespace {
+			return
+		}
+
+		if output.IsJSON() {
+			output.PrintJSONLine(event)
+			return
+		}
+
+		printIncidentEvent(msg.Timestamp, event)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to subscribe: %w", err)
+	}
+
+	<-ctx.Done()
+	return nil
+}
+
+func runWatchRemediations(cmd *cobra.Command, args []string) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		output.Info("Stopping watch...")
+		cancel()
+	}()
+
+	client := ws.NewClient(watchFlags.operatorURL)
+	if err := client.Connect(ctx); err != nil {
+		return handleWSConnectError(err, watchFlags.operatorURL)
+	}
+	defer client.Close()
+
+	output.Success("Connected to Dorgu Operator")
+
+	// Print initial remediations list on connect.
+	if remediations, err := client.ListRemediations(ctx, watchFlags.namespace); err == nil && len(remediations) > 0 {
+		if output.IsJSON() {
+			for _, rem := range remediations {
+				_ = output.PrintJSONLine(map[string]any{"eventType": "snapshot", "remediation": rem})
+			}
+		} else {
+			fmt.Printf("Pending remediations (%d):\n", len(remediations))
+			for _, rem := range remediations {
+				fmt.Printf("  %s %s/%s [%s] %s\n",
+					output.Yellow("→"), rem.Namespace, rem.PersonaName,
+					output.Yellow(rem.Phase), rem.ActionType)
+			}
+			fmt.Println()
+		}
+	}
+
+	output.Info("Watching remediations... (Ctrl+C to stop)")
+	fmt.Println()
+
+	err := client.Subscribe(ctx, ws.TopicRemediations, func(msg *ws.Message) {
+		var event ws.RemediationEvent
+		if err := json.Unmarshal(msg.Payload, &event); err != nil {
+			return
+		}
+
+		if watchFlags.namespace != "" && event.Namespace != watchFlags.namespace {
+			return
+		}
+
+		if output.IsJSON() {
+			output.PrintJSONLine(event)
+			return
+		}
+
+		printRemediationEvent(msg.Timestamp, event)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to subscribe: %w", err)
+	}
+
 	<-ctx.Done()
 	return nil
 }
