@@ -37,11 +37,20 @@ func runGitOpsSetup(ex setup.Executor, personaName, environment string, selected
 			switch action {
 			case setup.BootstrapActionInstall:
 				output.Info("Installing ArgoCD via Helm...")
-				streamEx := &setup.StreamingExecutor{
-					StreamTo: os.Stderr,
-					Dim:      true,
+				var argoCDEx setup.Executor
+				if clusterSetupFlags.verbose {
+					argoCDEx = &setup.StreamingExecutor{
+						StreamTo: os.Stderr,
+						Dim:      true,
+					}
+				} else {
+					argoCDEx = &setup.TailExecutor{
+						StreamTo:  os.Stderr,
+						Dim:       true,
+						TailLines: 5,
+					}
 				}
-				if err := setup.InstallArgoCDBootstrap(streamEx); err != nil {
+				if err := setup.InstallArgoCDBootstrap(argoCDEx); err != nil {
 					return fmt.Errorf("ArgoCD bootstrap failed: %w", err)
 				}
 				output.Success("ArgoCD installed successfully")
