@@ -135,6 +135,18 @@ func SeverityColor(severity string) string {
 	}
 }
 
+// SeverityIcon returns a colored icon representing the severity level.
+func SeverityIcon(severity string) string {
+	switch strings.ToLower(severity) {
+	case "critical":
+		return Red("✗")
+	case "warning":
+		return Yellow("!")
+	default:
+		return Green("ℹ")
+	}
+}
+
 // PhaseColor returns a colored incident phase string.
 func PhaseColor(phase string) string {
 	switch phase {
