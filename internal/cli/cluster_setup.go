@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -173,12 +175,26 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 			var err error
 			personaName, err = setup.AutoDetectClusterPersonaName(ex)
 			if err != nil {
-				output.ErrorWithHint("No ClusterPersona found in cluster",
-					"Create one first: dorgu cluster init --name <cluster-name> --environment <env>",
-					"Or specify one: dorgu cluster setup --cluster-persona <name>")
-				return errSilent
+				// No ClusterPersona exists yet. Auto-create "dorgu-cluster" using kubectl apply
+				// (idempotent with the operator's bootstrap Runnable). Operator is confirmed
+				// installed at this point (step 1c already verified it).
+				output.Info("No ClusterPersona found — creating 'dorgu-cluster' automatically")
+				yaml, genErr := generateClusterPersonaYAML("dorgu-cluster", "development")
+				if genErr != nil {
+					return genErr
+				}
+				createCtx, createCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer createCancel()
+				applyCmd := exec.CommandContext(createCtx, "kubectl", "apply", "-f", "-")
+				applyCmd.Stdin = bytes.NewBufferString(yaml)
+				if out, applyErr := applyCmd.CombinedOutput(); applyErr != nil {
+					return fmt.Errorf("failed to create ClusterPersona: %s", strings.TrimSpace(string(out)))
+				}
+				personaName = "dorgu-cluster"
+				output.Success("ClusterPersona 'dorgu-cluster' created")
+			} else {
+				output.Success(fmt.Sprintf("ClusterPersona detected: %q", personaName))
 			}
-			output.Success(fmt.Sprintf("ClusterPersona detected: %q", personaName))
 		}
 	} else {
 		if clusterSetupShouldValidateExplicitClusterPersona(clusterSetupFlags.dryRun, clusterSetupFlags.clusterPersonaName) {

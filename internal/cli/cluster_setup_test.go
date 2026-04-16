@@ -62,6 +62,43 @@ func TestClusterSetupPreflight_NoExplicitPersonaSkipsExistenceCheck(t *testing.T
 		"with no --cluster-persona flag, explicit existence check is not applicable to this gate")
 }
 
+// TestAutoDetectClusterPersona_EmptyCluster covers the scenario where no ClusterPersona
+// exists and auto-creation should be triggered. We test via AutoDetectClusterPersonaName
+// returning an error (simulating empty cluster) so the agent knows the path is taken.
+func TestAutoDetectClusterPersona_EmptyCluster(t *testing.T) {
+	t.Parallel()
+	ex := &stubExecutor{
+		out: "",
+		err: fmt.Errorf("exit status 1"),
+	}
+	name, err := setup.AutoDetectClusterPersonaName(ex)
+	require.Error(t, err, "empty cluster should return error to trigger auto-create fallback")
+	assert.Empty(t, name)
+}
+
+func TestAutoDetectClusterPersona_SinglePersona(t *testing.T) {
+	t.Parallel()
+	ex := &stubExecutor{
+		out: "clusterpersona.dorgu.io/dorgu-cluster",
+		err: nil,
+	}
+	name, err := setup.AutoDetectClusterPersonaName(ex)
+	require.NoError(t, err)
+	assert.Equal(t, "dorgu-cluster", name)
+}
+
+// TestGenerateClusterPersonaYAML_ForDefaultName verifies that the YAML generated for
+// the auto-create fallback is valid and contains expected fields.
+func TestGenerateClusterPersonaYAML_ForDefaultName(t *testing.T) {
+	t.Parallel()
+	yaml, err := generateClusterPersonaYAML("dorgu-cluster", "development")
+	require.NoError(t, err)
+	assert.Contains(t, yaml, "name: dorgu-cluster")
+	assert.Contains(t, yaml, "environment: development")
+	assert.Contains(t, yaml, "kind: ClusterPersona")
+	assert.Contains(t, yaml, "apiVersion: dorgu.io/v1")
+}
+
 // TestClusterSetupShouldValidateExplicitClusterPersona_expectedBehavior encodes edge cases for the
 // explicit-persona gate (BUG-4-1 dry-run + explicit case is covered by TestClusterSetupPreflight_MissingClusterPersonaFails).
 func TestClusterSetupShouldValidateExplicitClusterPersona_expectedBehavior(t *testing.T) {
