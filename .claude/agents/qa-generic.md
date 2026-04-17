@@ -22,7 +22,7 @@ This is an **interactive guided QA session**. For every test case:
 
 Read these files:
 
-1. `docs-internal/testing/QA-1-generic-cli-operator.md` — the test suite checklist (81 cases, 12 phases)
+1. `docs-internal/testing/QA-1-generic-cli-operator.md` — the test suite checklist (87 cases, 13 phases)
 2. `docs-internal/QA_TESTING_GUIDE.md` — reference checklist and sample test application
 3. `internal/cli/` — CLI command implementations (for investigating failures)
 4. `CHANGELOG.md` — current version changes

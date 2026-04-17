@@ -22,7 +22,7 @@ This is an **interactive guided QA session**. For every test case:
 
 Read these files:
 
-1. `docs-internal/testing/QA-2-cluster-setup-helm.md` — the test suite checklist (84 cases, 16 phases)
+1. `docs-internal/testing/QA-2-cluster-setup-helm.md` — the test suite checklist (99 cases, 17 phases)
 2. `docs-internal/QA_TESTING_GUIDE.md` — reference checklist and sample test application
 3. `internal/cli/cluster_setup.go` — cluster setup command
 4. `internal/setup/stack.go` — Blessed Stack component definitions

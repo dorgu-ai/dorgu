@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-04-17
+
+### Fixed
+
+- `dorgu cluster setup` no longer fails when no ClusterPersona exists; auto-creates `dorgu-cluster` inline (idempotent with the operator bootstrap). Dry-run mode is unaffected and continues to use a placeholder name.
+
 ## [0.7.4] - 2026-04-09
 
 ### Added

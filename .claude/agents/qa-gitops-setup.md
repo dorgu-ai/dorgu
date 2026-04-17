@@ -22,7 +22,7 @@ This is an **interactive guided QA session**. For every test case:
 
 Read these files:
 
-1. `docs-internal/testing/QA-3-cluster-setup-gitops.md` — the test suite checklist (45 cases, 11 phases)
+1. `docs-internal/testing/QA-3-cluster-setup-gitops.md` — the test suite checklist (47 cases, 11 phases)
 2. `docs-internal/QA_TESTING_GUIDE.md` — reference checklist
 3. `internal/cli/cluster_setup.go` — cluster setup command (GitOps driver path)
 4. `internal/setup/gitops.go` — GitOps scaffold generation
