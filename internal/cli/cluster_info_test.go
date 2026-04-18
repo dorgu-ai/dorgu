@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dorgu-ai/dorgu/internal/output"
 	"github.com/dorgu-ai/dorgu/internal/setup"
 )
 
@@ -105,6 +106,61 @@ func TestDisplayComponentInfos_ShowsServiceError(t *testing.T) {
 
 	if !strings.Contains(out, "not found") {
 		t.Errorf("expected 'not found' in output, got:\n%s", out)
+	}
+}
+
+func TestClusterInfoJSONErrorPath(t *testing.T) {
+	output.Init(true, false)
+	defer output.Init(false, false)
+
+	out := captureStdout(t, func() {
+		_ = output.PrintJSON(map[string]any{
+			"error":          `ClusterPersona "dorgu-cluster" has no installed components recorded yet`,
+			"clusterPersona": "dorgu-cluster",
+			"components":     []any{},
+		})
+	})
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n--- output ---\n%s", err, out)
+	}
+	if _, ok := result["error"]; !ok {
+		t.Error("expected 'error' key in JSON output")
+	}
+	if result["clusterPersona"] != "dorgu-cluster" {
+		t.Errorf("clusterPersona = %v, want dorgu-cluster", result["clusterPersona"])
+	}
+	comps, ok := result["components"]
+	if !ok {
+		t.Fatal("expected 'components' key in JSON output")
+	}
+	// Must be [] not null — scripting consumers rely on this.
+	if comps == nil {
+		t.Error("components must be [] not null in JSON error output")
+	}
+}
+
+func TestClusterInfoJSONAutoDetectFail(t *testing.T) {
+	output.Init(true, false)
+	defer output.Init(false, false)
+
+	out := captureStdout(t, func() {
+		_ = output.PrintJSON(map[string]any{
+			"error":      "no ClusterPersona found",
+			"components": []any{},
+		})
+	})
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n--- output ---\n%s", err, out)
+	}
+	if _, ok := result["error"]; !ok {
+		t.Error("expected 'error' key in JSON output")
+	}
+	if result["components"] == nil {
+		t.Error("components must be [] not null")
 	}
 }
 

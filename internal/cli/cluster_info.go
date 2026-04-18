@@ -44,6 +44,13 @@ func runClusterInfo(cmd *cobra.Command, args []string) error {
 
 	infos, err := setup.GetInstalledComponentsInfo(ex, name)
 	if err != nil {
+		if output.IsJSON() {
+			return output.PrintJSON(map[string]any{
+				"error":          err.Error(),
+				"clusterPersona": name,
+				"components":     []any{},
+			})
+		}
 		output.ErrorWithHint(
 			fmt.Sprintf("Failed to read ClusterPersona %q", name),
 			err.Error(),
@@ -77,6 +84,13 @@ func resolveClusterPersonaName(ex setup.Executor, args []string) (string, error)
 	}
 	name, err := setup.AutoDetectClusterPersonaName(ex)
 	if err != nil {
+		if output.IsJSON() {
+			_ = output.PrintJSON(map[string]any{
+				"error":      err.Error(),
+				"components": []any{},
+			})
+			return "", errSilent
+		}
 		output.ErrorWithHint("No ClusterPersona detected",
 			err.Error(),
 			"Specify one explicitly: dorgu cluster info <name>",

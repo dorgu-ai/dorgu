@@ -141,7 +141,7 @@ func runRemediationList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	var filtered []remediationFull
+	filtered := make([]remediationFull, 0)
 	for _, r := range remediations {
 		if phase != "" && r.Status.Phase != phase {
 			continue

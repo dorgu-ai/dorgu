@@ -166,7 +166,7 @@ func runIncidentsList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Apply filters.
-	var filtered []incidentFull
+	filtered := make([]incidentFull, 0)
 	for _, inc := range incidents {
 		if severity != "" && inc.Spec.Severity != severity {
 			continue
