@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-04-18
+
+### Fixed
+
+- `dorgu cluster info --json` now returns a structured JSON error object when no components are installed, instead of printing help text and ignoring the `--json` flag (BUG-10-3).
+- `dorgu incidents list --json` and `dorgu remediation list --json` now return `[]` instead of `null` when no items exist, for reliable scripting/agent consumption.
+
 ## [0.7.5] - 2026-04-17
 
 ### Fixed
