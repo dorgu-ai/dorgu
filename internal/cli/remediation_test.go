@@ -2,9 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func makeTestRemediation(name, namespace, phase, actionType, severity, confidence, persona string) remediationFull {
@@ -12,7 +18,7 @@ func makeTestRemediation(name, namespace, phase, actionType, severity, confidenc
 	r.Metadata.Name = name
 	r.Metadata.Namespace = namespace
 	r.Metadata.CreationTimestamp = "2026-04-01T10:00:00Z"
-	r.Spec.ActionType = actionType
+	r.Spec.Action.Type = actionType
 	r.Spec.Severity = severity
 	r.Spec.Confidence = confidence
 	r.Spec.PersonaRef.Name = persona
@@ -74,16 +80,16 @@ func TestPrintRemediationDiffFull(t *testing.T) {
 	r.Spec.IncidentRef.Name = "im-api-server-oom-20260401"
 	r.Spec.IncidentRef.Namespace = "production"
 	r.Spec.Explanation = "Container api-server is being OOM-killed because its memory limit\n(256Mi) is insufficient. Increasing to 512Mi provides 2x headroom."
-	r.Spec.Action.PrePatchState = "memory:\n  \"256Mi\"\n"
-	r.Spec.Action.Patch = "memory:\n  \"512Mi\"\n"
+	r.Spec.Action.PrePatchState = json.RawMessage(`{"resources":{"limits":{"memory":"256Mi"}}}`)
+	r.Spec.Action.Patch = json.RawMessage(`{"resources":{"limits":{"memory":"512Mi"}}}`)
 	r.Spec.Rollback = &struct {
-		Automatic      bool   `json:"automatic"`
-		TimeoutMinutes int    `json:"timeoutMinutes"`
-		Condition      string `json:"condition"`
+		Enabled          bool   `json:"enabled"`
+		HealthCheckAfter string `json:"healthCheckAfter"`
+		MaxRetries       int32  `json:"maxRetries"`
 	}{
-		Automatic:      true,
-		TimeoutMinutes: 10,
-		Condition:      "health degrades",
+		Enabled:          true,
+		HealthCheckAfter: "10m0s",
+		MaxRetries:       2,
 	}
 
 	var buf bytes.Buffer
@@ -100,8 +106,8 @@ func TestPrintRemediationDiffFull(t *testing.T) {
 	assert.Contains(t, out, "256Mi")
 	assert.Contains(t, out, "512Mi")
 	assert.Contains(t, out, "Rollback:")
-	assert.Contains(t, out, "Automatic after 10m")
-	assert.Contains(t, out, "health degrades")
+	assert.Contains(t, out, "Automatic rollback if health degrades (verified after 10m0s)")
+	assert.Contains(t, out, "Max retries: 2")
 	assert.Contains(t, out, "dorgu remediation approve fix-oom-api -n production")
 	assert.Contains(t, out, "dorgu remediation reject fix-oom-api -n production")
 }
@@ -130,11 +136,11 @@ func TestPrintRemediationDiffNoActionsWhenNotPending(t *testing.T) {
 func TestPrintRemediationDiffManualRollback(t *testing.T) {
 	r := makeTestRemediation("fix-manual", "default", "Pending", "resource", "warning", "70%", "api")
 	r.Spec.Rollback = &struct {
-		Automatic      bool   `json:"automatic"`
-		TimeoutMinutes int    `json:"timeoutMinutes"`
-		Condition      string `json:"condition"`
+		Enabled          bool   `json:"enabled"`
+		HealthCheckAfter string `json:"healthCheckAfter"`
+		MaxRetries       int32  `json:"maxRetries"`
 	}{
-		Automatic: false,
+		Enabled: false,
 	}
 
 	var buf bytes.Buffer
@@ -217,20 +223,285 @@ func TestActiveRemediationPhases(t *testing.T) {
 	assert.False(t, activeRemediationPhases["RolledBack"])
 }
 
-func TestPrintRemediationDiffDefaultRollbackTimeout(t *testing.T) {
-	r := makeTestRemediation("fix-default-timeout", "default", "Pending", "resource", "warning", "70%", "api")
+func TestPrintRemediationDiffAutomaticRollbackNoHealthCheck(t *testing.T) {
+	r := makeTestRemediation("fix-auto", "default", "Pending", "resource", "warning", "70%", "api")
 	r.Spec.Rollback = &struct {
-		Automatic      bool   `json:"automatic"`
-		TimeoutMinutes int    `json:"timeoutMinutes"`
-		Condition      string `json:"condition"`
+		Enabled          bool   `json:"enabled"`
+		HealthCheckAfter string `json:"healthCheckAfter"`
+		MaxRetries       int32  `json:"maxRetries"`
 	}{
-		Automatic:      true,
-		TimeoutMinutes: 0,
+		Enabled: true,
 	}
 
 	var buf bytes.Buffer
 	printRemediationDiff(&buf, &r)
 	out := buf.String()
 
-	assert.Contains(t, out, "Automatic after 10m")
+	assert.Contains(t, out, "Automatic rollback if health degrades")
+	assert.NotContains(t, out, "verified after")
+}
+
+// operatorRemediationFixture is a real-shaped operator RemediationAction (v0.6.1+
+// with WS1/WS2): the action.patch is a JSON *object* (apiextensionsv1.JSON) and an
+// ordered steps[] plan is present. This is the exact shape that crashed the CLI
+// with "cannot unmarshal object into ... .spec.action.patch of type string".
+const operatorRemediationFixture = `{
+  "apiVersion": "dorgu.io/v1",
+  "kind": "RemediationAction",
+  "metadata": {
+    "name": "fix-oom-api-server",
+    "namespace": "production",
+    "creationTimestamp": "2026-06-24T10:00:00Z"
+  },
+  "spec": {
+    "incidentRef": {"name": "im-oom", "namespace": "production"},
+    "personaRef": {"kind": "ApplicationPersona", "name": "api-server", "namespace": "production"},
+    "trustLevel": 2,
+    "action": {
+      "type": "persona-update",
+      "patch": {"resources": {"limits": {"memory": "512Mi"}}},
+      "prePatchState": {"resources": {"limits": {"memory": "256Mi"}}}
+    },
+    "steps": [
+      {"order": 2, "id": "s2", "type": "restart", "description": "Restart the deployment to pick up new limits", "rationale": "New limits only apply to new pods", "risk": "low", "autoExecutable": false},
+      {"order": 1, "id": "s1", "type": "persona-update", "description": "Increase memory limit to 512Mi", "rationale": "256Mi is insufficient; container is OOMKilled", "risk": "low", "autoExecutable": true, "patch": {"resources": {"limits": {"memory": "512Mi"}}}, "prePatchState": {"resources": {"limits": {"memory": "256Mi"}}}},
+      {"order": 3, "id": "s3", "type": "manual", "description": "Verify no further OOM events for 30m", "risk": "medium", "autoExecutable": false}
+    ],
+    "planSource": "ai-anthropic",
+    "planSummary": "Container OOMKilled due to a low memory limit.\nIncrease the limit then restart the workload.",
+    "explanation": "OOM remediation for api-server",
+    "confidence": "0.85",
+    "approval": {"required": true},
+    "rollback": {"enabled": true, "healthCheckAfter": "10m0s", "maxRetries": 1}
+  },
+  "status": {"phase": "Pending"}
+}`
+
+// legacyRemediationFixture is an older single-Action object (no steps[]) but with an
+// object action.patch — must also parse.
+const legacyRemediationFixture = `{
+  "metadata": {"name": "fix-legacy", "namespace": "default", "creationTimestamp": "2026-04-01T10:00:00Z"},
+  "spec": {
+    "incidentRef": {"name": "im-legacy", "namespace": "default"},
+    "personaRef": {"kind": "ApplicationPersona", "name": "web", "namespace": "default"},
+    "action": {
+      "type": "persona-update",
+      "patch": {"resources": {"limits": {"memory": "512Mi"}}},
+      "prePatchState": {"resources": {"limits": {"memory": "256Mi"}}}
+    },
+    "explanation": "legacy single action",
+    "confidence": "0.7"
+  },
+  "status": {"phase": "Pending"}
+}`
+
+// TestUnmarshalOperatorRemediationAction is the exact Increment-0 Blocker 1 regression:
+// a real operator RemediationAction with an object action.patch + steps[] must
+// unmarshal with NO error.
+func TestUnmarshalOperatorRemediationAction(t *testing.T) {
+	var r remediationFull
+	err := json.Unmarshal([]byte(operatorRemediationFixture), &r)
+	require.NoError(t, err, "operator RemediationAction with object patch + steps must parse")
+
+	assert.Equal(t, "fix-oom-api-server", r.Metadata.Name)
+	assert.Equal(t, "persona-update", r.Spec.Action.Type)
+	assert.Equal(t, "ai-anthropic", r.Spec.PlanSource)
+	assert.Equal(t, "0.85", r.Spec.Confidence)
+	require.Len(t, r.Spec.Steps, 3)
+	assert.JSONEq(t, `{"resources":{"limits":{"memory":"512Mi"}}}`, string(r.Spec.Action.Patch))
+	assert.NotNil(t, r.Spec.Rollback)
+	assert.True(t, r.Spec.Rollback.Enabled)
+}
+
+// TestUnmarshalOperatorRemediationActionList covers the fetchRemediations path
+// (Items[]), which is where the parse crash actually surfaced.
+func TestUnmarshalOperatorRemediationActionList(t *testing.T) {
+	listJSON := `{"items":[` + operatorRemediationFixture + `,` + legacyRemediationFixture + `]}`
+	var list struct {
+		Items []remediationFull `json:"items"`
+	}
+	err := json.Unmarshal([]byte(listJSON), &list)
+	require.NoError(t, err)
+	require.Len(t, list.Items, 2)
+	assert.Len(t, list.Items[0].Spec.Steps, 3)
+	assert.Empty(t, list.Items[1].Spec.Steps)
+}
+
+// TestUnmarshalLegacyRemediationAction ensures a legacy single-Action object parses.
+func TestUnmarshalLegacyRemediationAction(t *testing.T) {
+	var r remediationFull
+	err := json.Unmarshal([]byte(legacyRemediationFixture), &r)
+	require.NoError(t, err)
+	assert.Equal(t, "fix-legacy", r.Metadata.Name)
+	assert.Empty(t, r.Spec.Steps)
+	assert.JSONEq(t, `{"resources":{"limits":{"memory":"512Mi"}}}`, string(r.Spec.Action.Patch))
+}
+
+// TestPrintRemediationDiffOrderedPlan verifies the ordered plan renders steps in
+// order with auto/advisory markers, the plan summary, and per-step diffs.
+func TestPrintRemediationDiffOrderedPlan(t *testing.T) {
+	var r remediationFull
+	require.NoError(t, json.Unmarshal([]byte(operatorRemediationFixture), &r))
+
+	var buf bytes.Buffer
+	printRemediationDiff(&buf, &r)
+	out := buf.String()
+
+	// Plan metadata.
+	assert.Contains(t, out, "Plan:       ai-anthropic")
+	assert.Contains(t, out, "Plan summary:")
+	assert.Contains(t, out, "Container OOMKilled")
+	assert.Contains(t, out, "Plan (3 steps):")
+
+	// Steps render in ascending order regardless of input order.
+	idx1 := strings.Index(out, "[1] persona-update")
+	idx2 := strings.Index(out, "[2] restart")
+	idx3 := strings.Index(out, "[3] manual")
+	require.True(t, idx1 >= 0 && idx2 >= 0 && idx3 >= 0, "all steps must render")
+	assert.Less(t, idx1, idx2, "step 1 before step 2")
+	assert.Less(t, idx2, idx3, "step 2 before step 3")
+
+	// Auto vs advisory markers.
+	assert.Contains(t, out, "[1] persona-update (low; auto):")
+	assert.Contains(t, out, "[2] restart (low; advisory):")
+	assert.Contains(t, out, "[3] manual (medium; advisory):")
+
+	// Rationale + per-step diff.
+	assert.Contains(t, out, "container is OOMKilled")
+	assert.Contains(t, out, "256Mi")
+	assert.Contains(t, out, "512Mi")
+}
+
+// TestPrintRemediationDiffLegacyFallback verifies a legacy single-Action object
+// still renders a proposed-change diff.
+func TestPrintRemediationDiffLegacyFallback(t *testing.T) {
+	var r remediationFull
+	require.NoError(t, json.Unmarshal([]byte(legacyRemediationFixture), &r))
+
+	var buf bytes.Buffer
+	printRemediationDiff(&buf, &r)
+	out := buf.String()
+
+	assert.Contains(t, out, "Proposed change:")
+	assert.NotContains(t, out, "Plan (")
+	assert.Contains(t, out, "256Mi")
+	assert.Contains(t, out, "512Mi")
+}
+
+// TestPrintRemediationListShowsPlanAndSteps verifies the list table surfaces the
+// plan source and step count.
+func TestPrintRemediationListShowsPlanAndSteps(t *testing.T) {
+	var planned remediationFull
+	require.NoError(t, json.Unmarshal([]byte(operatorRemediationFixture), &planned))
+	legacy := makeTestRemediation("fix-legacy", "default", "Pending", "persona-update", "warning", "70%", "web")
+
+	var buf bytes.Buffer
+	printRemediationList(&buf, []remediationFull{planned, legacy}, false)
+	out := buf.String()
+
+	assert.Contains(t, out, "PLAN")
+	assert.Contains(t, out, "STEPS")
+	assert.Contains(t, out, "ai-anthropic")
+	assert.Contains(t, out, "fix-oom-api-server")
+	assert.Contains(t, out, "fix-legacy")
+}
+
+// TestRemediationEmptyListMarshalsToArray locks the prior finding: an empty list
+// must serialize to [] (not null) for --json.
+func TestRemediationEmptyListMarshalsToArray(t *testing.T) {
+	filtered := make([]remediationFull, 0)
+	data, err := json.Marshal(filtered)
+	require.NoError(t, err)
+	assert.Equal(t, "[]", string(data))
+}
+
+func TestRawJSONToString(t *testing.T) {
+	assert.Empty(t, rawJSONToString(nil))
+	assert.Empty(t, rawJSONToString(json.RawMessage("")))
+
+	out := rawJSONToString(json.RawMessage(`{"memory":"512Mi"}`))
+	assert.Contains(t, out, "memory: 512Mi")
+
+	// Unparseable input falls back to the raw bytes.
+	assert.Equal(t, "not json", rawJSONToString(json.RawMessage("not json")))
+}
+
+func TestSortedSteps(t *testing.T) {
+	in := []remediationStep{{Order: 3}, {Order: 1}, {Order: 2}}
+	out := sortedSteps(in)
+
+	// Sorted ascending.
+	assert.Equal(t, int32(1), out[0].Order)
+	assert.Equal(t, int32(2), out[1].Order)
+	assert.Equal(t, int32(3), out[2].Order)
+	// Input is not mutated (immutability).
+	assert.Equal(t, int32(3), in[0].Order)
+}
+
+// writeFakeKubectl installs a fake `kubectl` on PATH that returns getResponse for
+// `get` calls and succeeds for `patch` calls. Cannot be used with t.Parallel.
+func writeFakeKubectl(t *testing.T, getResponse string) {
+	t.Helper()
+	dir := t.TempDir()
+	respFile := filepath.Join(dir, "get-response.json")
+	require.NoError(t, os.WriteFile(respFile, []byte(getResponse), 0o600))
+
+	script := "#!/bin/sh\n" +
+		"for arg in \"$@\"; do\n" +
+		"  case \"$arg\" in\n" +
+		"    get) cat " + respFile + "; exit 0 ;;\n" +
+		"    patch) echo patched; exit 0 ;;\n" +
+		"  esac\n" +
+		"done\n" +
+		"exit 0\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestRunRemediationApprovePending(t *testing.T) {
+	writeFakeKubectl(t, operatorRemediationFixture)
+
+	cmd := newRemediationApproveCmd()
+	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	require.NoError(t, cmd.Execute())
+}
+
+func TestRunRemediationApproveRejectsNonPending(t *testing.T) {
+	completed := strings.Replace(operatorRemediationFixture, `"phase": "Pending"`, `"phase": "Completed"`, 1)
+	writeFakeKubectl(t, completed)
+
+	cmd := newRemediationApproveCmd()
+	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	err := cmd.Execute()
+	assert.ErrorIs(t, err, errSilent)
+}
+
+func TestRunRemediationRejectPending(t *testing.T) {
+	writeFakeKubectl(t, operatorRemediationFixture)
+
+	cmd := newRemediationRejectCmd()
+	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	require.NoError(t, cmd.Execute())
+}
+
+func TestRunRemediationRejectNonRejectablePhase(t *testing.T) {
+	completed := strings.Replace(operatorRemediationFixture, `"phase": "Pending"`, `"phase": "Completed"`, 1)
+	writeFakeKubectl(t, completed)
+
+	cmd := newRemediationRejectCmd()
+	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	err := cmd.Execute()
+	assert.ErrorIs(t, err, errSilent)
 }

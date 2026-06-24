@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
@@ -50,7 +51,34 @@ Examples:
 	return cmd
 }
 
-// remediationFull is used for JSON parsing of RemediationAction resources.
+// remediationStep mirrors the operator's RemediationStep (api/v1). It is a single
+// ordered action within a multi-step remediation plan. Patch/PrePatchState are the
+// operator's apiextensionsv1.JSON objects, so they are parsed as raw JSON.
+type remediationStep struct {
+	Order          int32           `json:"order"`
+	ID             string          `json:"id"`
+	Type           string          `json:"type"`
+	Description    string          `json:"description"`
+	Rationale      string          `json:"rationale"`
+	Risk           string          `json:"risk"`
+	AutoExecutable bool            `json:"autoExecutable"`
+	Patch          json.RawMessage `json:"patch"`
+	PrePatchState  json.RawMessage `json:"prePatchState"`
+}
+
+// remediationStepStatus mirrors the operator's StepStatus (api/v1).
+type remediationStepStatus struct {
+	Order              int32  `json:"order"`
+	Phase              string `json:"phase"`
+	AppliedAt          string `json:"appliedAt"`
+	VerificationResult string `json:"verificationResult"`
+}
+
+// remediationFull is used for JSON parsing of RemediationAction resources. It is
+// aligned to the operator CRD (dorgu-operator/api/v1/remediationaction_types.go):
+// the action patch/prePatchState are JSON objects (apiextensionsv1.JSON), the
+// action type is nested under spec.action.type, and the ordered Steps[] plan +
+// PlanSource/PlanSummary are the plan of record when present.
 type remediationFull struct {
 	Metadata struct {
 		Name              string `json:"name"`
@@ -58,10 +86,13 @@ type remediationFull struct {
 		CreationTimestamp string `json:"creationTimestamp"`
 	} `json:"metadata"`
 	Spec struct {
-		ActionType  string `json:"actionType"`
+		// Severity is not part of the operator CRD; retained for local filtering and
+		// back-compat with older objects/tests. Empty against the current operator.
 		Severity    string `json:"severity"`
 		Confidence  string `json:"confidence"`
 		Explanation string `json:"explanation"`
+		PlanSource  string `json:"planSource"`
+		PlanSummary string `json:"planSummary"`
 		PersonaRef  struct {
 			Kind      string `json:"kind"`
 			Name      string `json:"name"`
@@ -72,19 +103,23 @@ type remediationFull struct {
 			Namespace string `json:"namespace"`
 		} `json:"incidentRef"`
 		Action struct {
-			Patch         string `json:"patch"`
-			PrePatchState string `json:"prePatchState"`
+			Type          string          `json:"type"`
+			Patch         json.RawMessage `json:"patch"`
+			PrePatchState json.RawMessage `json:"prePatchState"`
 		} `json:"action"`
+		Steps    []remediationStep `json:"steps"`
 		Rollback *struct {
-			Automatic      bool   `json:"automatic"`
-			TimeoutMinutes int    `json:"timeoutMinutes"`
-			Condition      string `json:"condition"`
+			Enabled          bool   `json:"enabled"`
+			HealthCheckAfter string `json:"healthCheckAfter"`
+			MaxRetries       int32  `json:"maxRetries"`
 		} `json:"rollback"`
 	} `json:"spec"`
 	Status struct {
-		Phase      string `json:"phase"`
-		ApprovedBy string `json:"approvedBy"`
-		ApprovedAt string `json:"approvedAt"`
+		Phase        string                  `json:"phase"`
+		ApprovedBy   string                  `json:"approvedBy"`
+		ApprovedAt   string                  `json:"approvedAt"`
+		CurrentStep  int32                   `json:"currentStep"`
+		StepStatuses []remediationStepStatus `json:"stepStatuses"`
 	} `json:"status"`
 }
 
@@ -210,13 +245,15 @@ func printRemediationList(w io.Writer, remediations []remediationFull, showAll b
 		return
 	}
 
-	tbl := output.NewTable(w, "NAMESPACE", "NAME", "PHASE", "TYPE", "SEVERITY", "CONFIDENCE", "PERSONA", "AGE")
+	tbl := output.NewTable(w, "NAMESPACE", "NAME", "PHASE", "TYPE", "PLAN", "STEPS", "SEVERITY", "CONFIDENCE", "PERSONA", "AGE")
 	for _, r := range remediations {
 		tbl.AddRow(
 			r.Metadata.Namespace,
 			r.Metadata.Name,
 			output.RemediationPhaseColor(r.Status.Phase),
-			r.Spec.ActionType,
+			r.Spec.Action.Type,
+			planSourceDisplay(r.Spec.PlanSource),
+			stepCountDisplay(r),
 			output.SeverityColor(r.Spec.Severity),
 			r.Spec.Confidence,
 			r.Spec.PersonaRef.Name,
@@ -225,6 +262,24 @@ func printRemediationList(w io.Writer, remediations []remediationFull, showAll b
 	}
 	tbl.Render()
 	fmt.Fprintln(w)
+}
+
+// planSourceDisplay renders the plan source column, using a placeholder for legacy
+// objects that predate the ordered-plan schema.
+func planSourceDisplay(planSource string) string {
+	if planSource == "" {
+		return "-"
+	}
+	return planSource
+}
+
+// stepCountDisplay renders the number of ordered steps, falling back to "-" for
+// legacy single-Action objects that carry no Steps[] plan.
+func stepCountDisplay(r remediationFull) string {
+	if len(r.Spec.Steps) == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d", len(r.Spec.Steps))
 }
 
 // --- diff ---
@@ -323,8 +378,11 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "Target:     %s\n", personaDisplay)
 	fmt.Fprintf(w, "Severity:   %s\n", output.SeverityColor(r.Spec.Severity))
-	fmt.Fprintf(w, "Type:       %s\n", r.Spec.ActionType)
+	fmt.Fprintf(w, "Type:       %s\n", r.Spec.Action.Type)
 	fmt.Fprintf(w, "Confidence: %s\n", r.Spec.Confidence)
+	if r.Spec.PlanSource != "" {
+		fmt.Fprintf(w, "Plan:       %s\n", r.Spec.PlanSource)
+	}
 	fmt.Fprintf(w, "Phase:      %s\n", output.RemediationPhaseColor(r.Status.Phase))
 
 	if r.Spec.IncidentRef.Name != "" {
@@ -341,28 +399,24 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 		fmt.Fprintln(w)
 	}
 
-	// Proposed change diff
-	if r.Spec.Action.PrePatchState != "" || r.Spec.Action.Patch != "" {
-		fmt.Fprintln(w, "Proposed change:")
-		output.RenderDiff(w, r.Spec.Action.PrePatchState, r.Spec.Action.Patch, 3)
-		fmt.Fprintln(w)
-	}
+	// Proposed change: the ordered plan when present, else the legacy single Action.
+	printRemediationPlan(w, r)
 
 	// Rollback info
 	if r.Spec.Rollback != nil {
 		rb := r.Spec.Rollback
 		fmt.Fprintln(w, "Rollback:")
-		if rb.Automatic {
-			timeout := rb.TimeoutMinutes
-			if timeout == 0 {
-				timeout = 10
+		if rb.Enabled {
+			if rb.HealthCheckAfter != "" {
+				fmt.Fprintf(w, "  Automatic rollback if health degrades (verified after %s)\n", rb.HealthCheckAfter)
+			} else {
+				fmt.Fprintln(w, "  Automatic rollback if health degrades")
 			}
-			fmt.Fprintf(w, "  Automatic after %dm if health degrades\n", timeout)
+			if rb.MaxRetries > 0 {
+				fmt.Fprintf(w, "  Max retries: %d\n", rb.MaxRetries)
+			}
 		} else {
 			fmt.Fprintln(w, "  Manual rollback required")
-		}
-		if rb.Condition != "" {
-			fmt.Fprintf(w, "  Condition: %s\n", rb.Condition)
 		}
 		fmt.Fprintln(w)
 	}
@@ -376,6 +430,87 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 			r.Metadata.Name, r.Metadata.Namespace)
 		fmt.Fprintln(w)
 	}
+}
+
+// printRemediationPlan renders the proposed change. When the ordered Steps[] plan
+// is present it is the plan of record: print the plan summary then each step in
+// order with a per-step colored diff. For legacy objects with only a single Action,
+// fall back to a single proposed-change diff.
+func printRemediationPlan(w io.Writer, r *remediationFull) {
+	if len(r.Spec.Steps) == 0 {
+		// Legacy single-Action object.
+		pre := rawJSONToString(r.Spec.Action.PrePatchState)
+		patch := rawJSONToString(r.Spec.Action.Patch)
+		if pre != "" || patch != "" {
+			fmt.Fprintln(w, "Proposed change:")
+			output.RenderDiff(w, pre, patch, 3)
+			fmt.Fprintln(w)
+		}
+		return
+	}
+
+	if r.Spec.PlanSummary != "" {
+		fmt.Fprintln(w, "Plan summary:")
+		for _, line := range strings.Split(r.Spec.PlanSummary, "\n") {
+			fmt.Fprintf(w, "  %s\n", line)
+		}
+		fmt.Fprintln(w)
+	}
+
+	steps := sortedSteps(r.Spec.Steps)
+	fmt.Fprintf(w, "Plan (%d steps):\n", len(steps))
+	fmt.Fprintln(w)
+	for _, s := range steps {
+		mode := "advisory"
+		if s.AutoExecutable {
+			mode = "auto"
+		}
+		risk := s.Risk
+		if risk == "" {
+			risk = "unknown"
+		}
+		fmt.Fprintf(w, "  [%d] %s (%s; %s): %s\n", s.Order, s.Type, risk, mode, s.Description)
+		if s.Rationale != "" {
+			for _, line := range strings.Split(s.Rationale, "\n") {
+				fmt.Fprintf(w, "      %s\n", line)
+			}
+		}
+		pre := rawJSONToString(s.PrePatchState)
+		patch := rawJSONToString(s.Patch)
+		if pre != "" || patch != "" {
+			output.RenderDiff(w, pre, patch, 3)
+		}
+		fmt.Fprintln(w)
+	}
+}
+
+// sortedSteps returns a new slice of steps ordered by Order (ascending), without
+// mutating the input.
+func sortedSteps(steps []remediationStep) []remediationStep {
+	out := make([]remediationStep, len(steps))
+	copy(out, steps)
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Order < out[j].Order
+	})
+	return out
+}
+
+// rawJSONToString converts a raw JSON value (the operator's apiextensionsv1.JSON)
+// into a stable, human-readable YAML string for diffing. Empty input yields an
+// empty string; unparseable input falls back to the raw bytes.
+func rawJSONToString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var v interface{}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return string(raw)
+	}
+	out, err := yaml.Marshal(v)
+	if err != nil {
+		return string(raw)
+	}
+	return string(out)
 }
 
 // --- approve ---
