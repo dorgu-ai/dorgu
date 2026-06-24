@@ -1,6 +1,7 @@
 # =============================================================================
 # Go CLI Project - .gitignore
 # =============================================================================
+graphify-out/
 
 # Internal documentation (not for GitHub)
 .github/workflows/deploy.yaml

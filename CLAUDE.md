@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Dorgu** is an AI-powered CLI tool that analyzes containerized applications (Dockerfile, docker-compose, source code) and generates production-ready Kubernetes manifests, ArgoCD configs, CI/CD workflows, and ApplicationPersona CRDs. It pairs with the **Dorgu Operator** (separate repo: `dorgu-ai/dorgu-operator`) for cluster-side validation, cluster discovery, and real-time CLI↔operator communication via WebSocket.
 
-**Current status (Feb 2026):** Phases 1, 1.5, and 1.5+ are complete. CLI v0.2.0 and Operator v0.2.0 are the current targets. Phase 2 (advanced security policies, compliance templates, IncidentMemory CRD) is next.
+**Current status (June 2026):** Phases 1 → 1.7, Phase 2a (detection), and Phase 2b (remediation loop) are **shipped**. Current releases: **CLI v0.7.6, Operator v0.6.1**. The full cluster self-healing loop is implemented end-to-end (detect → diagnose → propose → approve → apply → verify → learn). Phase 2c is **partially done**: operator auto-creates a ClusterPersona on startup (shipped v0.6.1), but the remaining 2c scope — app auto-discovery + skeleton personas, the two-state `managed/unmanaged` persona model, `dorgu persona discover`, the REST Query API (`:8088`), and the MCP server (`:8090/mcp`) — is **approved but NOT built**. Work paused ~April 2026 and restarted June 2026. See `docs-internal/PROJECT_SUMMARY.md` for the authoritative state.
 
 Go module: `github.com/dorgu-ai/dorgu`
 
@@ -80,7 +80,10 @@ Dorgu implements progressive trust levels:
 ### CRDs (API group `dorgu.io/v1`)
 
 - **ApplicationPersona** (namespaced) — living identity of an app: resources, scaling, health, security policies, ownership. Status includes validation results, health, ArgoCD sync, and Prometheus baselines.
-- **ClusterPersona** (cluster-scoped, singleton) — cluster identity: nodes, add-ons, resource capacity, platform type. Auto-discovered and kept up-to-date by the ClusterPersona controller (requeues every 5 minutes).
+- **ClusterPersona** (cluster-scoped, singleton) — cluster identity: nodes, add-ons, resource capacity, platform type. Auto-discovered and kept up-to-date by the ClusterPersona controller (requeues every 5 minutes); auto-created on operator startup if absent (`dorgu-cluster`).
+- **IncidentMemory** (namespaced) — detected incidents with signal, root-cause diagnosis, confidence, correlation, and resolution/outcome. Organizational learning across incidents.
+- **RemediationAction** (namespaced) — proposed fix as a JSON merge patch to a Persona spec (never to workloads), with explanation, pre-patch snapshot, approval workflow, trust level, and rollback policy. Lifecycle: Pending → Approved → Applying → Verifying → Completed / RolledBack / Failed / Rejected.
+- **DorguEvent** — classified/correlated K8s event surface used by the event pipeline.
 
 Source-of-truth hierarchy: CLI/GitOps owns `spec` (desired intent); Operator owns `status` (observed reality, learned patterns).
 
@@ -89,7 +92,7 @@ Source-of-truth hierarchy: CLI/GitOps owns `spec` (desired intent); Operator own
 | Package | Role |
 |---------|------|
 | `internal/analyzer/` | Dockerfile, Compose, code (language/framework detection), git repo auto-detect |
-| `internal/cli/` | Cobra commands: generate, init, config, persona, cluster, watch, sync, version |
+| `internal/cli/` | Cobra commands: generate, init, config, persona (generate/apply/status/list), cluster (init/status/setup/info), platform serve, health, incidents (list/describe), remediation (list/diff/approve/reject), watch (personas/cluster/events/incidents/remediations), sync, version |
 | `internal/config/` | Config loading and merging (app/workspace + global) |
 | `internal/generator/` | Manifest generators + `validate.go` (post-generation checks) + `security.go` + `persona_yaml.go` |
 | `internal/llm/` | LLM provider interface + OpenAI, Anthropic, Gemini, Ollama implementations |
