@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-09
+
+### Added
+
+- `dorgu remediation heal` command — apply an approved remediation's resource change directly to the running workload, translating the RemediationAction's ordered `Steps[]` plan into concrete patches.
+- `dorgu remediation approve` now heals the running workload after approval by default. Use `--no-heal` to only patch the RemediationAction status, and `--yes` to skip the heal confirmation prompt.
+
+### Fixed
+
+- `dorgu remediation` now correctly parses operator `RemediationAction` resources and renders their ordered `Steps[]` as readable, sequenced plans in `list` and `diff` output.
+
 ## [0.7.6] - 2026-04-18
 
 ### Fixed
