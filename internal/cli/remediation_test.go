@@ -461,8 +461,10 @@ func writeFakeKubectl(t *testing.T, getResponse string) {
 func TestRunRemediationApprovePending(t *testing.T) {
 	writeFakeKubectl(t, operatorRemediationFixture)
 
+	// --no-heal isolates the status-patch behaviour; the heal path (default on)
+	// is covered by TestRunRemediationApproveHealsWorkload with a dispatching fake.
 	cmd := newRemediationApproveCmd()
-	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production"})
+	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production", "--no-heal"})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 
