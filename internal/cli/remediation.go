@@ -47,6 +47,7 @@ Examples:
 		newRemediationDiffCmd(),
 		newRemediationApproveCmd(),
 		newRemediationRejectCmd(),
+		newRemediationHealCmd(),
 	)
 	return cmd
 }
@@ -524,17 +525,31 @@ The operator will then apply the proposed patch and monitor health.
 
 Use --next to automatically approve the highest-severity pending remediation.
 
+After approval the CLI heals the running workload: it translates the approved
+persona-update resource change (memory/CPU limits/requests) into an equivalent
+strategic-merge patch on the matching Deployment and applies it with your
+credentials, so the pod recovers. The operator stays advisory and never writes
+workloads. Use --no-heal to only patch the RemediationAction status.
+
 Examples:
   dorgu remediation approve fix-oom-api-server -n production
   dorgu remediation approve --next -n production
-  dorgu remediation approve fix-oom-api-server -n production --reason "verified safe"`,
+  dorgu remediation approve fix-oom-api-server -n production --no-heal
+  dorgu remediation approve fix-oom-api-server -n production --yes
+  dorgu remediation approve fix-oom-api-server -n production --workload api --container app`,
 		RunE: runRemediationApprove,
 	}
 
 	cmd.Flags().StringP("namespace", "n", "", "namespace of the remediation")
 	cmd.Flags().String("reason", "", "optional approval reason")
 	cmd.Flags().Bool("next", false, "approve the highest-severity pending remediation")
+	cmd.Flags().Bool("heal", true, "after approval, apply the resource change to the workload")
+	cmd.Flags().Bool("no-heal", false, "skip the workload heal; only patch the RemediationAction status")
+	cmd.Flags().String("workload", "", "explicit Deployment name (overrides label discovery)")
+	cmd.Flags().String("container", "", "explicit container name to patch")
+	cmd.Flags().Bool("yes", false, "skip the heal confirmation prompt")
 	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	cmd.MarkFlagsMutuallyExclusive("heal", "no-heal")
 
 	return cmd
 }
@@ -547,6 +562,11 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 	next, _ := cmd.Flags().GetBool("next")
 	namespace, _ := cmd.Flags().GetString("namespace")
 	reason, _ := cmd.Flags().GetString("reason")
+	healFlag, _ := cmd.Flags().GetBool("heal")
+	noHealFlag, _ := cmd.Flags().GetBool("no-heal")
+	workloadFlag, _ := cmd.Flags().GetString("workload")
+	containerFlag, _ := cmd.Flags().GetString("container")
+	assumeYes, _ := cmd.Flags().GetBool("yes")
 	kubeconfigFlag, _ := cmd.Flags().GetString("kubeconfig")
 
 	kubeconfig, err := validateKubeconfig(kubeconfigFlag)
@@ -596,11 +616,31 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to approve remediation: %s", strings.TrimSpace(string(patchOut)))
 	}
 
-	msg := "Remediation approved. The operator will apply the patch and monitor health."
+	msg := "Remediation approved. The operator will update the persona and monitor health."
 	if reason != "" {
 		msg += fmt.Sprintf(" Reason: %s", reason)
 	}
 	output.Success(msg)
+
+	// Heal the workload (default on). The operator only patches the persona spec;
+	// the CLI applies the equivalent workload change so the pod actually recovers.
+	if !healFlag || noHealFlag {
+		output.Info("Skipping workload heal (--no-heal). Apply the resource change yourself to recover the pod.")
+		return nil
+	}
+
+	opts := healOptions{
+		kubeconfig: kubeconfig,
+		workload:   workloadFlag,
+		container:  containerFlag,
+		assumeYes:  assumeYes,
+	}
+	if err := healWorkload(ctx, rem, opts, cmd.InOrStdin(), cmd.OutOrStdout()); err != nil {
+		output.Error(fmt.Sprintf("Workload heal failed: %v", err))
+		output.Info("The remediation is still Approved; re-run heal with: dorgu remediation heal " +
+			name + " -n " + namespace)
+		return errSilent
+	}
 	return nil
 }
 
@@ -712,5 +752,91 @@ func runRemediationReject(cmd *cobra.Command, args []string) error {
 		msg += fmt.Sprintf(" Reason: %s", reason)
 	}
 	output.Success(msg)
+	return nil
+}
+
+// --- heal ---
+
+func newRemediationHealCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "heal <name>",
+		Short: "Apply an approved remediation's resource change to the workload",
+		Long: `Translate a RemediationAction's approved persona-update resource change
+(memory/CPU limits/requests) into an equivalent strategic-merge patch on the
+matching Deployment and apply it with your credentials, so the pod recovers.
+
+This is run automatically by 'approve' (unless --no-heal); use it to re-run the
+workload sync on its own (e.g. after --no-heal, or if a previous heal failed).
+The operator never writes workloads — this is the CLI (your tool) closing the
+loop. Non-resource steps (restart/scale/manual) are printed as advisory, not
+executed.
+
+Examples:
+  dorgu remediation heal fix-oom-api-server -n production
+  dorgu remediation heal fix-oom-api-server -n production --yes
+  dorgu remediation heal fix-oom-api-server -n production --workload api --container app`,
+		Args: cobra.ExactArgs(1),
+		RunE: runRemediationHeal,
+	}
+
+	cmd.Flags().StringP("namespace", "n", "", "namespace of the remediation (required)")
+	_ = cmd.MarkFlagRequired("namespace")
+	cmd.Flags().String("workload", "", "explicit Deployment name (overrides label discovery)")
+	cmd.Flags().String("container", "", "explicit container name to patch")
+	cmd.Flags().Bool("yes", false, "skip the heal confirmation prompt")
+	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+
+	return cmd
+}
+
+func runRemediationHeal(cmd *cobra.Command, args []string) error {
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		return fmt.Errorf("kubectl not found in PATH; required for remediation heal")
+	}
+
+	name := args[0]
+	namespace, _ := cmd.Flags().GetString("namespace")
+	workloadFlag, _ := cmd.Flags().GetString("workload")
+	containerFlag, _ := cmd.Flags().GetString("container")
+	assumeYes, _ := cmd.Flags().GetBool("yes")
+	kubeconfigFlag, _ := cmd.Flags().GetString("kubeconfig")
+
+	kubeconfig, err := validateKubeconfig(kubeconfigFlag)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), remediationCmdTimeout)
+	defer cancel()
+
+	rem, err := fetchRemediation(ctx, kubeconfig, name, namespace)
+	if err != nil {
+		return err
+	}
+	// Preserve the approve/reject safety gate: never heal a remediation a human has
+	// explicitly rejected or that the operator has failed/expired/rolled back.
+	switch rem.Status.Phase {
+	case "Rejected", "Failed", "Expired", "RolledBack":
+		output.Error(fmt.Sprintf("Remediation is in %s phase; refusing to heal a %s remediation.",
+			rem.Status.Phase, rem.Status.Phase))
+		return errSilent
+	case "Approved", "Applying", "Verifying", "Completed":
+		// Expected: heal (or re-heal) an approved remediation.
+	default:
+		// Pending/unset: allow but warn — running heal directly is an implicit approval.
+		output.Warn(fmt.Sprintf("Remediation is in %s phase; healing anyway. Approve it first to record intent.",
+			rem.Status.Phase))
+	}
+
+	opts := healOptions{
+		kubeconfig: kubeconfig,
+		workload:   workloadFlag,
+		container:  containerFlag,
+		assumeYes:  assumeYes,
+	}
+	if err := healWorkload(ctx, rem, opts, cmd.InOrStdin(), cmd.OutOrStdout()); err != nil {
+		output.Error(fmt.Sprintf("Workload heal failed: %v", err))
+		return errSilent
+	}
 	return nil
 }
