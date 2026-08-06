@@ -87,9 +87,6 @@ type remediationFull struct {
 		CreationTimestamp string `json:"creationTimestamp"`
 	} `json:"metadata"`
 	Spec struct {
-		// Severity is not part of the operator CRD; retained for local filtering and
-		// back-compat with older objects/tests. Empty against the current operator.
-		Severity    string `json:"severity"`
 		Confidence  string `json:"confidence"`
 		Explanation string `json:"explanation"`
 		PlanSource  string `json:"planSource"`
@@ -134,17 +131,18 @@ func newRemediationListCmd() *cobra.Command {
 active remediations (Pending, Approved, Applying, Verifying, Failed).
 Use --all to include completed, rejected, and expired.
 
+Severity lives on the linked IncidentMemory, not on the RemediationAction — read it
+with 'dorgu incidents describe <incident>'.
+
 Examples:
   dorgu remediation list
   dorgu remediation list --phase Pending
-  dorgu remediation list -n production --severity critical
   dorgu remediation list --all --limit 100`,
 		RunE: runRemediationList,
 	}
 
 	cmd.Flags().StringP("namespace", "n", "", "filter by namespace (default: all)")
 	cmd.Flags().String("phase", "", "filter by phase (Pending, Approved, Applying, Verifying, Completed, etc.)")
-	cmd.Flags().String("severity", "", "filter by severity (info, warning, critical)")
 	cmd.Flags().Bool("all", false, "include completed/rejected/expired remediations")
 	cmd.Flags().Int("limit", 50, "maximum number of remediations to show")
 	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
@@ -159,7 +157,6 @@ func runRemediationList(cmd *cobra.Command, args []string) error {
 
 	namespace, _ := cmd.Flags().GetString("namespace")
 	phase, _ := cmd.Flags().GetString("phase")
-	severity, _ := cmd.Flags().GetString("severity")
 	showAll, _ := cmd.Flags().GetBool("all")
 	limit, _ := cmd.Flags().GetInt("limit")
 	kubeconfigFlag, _ := cmd.Flags().GetString("kubeconfig")
@@ -180,9 +177,6 @@ func runRemediationList(cmd *cobra.Command, args []string) error {
 	filtered := make([]remediationFull, 0)
 	for _, r := range remediations {
 		if phase != "" && r.Status.Phase != phase {
-			continue
-		}
-		if severity != "" && r.Spec.Severity != severity {
 			continue
 		}
 		if !showAll && !activeRemediationPhases[r.Status.Phase] {
@@ -246,7 +240,7 @@ func printRemediationList(w io.Writer, remediations []remediationFull, showAll b
 		return
 	}
 
-	tbl := output.NewTable(w, "NAMESPACE", "NAME", "PHASE", "TYPE", "PLAN", "STEPS", "SEVERITY", "CONFIDENCE", "PERSONA", "AGE")
+	tbl := output.NewTable(w, "NAMESPACE", "NAME", "PHASE", "TYPE", "PLAN", "STEPS", "CONFIDENCE", "PERSONA", "AGE")
 	for _, r := range remediations {
 		tbl.AddRow(
 			r.Metadata.Namespace,
@@ -255,7 +249,6 @@ func printRemediationList(w io.Writer, remediations []remediationFull, showAll b
 			r.Spec.Action.Type,
 			planSourceDisplay(r.Spec.PlanSource),
 			stepCountDisplay(r),
-			output.SeverityColor(r.Spec.Severity),
 			r.Spec.Confidence,
 			r.Spec.PersonaRef.Name,
 			formatAge(r.Metadata.CreationTimestamp),
@@ -378,7 +371,6 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 	fmt.Fprintln(w, strings.Repeat("═", len([]rune("Remediation: "+r.Metadata.Name))))
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "Target:     %s\n", personaDisplay)
-	fmt.Fprintf(w, "Severity:   %s\n", output.SeverityColor(r.Spec.Severity))
 	fmt.Fprintf(w, "Type:       %s\n", r.Spec.Action.Type)
 	fmt.Fprintf(w, "Confidence: %s\n", r.Spec.Confidence)
 	if r.Spec.PlanSource != "" {
@@ -523,7 +515,7 @@ func newRemediationApproveCmd() *cobra.Command {
 		Long: `Approve a RemediationAction, transitioning it from Pending to Approved.
 The operator will then apply the proposed patch and monitor health.
 
-Use --next to automatically approve the highest-severity pending remediation.
+Use --next to approve the oldest pending remediation without naming it.
 
 After approval the CLI heals the running workload: it translates the approved
 persona-update resource change (memory/CPU limits/requests) into an equivalent
@@ -542,7 +534,7 @@ Examples:
 
 	cmd.Flags().StringP("namespace", "n", "", "namespace of the remediation")
 	cmd.Flags().String("reason", "", "optional approval reason")
-	cmd.Flags().Bool("next", false, "approve the highest-severity pending remediation")
+	cmd.Flags().Bool("next", false, "approve the oldest pending remediation")
 	cmd.Flags().Bool("heal", true, "after approval, apply the resource change to the workload")
 	cmd.Flags().Bool("no-heal", false, "skip the workload heal; only patch the RemediationAction status")
 	cmd.Flags().String("workload", "", "explicit Deployment name (overrides label discovery)")
@@ -644,7 +636,13 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// findNextPendingRemediation finds the highest-severity pending remediation.
+// findNextPendingRemediation returns the oldest pending remediation.
+//
+// It used to rank by severity, but RemediationAction carries no severity field —
+// every candidate tied at rank 0 and the "highest-severity" pick was really just
+// whichever object the API server listed first. Oldest-first is the honest
+// ordering: the longest-waiting incident goes next, and ties break on
+// namespace/name so repeated runs choose the same action.
 func findNextPendingRemediation(ctx context.Context, kubeconfig, namespace string) (string, string, error) {
 	remediations, err := fetchRemediations(ctx, kubeconfig, namespace)
 	if err != nil {
@@ -663,26 +661,23 @@ func findNextPendingRemediation(ctx context.Context, kubeconfig, namespace strin
 		return "", "", errSilent
 	}
 
-	sort.Slice(pending, func(i, j int) bool {
-		return severityRank(pending[i].Spec.Severity) > severityRank(pending[j].Spec.Severity)
+	sort.SliceStable(pending, func(i, j int) bool {
+		return pendingOrderKey(pending[i]) < pendingOrderKey(pending[j])
 	})
 
 	chosen := pending[0]
 	return chosen.Metadata.Name, chosen.Metadata.Namespace, nil
 }
 
-// severityRank returns a numeric rank for sorting severities (higher = more severe).
-func severityRank(severity string) int {
-	switch strings.ToLower(severity) {
-	case "critical":
-		return 3
-	case "warning":
-		return 2
-	case "info":
-		return 1
-	default:
-		return 0
+// pendingOrderKey builds the sort key for --next: creation time first, then
+// namespace/name as a stable tie-break. Unparseable or missing timestamps sort
+// last so a malformed object never hijacks the pick.
+func pendingOrderKey(r remediationFull) string {
+	created := "9999-12-31T23:59:59Z"
+	if t, err := time.Parse(time.RFC3339, r.Metadata.CreationTimestamp); err == nil {
+		created = t.UTC().Format(time.RFC3339)
 	}
+	return created + "/" + r.Metadata.Namespace + "/" + r.Metadata.Name
 }
 
 // --- reject ---

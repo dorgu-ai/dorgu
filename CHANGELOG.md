@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Removed
+
+- **`dorgu remediation list --severity` — a filter that always returned nothing** — it matched `spec.severity` on `RemediationAction`, a field the operator's CRD does not have and never sets, so `--severity critical` silently returned an empty list. The flag, the `SEVERITY` column (always blank), the `Severity:` row in `remediation diff`, and the local `Severity` struct field are removed. Severity lives on the linked `IncidentMemory` — read it with `dorgu incidents describe <incident>`, where `--severity` does work.
+
+### Changed
+
+- **`dorgu remediation approve --next` now picks the oldest pending remediation** — it ranked candidates by the same absent `severity` field, so every one tied and "highest-severity" really meant "whichever the API server listed first." It now orders by creation time, oldest first, with namespace/name as a stable tie-break so repeated runs choose the same action; objects with a missing or unparseable timestamp sort last. The flag itself keeps working as before.
+
 ## [0.8.0] - 2026-07-09
 
 ### Added
