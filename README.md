@@ -371,7 +371,7 @@ dorgu remediation approve ra-default-api-oom-b71c -n default --yes --json
 | Flag | Description | Default |
 |------|-------------|---------|
 | `-n, --namespace` | Namespace of the remediation | — |
-| `--next` | Approve the highest-severity pending remediation | `false` |
+| `--next` | Approve the oldest pending remediation without naming it | `false` |
 | `--reason` | Optional approval reason, recorded on the action | `""` |
 | `--heal` | After approval, apply the resource change to the workload | `true` |
 | `--no-heal` | Skip the workload heal; only patch the RemediationAction status | `false` |
