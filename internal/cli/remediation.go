@@ -597,6 +597,32 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		return errSilent
 	}
 
+	heal := healFlag && !noHealFlag
+	opts := healOptions{
+		kubeconfig: kubeconfig,
+		workload:   workloadFlag,
+		container:  containerFlag,
+		assumeYes:  assumeYes,
+	}
+
+	// Preflight the workload change BEFORE approving anything. Approval is what
+	// tells the operator to patch the persona and start the verification clock,
+	// so approving first and discovering afterwards that the Deployment cannot be
+	// found leaves the persona at the new limits, the workload at the old ones,
+	// and a 10-minute Applying/Verifying window over a change that never landed.
+	// Nothing is written until we know the change can be applied.
+	var exec *healExecution
+	if heal {
+		exec, err = planHeal(ctx, rem, opts)
+		if err != nil {
+			output.Error(fmt.Sprintf("Cannot apply this remediation to the workload: %v", err))
+			output.Info("Nothing was approved and nothing was changed.")
+			output.Info("Name the workload with --workload <deployment>, or approve without healing " +
+				"using --no-heal if you will apply the change yourself.")
+			return errSilent
+		}
+	}
+
 	// Patch status to Approved.
 	now := time.Now().UTC().Format(time.RFC3339)
 	patch := fmt.Sprintf(`{"status":{"phase":"Approved","approvedBy":"cli-user","approvedAt":"%s"}}`, now)
@@ -616,21 +642,26 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 
 	// Heal the workload (default on). The operator only patches the persona spec;
 	// the CLI applies the equivalent workload change so the pod actually recovers.
-	if !healFlag || noHealFlag {
+	if !heal {
 		output.Info("Skipping workload heal (--no-heal). Apply the resource change yourself to recover the pod.")
+		output.Warn("Until you do, the persona and the running workload disagree.")
 		return nil
 	}
 
-	opts := healOptions{
-		kubeconfig: kubeconfig,
-		workload:   workloadFlag,
-		container:  containerFlag,
-		assumeYes:  assumeYes,
+	out := cmd.OutOrStdout()
+	printHealPreamble(out, exec.Context, exec.Advisory)
+
+	if !exec.hasWorkloadChange() {
+		output.Warn("No auto-applicable resource change in this remediation; nothing to heal automatically.")
+		return nil
 	}
-	if err := healWorkload(ctx, rem, opts, cmd.InOrStdin(), cmd.OutOrStdout()); err != nil {
+
+	if err := executeHeal(ctx, exec, opts, cmd.InOrStdin(), out); err != nil {
 		output.Error(fmt.Sprintf("Workload heal failed: %v", err))
-		output.Info("The remediation is still Approved; re-run heal with: dorgu remediation heal " +
-			name + " -n " + namespace)
+		output.Warn(fmt.Sprintf(
+			"The remediation is Approved but %s/%s was NOT patched; the persona and the workload now disagree.",
+			exec.Namespace, exec.Deployment))
+		output.Info("Re-run the heal with: dorgu remediation heal " + name + " -n " + namespace)
 		return errSilent
 	}
 	return nil

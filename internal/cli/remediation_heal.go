@@ -59,9 +59,34 @@ type healPlan struct {
 }
 
 // deploymentSummary is the minimal Deployment shape the heal path needs.
+// Labels and SelectorLabels feed the persona → Deployment fallback chain in
+// workload_match.go.
 type deploymentSummary struct {
-	Name       string
-	Containers []string
+	Name           string
+	Containers     []string
+	Labels         map[string]string
+	SelectorLabels map[string]string
+}
+
+// healExecution is a fully resolved, ready-to-apply workload change: the
+// Deployment, the container and the exact patch. Producing one is the preflight
+// that approval runs before it flips a RemediationAction to Approved, so a heal
+// that cannot be applied never reports success and never lets the operator
+// advance the action to Applying/Verifying over a change that was never made.
+type healExecution struct {
+	Namespace  string
+	Deployment string
+	Container  string
+	Patch      string
+	Change     *healResourceChange
+	Advisory   []advisoryStep
+	Context    string
+}
+
+// hasWorkloadChange reports whether this plan actually patches a workload, as
+// opposed to carrying advisory steps only.
+func (e *healExecution) hasWorkloadChange() bool {
+	return e != nil && !e.Change.isEmpty()
 }
 
 // --- plan interpretation (pure) ---
@@ -269,25 +294,8 @@ func sortedKeys(m map[string]string) []string {
 
 // --- workload selection (pure) ---
 
-// selectDeployment resolves the target Deployment from the label-matched set.
-// 0 or >1 matches is an error that requires --workload.
-func selectDeployment(ds []deploymentSummary, appName string) (deploymentSummary, error) {
-	switch len(ds) {
-	case 0:
-		return deploymentSummary{}, fmt.Errorf(
-			"no Deployment found for app %q; specify one with --workload", appName)
-	case 1:
-		return ds[0], nil
-	default:
-		names := make([]string, len(ds))
-		for i, d := range ds {
-			names[i] = d.Name
-		}
-		return deploymentSummary{}, fmt.Errorf(
-			"multiple Deployments match app %q (%s); specify one with --workload",
-			appName, strings.Join(names, ", "))
-	}
-}
+// selectDeployment lives in workload_match.go: resolving a persona to its
+// Deployment is the same ordered fallback chain the operator uses.
 
 // selectContainer picks the container to patch: an explicit --container if valid,
 // else the sole container, else the one whose name matches the app, else an error
@@ -356,8 +364,8 @@ func personaNamespace(r *remediationFull) string {
 	return r.Metadata.Namespace
 }
 
-// resolveAppName determines the workload label value. The operator matches
-// Deployments by app.kubernetes.io/name=<persona.spec.name>, so we read spec.name
+// resolveAppName determines the app name to resolve the workload by. The
+// operator resolves Deployments from persona.spec.name, so we read spec.name
 // from the ApplicationPersona (best-effort); if that lookup fails we fall back to
 // the personaRef name.
 func resolveAppName(ctx context.Context, kubeconfig string, r *remediationFull) string {
@@ -382,27 +390,24 @@ func resolveAppName(ctx context.Context, kubeconfig string, r *remediationFull) 
 }
 
 // discoverWorkload finds the target Deployment. An explicit --workload is fetched
-// directly; otherwise Deployments are listed by app.kubernetes.io/name, falling
-// back to the app label, in the persona's namespace only.
+// directly; otherwise every Deployment in the persona's namespace is a candidate
+// and the fallback chain picks one. Listing without a label selector is the
+// point: a selector can only find workloads labelled on the Deployment object,
+// which most real manifests are not.
 func discoverWorkload(ctx context.Context, kubeconfig, ns, appName, workloadFlag string) (deploymentSummary, error) {
 	if workloadFlag != "" {
 		return getDeployment(ctx, kubeconfig, ns, workloadFlag)
 	}
-	ds, err := listDeploymentsByLabel(ctx, kubeconfig, ns, "app.kubernetes.io/name="+appName)
+	ds, err := listDeployments(ctx, kubeconfig, ns)
 	if err != nil {
 		return deploymentSummary{}, err
-	}
-	if len(ds) == 0 {
-		ds, err = listDeploymentsByLabel(ctx, kubeconfig, ns, "app="+appName)
-		if err != nil {
-			return deploymentSummary{}, err
-		}
 	}
 	return selectDeployment(ds, appName)
 }
 
-func listDeploymentsByLabel(ctx context.Context, kubeconfig, ns, selector string) ([]deploymentSummary, error) {
-	out, err := kubectlCmd(ctx, kubeconfig, "get", "deployment", "-n", ns, "-l", selector, "-o", "json").CombinedOutput()
+// listDeployments returns every Deployment in the namespace.
+func listDeployments(ctx context.Context, kubeconfig, ns string) ([]deploymentSummary, error) {
+	out, err := kubectlCmd(ctx, kubeconfig, "get", "deployment", "-n", ns, "-o", "json").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list deployments: %s", strings.TrimSpace(string(out)))
 	}
@@ -420,9 +425,13 @@ func getDeployment(ctx context.Context, kubeconfig, ns, name string) (deployment
 // deploymentJSON is the minimal shape parsed from kubectl output.
 type deploymentJSON struct {
 	Metadata struct {
-		Name string `json:"name"`
+		Name   string            `json:"name"`
+		Labels map[string]string `json:"labels"`
 	} `json:"metadata"`
 	Spec struct {
+		Selector struct {
+			MatchLabels map[string]string `json:"matchLabels"`
+		} `json:"selector"`
 		Template struct {
 			Spec struct {
 				Containers []struct {
@@ -438,7 +447,12 @@ func (d deploymentJSON) toSummary() deploymentSummary {
 	for _, c := range d.Spec.Template.Spec.Containers {
 		containers = append(containers, c.Name)
 	}
-	return deploymentSummary{Name: d.Metadata.Name, Containers: containers}
+	return deploymentSummary{
+		Name:           d.Metadata.Name,
+		Containers:     containers,
+		Labels:         d.Metadata.Labels,
+		SelectorLabels: d.Spec.Selector.MatchLabels,
+	}
 }
 
 func parseDeploymentList(raw []byte) ([]deploymentSummary, error) {
@@ -486,63 +500,88 @@ func confirmHeal(in io.Reader, out io.Writer) (bool, error) {
 	return ans == "y" || ans == "yes", nil
 }
 
-// healWorkload translates the approved remediation's resource change into a
-// Deployment patch and applies it, after the context guard and (unless assumeYes)
-// a confirmation. Advisory steps are always printed, never executed.
-func healWorkload(ctx context.Context, r *remediationFull, opts healOptions, in io.Reader, w io.Writer) error {
+// planHeal resolves everything the heal needs without changing anything: the
+// kube-context guard, the remediation plan, the target Deployment, the container
+// and the patch.
+//
+// This runs before approval writes anything. If it returns an error, no
+// RemediationAction is approved, so the operator never patches the persona and
+// the action never advances to Applying/Verifying over a workload change that
+// could not be made.
+func planHeal(ctx context.Context, r *remediationFull, opts healOptions) (*healExecution, error) {
 	ctxName, err := currentKubeContext(ctx, opts.kubeconfig)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := guardKubeContext(ctxName); err != nil {
-		return err
+		return nil, err
 	}
-	fmt.Fprintf(w, "\nHeal (context: %s)\n", ctxName)
 
 	plan, err := buildHealPlan(r)
 	if err != nil {
-		return fmt.Errorf("failed to read remediation plan: %w", err)
+		return nil, fmt.Errorf("failed to read remediation plan: %w", err)
 	}
 
-	if len(plan.Advisory) > 0 {
-		fmt.Fprintln(w, "\nManual steps (not applied automatically):")
-		for _, a := range plan.Advisory {
-			fmt.Fprintf(w, "  [%d] %s: %s\n", a.Order, a.Type, a.Description)
-			if a.Reason != "" {
-				fmt.Fprintf(w, "      %s\n", output.Dim(a.Reason))
-			}
-		}
-	}
-
+	// Advisory-only plan: there is no workload change to resolve, so there is
+	// nothing that can fail later either.
 	if plan.Change.isEmpty() {
-		output.Warn("No auto-applicable resource change in this remediation; nothing to heal automatically.")
-		return nil
+		return &healExecution{Advisory: plan.Advisory, Context: ctxName}, nil
 	}
 
 	ns := personaNamespace(r)
 	if ns == "" {
-		return fmt.Errorf("remediation has no namespace; cannot locate the workload")
+		return nil, fmt.Errorf("remediation has no namespace; cannot locate the workload")
 	}
 	appName := resolveAppName(ctx, opts.kubeconfig, r)
 
 	deploy, err := discoverWorkload(ctx, opts.kubeconfig, ns, appName, opts.workload)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	container, err := selectContainer(deploy.Containers, appName, opts.container)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	patch, err := buildDeploymentResourcePatch(container, plan.Change)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
+	return &healExecution{
+		Namespace:  ns,
+		Deployment: deploy.Name,
+		Container:  container,
+		Patch:      patch,
+		Change:     plan.Change,
+		Advisory:   plan.Advisory,
+		Context:    ctxName,
+	}, nil
+}
+
+// printHealPreamble prints the context header and any advisory steps. Advisory
+// steps are always printed, never executed.
+func printHealPreamble(w io.Writer, ctxName string, advisory []advisoryStep) {
+	fmt.Fprintf(w, "\nHeal (context: %s)\n", ctxName)
+	if len(advisory) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "\nManual steps (not applied automatically):")
+	for _, a := range advisory {
+		fmt.Fprintf(w, "  [%d] %s: %s\n", a.Order, a.Type, a.Description)
+		if a.Reason != "" {
+			fmt.Fprintf(w, "      %s\n", output.Dim(a.Reason))
+		}
+	}
+}
+
+// executeHeal prints the resolved plan, confirms (unless assumeYes) and applies
+// the patch. Success is only reported once kubectl has accepted the patch.
+func executeHeal(ctx context.Context, exec *healExecution, opts healOptions, in io.Reader, w io.Writer) error {
 	fmt.Fprintln(w, "\nWorkload heal plan:")
-	fmt.Fprintf(w, "  Namespace:  %s\n", ns)
-	fmt.Fprintf(w, "  Deployment: %s\n", deploy.Name)
-	fmt.Fprintf(w, "  Container:  %s\n", container)
-	for _, line := range resourceChangeSummary(plan.Change) {
+	fmt.Fprintf(w, "  Namespace:  %s\n", exec.Namespace)
+	fmt.Fprintf(w, "  Deployment: %s\n", exec.Deployment)
+	fmt.Fprintf(w, "  Container:  %s\n", exec.Container)
+	for _, line := range resourceChangeSummary(exec.Change) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 
@@ -557,11 +596,29 @@ func healWorkload(ctx context.Context, r *remediationFull, opts healOptions, in 
 		}
 	}
 
-	if err := applyDeploymentPatch(ctx, opts.kubeconfig, ns, deploy.Name, patch); err != nil {
+	if err := applyDeploymentPatch(ctx, opts.kubeconfig, exec.Namespace, exec.Deployment, exec.Patch); err != nil {
 		return err
 	}
 	output.Success(fmt.Sprintf(
 		"Healed %s/%s (container %s). The pod will restart with the updated resources.",
-		ns, deploy.Name, container))
+		exec.Namespace, exec.Deployment, exec.Container))
 	return nil
+}
+
+// healWorkload plans and then applies the workload change. Used by
+// `dorgu remediation heal`, which has nothing to preflight for: the
+// RemediationAction has already been approved.
+func healWorkload(ctx context.Context, r *remediationFull, opts healOptions, in io.Reader, w io.Writer) error {
+	exec, err := planHeal(ctx, r, opts)
+	if err != nil {
+		return err
+	}
+
+	printHealPreamble(w, exec.Context, exec.Advisory)
+
+	if !exec.hasWorkloadChange() {
+		output.Warn("No auto-applicable resource change in this remediation; nothing to heal automatically.")
+		return nil
+	}
+	return executeHeal(ctx, exec, opts, in, w)
 }

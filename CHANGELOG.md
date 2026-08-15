@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- `dorgu remediation approve` resolves the target Deployment **before** it approves. Approval is what tells the operator to patch the persona and start the verification clock, so approving first and failing to find the workload afterwards left the persona at the new limits, the running workload at the old ones, and a 10-minute `Applying`/`Verifying` window over a change that never landed. When the heal cannot be planned, nothing is approved and nothing is changed, and the CLI says which Deployments it did find.
+- A failed workload patch is never reported as a heal. The CLI now names the divergence: "the remediation is Approved but `<ns>/<deployment>` was NOT patched; the persona and the workload now disagree."
+- Workload discovery no longer requires a label on the Deployment object. Helm, kustomize and most hand-written YAML label the pod template only, so `dorgu remediation heal` failed with `no Deployment found for app "<name>"` while the Deployment sat in the same namespace. Discovery now walks the same ordered chain as the operator: `app.kubernetes.io/name` label, `app` label, `metadata.name`, then `spec.selector.matchLabels`. Zero and ambiguous matches list the Deployments actually present and point at `--workload`.
+- `--no-heal` warns that the persona and the running workload will disagree until the change is applied by hand.
+
 ## [0.8.1] - 2026-08-07
 
 ### Removed
