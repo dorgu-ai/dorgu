@@ -139,18 +139,34 @@ Only `persona-update` steps are auto-executable. Every other step type (`restart
 
 ### CLI
 
+With a Go toolchain:
+
 ```bash
 # Latest release (recommended)
 go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
 
 # Pin a specific version
-go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.8.0
-
-# Or download a binary from GitHub Releases (Linux, macOS, Windows)
-# https://github.com/dorgu-ai/dorgu/releases
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.8.1
 ```
 
 Ensure `$GOPATH/bin` (or `$HOME/go/bin`) is on your `PATH`.
+
+Without Go, download a release archive. Set `OS` to `linux` or `darwin` and `ARCH` to `amd64` or `arm64`:
+
+```bash
+VERSION=0.8.1
+OS=linux
+ARCH=amd64
+
+curl -fLo dorgu.tar.gz \
+  "https://github.com/dorgu-ai/dorgu/releases/download/v${VERSION}/dorgu_${VERSION}_${OS}_${ARCH}.tar.gz"
+tar -xzf dorgu.tar.gz dorgu
+chmod +x dorgu
+sudo mv dorgu /usr/local/bin/
+dorgu version
+```
+
+`curl -f` matters: without it a wrong URL writes the 404 body to disk and the install silently "succeeds". Windows builds (`dorgu_0.8.1_windows_amd64.zip`) and checksums are on the [releases page](https://github.com/dorgu-ai/dorgu/releases).
 
 ### Operator
 

@@ -30,6 +30,8 @@ builds:
 
 archives:
   - id: dorgu
+    ids:
+      - dorgu
     formats:
       - tar.gz
     format_overrides:
@@ -38,6 +40,25 @@ archives:
           - zip
     name_template: >-
       dorgu_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - .dorgu.yaml.example
+
+  # Unversioned copies of the archives above so that
+  # https://github.com/dorgu-ai/dorgu/releases/latest/download/dorgu_<os>_<arch>.tar.gz
+  # is a copy-paste install URL that never needs a version bump.
+  - id: dorgu-unversioned
+    ids:
+      - dorgu
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      dorgu_{{ .Os }}_{{ .Arch }}
     files:
       - README.md
       - LICENSE
@@ -65,16 +86,29 @@ release:
   header: |
     ## What's New
 
-    AI-powered Kubernetes manifest generator.
+    Open-source AI SRE for Kubernetes: detect failures, diagnose them, heal with your approval.
   footer: |
     ## Installation
 
-    ```bash
-    # Go install
-    go install github.com/dorgu-ai/dorgu/cmd/dorgu@{{.Tag}}
+    With a Go toolchain:
 
-    # Or download binary from assets below
+    ```bash
+    go install github.com/dorgu-ai/dorgu/cmd/dorgu@{{.Tag}}
     ```
+
+    Without Go, download a binary. Swap `linux`/`amd64` for your platform
+    (`linux` or `darwin`; `amd64` or `arm64`):
+
+    ```bash
+    curl -fLo dorgu.tar.gz https://github.com/dorgu-ai/dorgu/releases/download/{{.Tag}}/dorgu_{{.Version}}_linux_amd64.tar.gz
+    tar -xzf dorgu.tar.gz dorgu
+    chmod +x dorgu
+    sudo mv dorgu /usr/local/bin/
+    dorgu version
+    ```
+
+    The unversioned `dorgu_<os>_<arch>.tar.gz` assets below are the same archives
+    under a stable URL: `https://github.com/dorgu-ai/dorgu/releases/latest/download/dorgu_linux_amd64.tar.gz`.
 
 # Homebrew: uncomment and set repo secret HOMEBREW_TAP_GITHUB_TOKEN when you have dorgu-ai/homebrew-tap
 # brews:
