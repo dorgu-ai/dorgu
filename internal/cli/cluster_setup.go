@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -188,7 +187,7 @@ func runClusterSetup(cmd *cobra.Command, args []string) error {
 				applyCmd := exec.CommandContext(createCtx, "kubectl", "apply", "-f", "-")
 				applyCmd.Stdin = bytes.NewBufferString(yaml)
 				if out, applyErr := applyCmd.CombinedOutput(); applyErr != nil {
-					return fmt.Errorf("failed to create ClusterPersona: %s", strings.TrimSpace(string(out)))
+					return fmt.Errorf("failed to create ClusterPersona: %s", kubectlErrText(out))
 				}
 				personaName = "dorgu-cluster"
 				output.Success("ClusterPersona 'dorgu-cluster' created")

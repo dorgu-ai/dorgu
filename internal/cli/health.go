@@ -422,7 +422,7 @@ func kubectlCmd(ctx context.Context, kubeconfig string, args ...string) *exec.Cm
 func fetchNodes(ctx context.Context, kubeconfig string) ([]healthNode, error) {
 	out, err := kubectlCmd(ctx, kubeconfig, "get", "nodes", "-o", "json").CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("%s", kubectlErrText(out))
 	}
 
 	var result struct {
@@ -483,7 +483,7 @@ func nodeRoles(labels map[string]string) string {
 func fetchResourceSaturation(ctx context.Context, kubeconfig string) (*resourceSaturation, error) {
 	out, err := kubectlCmd(ctx, kubeconfig, "get", "clusterpersona", "-o", "json").CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("%s", kubectlErrText(out))
 	}
 	return parseResourceSaturation(out)
 }
@@ -559,7 +559,7 @@ func fetchControlPlane(ctx context.Context, kubeconfig string) (*controlPlaneSta
 	out, err := kubectlCmd(ctx, kubeconfig, "get", "pods", "-n", "kube-system",
 		"-l", "tier=control-plane", "-o", "json").CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("%s", kubectlErrText(out))
 	}
 	return parseControlPlanePods(out)
 }
