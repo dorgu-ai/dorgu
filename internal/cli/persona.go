@@ -35,6 +35,9 @@ var personaCmd = &cobra.Command{
 for your applications on Kubernetes.
 
 Examples:
+  # Import personas for apps already running in the cluster
+  dorgu persona import -n apps --all
+
   # Generate persona YAML from application analysis
   dorgu persona generate ./my-app
 
@@ -119,6 +122,7 @@ func init() {
 	personaCmd.AddCommand(personaApplyCmd)
 	personaCmd.AddCommand(personaStatusCmd)
 	personaCmd.AddCommand(personaListCmd)
+	personaCmd.AddCommand(newPersonaImportCmd())
 }
 
 func runPersonaGenerate(cmd *cobra.Command, args []string) error {

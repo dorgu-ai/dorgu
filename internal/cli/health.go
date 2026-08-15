@@ -33,6 +33,10 @@ saturation, control plane status, active incidents, and pending remediations.
 Queries the Kubernetes API directly. When the Dorgu Operator is installed,
 shows richer data from IncidentMemory and RemediationAction CRDs.
 
+Also names the Deployments that no ApplicationPersona covers: those are not
+being watched, so nothing about them can appear as an incident. Without -n,
+cluster add-on namespaces are left out.
+
 Use --watch to stream real-time health updates via WebSocket. Requires
 the Dorgu Operator to be running with --enable-websocket.
 
@@ -61,6 +65,9 @@ type healthSummary struct {
 	ControlPlane        *controlPlaneStatus `json:"controlPlane"`
 	ActiveIncidents     *incidentsSummary   `json:"activeIncidents"`
 	PendingRemediations *remediationSummary `json:"pendingRemediations"`
+	// Unmonitored names the Deployments no ApplicationPersona covers. Reporting
+	// health without it presents a blind spot as health (F-02b).
+	Unmonitored *unmonitoredSummary `json:"unmonitored"`
 }
 
 type healthNode struct {
@@ -155,6 +162,7 @@ func runHealth(cmd *cobra.Command, args []string) error {
 
 	summary.ActiveIncidents = fetchIncidentsBrief(ctx, kubeconfig, namespace)
 	summary.PendingRemediations = fetchPendingRemediations(ctx, kubeconfig, namespace)
+	summary.Unmonitored = fetchUnmonitored(ctx, kubeconfig, namespace)
 
 	if output.IsJSON() {
 		return output.PrintJSON(summary)
@@ -253,6 +261,9 @@ func printHealthSummary(w io.Writer, s *healthSummary) {
 		}
 		fmt.Fprintln(w)
 	}
+
+	// Unmonitored Deployments
+	printUnmonitored(w, s.Unmonitored)
 
 	// Pending remediations
 	if s.PendingRemediations != nil {

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `dorgu health` names the Deployments it cannot see. With three unmonitored Deployments broken, health used to report `Active Incidents: 2` (both from the docs' toy app) and never mention the others: it presented a blind spot as health. There is now an `Unmonitored` section listing every Deployment with no matching ApplicationPersona, one `dorgu persona import` hint per namespace, and an `unmonitored` object in `--json` carrying the count and the full uncapped list. Cluster add-on namespaces are skipped unless `-n` asks for one, the printed list is capped at 10 names and says how many it left out, and a missing ApplicationPersona CRD is reported as a fact about the operator rather than about the apps.
+- `dorgu persona import -n <namespace> [--all | --name <deployment>]` creates ApplicationPersonas from Deployments that are already running, reading resources, probes, replicas, ports, image and ownership labels straight off the spec. No local source, no Dockerfile and no relabelling. Prints the YAML by default; `--apply` creates the personas, `-o` writes them to a file. The persona name is chosen so the operator resolves it back to that same Deployment, and when no name can (another Deployment's label outranks it) the CLI says so instead of pointing Dorgu at the wrong workload. Containers with no resource limits get inferred ones, reported explicitly, because the remediation proposer skips personas without limits and a persona that cannot heal is worse than no persona.
+
 ### Fixed
 
 - `dorgu remediation approve` resolves the target Deployment **before** it approves. Approval is what tells the operator to patch the persona and start the verification clock, so approving first and failing to find the workload afterwards left the persona at the new limits, the running workload at the old ones, and a 10-minute `Applying`/`Verifying` window over a change that never landed. When the heal cannot be planned, nothing is approved and nothing is changed, and the CLI says which Deployments it did find.
