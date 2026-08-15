@@ -161,24 +161,7 @@ func TestBuildHealPlanNonResourcePersonaUpdateIsAdvisory(t *testing.T) {
 
 // --- selectDeployment (workload discovery) ---
 
-func TestSelectDeployment(t *testing.T) {
-	single := []deploymentSummary{{Name: "api-server", Containers: []string{"api-server"}}}
-	multi := []deploymentSummary{{Name: "api-a"}, {Name: "api-b"}}
-
-	got, err := selectDeployment(single, "api-server")
-	require.NoError(t, err)
-	assert.Equal(t, "api-server", got.Name)
-
-	_, err = selectDeployment(nil, "api-server")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--workload")
-
-	_, err = selectDeployment(multi, "api-server")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--workload")
-	assert.Contains(t, err.Error(), "api-a")
-	assert.Contains(t, err.Error(), "api-b")
-}
+// selectDeployment is covered by workload_match_test.go.
 
 // --- selectContainer ---
 
@@ -258,6 +241,10 @@ type fakeKubectlResponses struct {
 	rem        string // get remediationaction
 	persona    string // get applicationpersona
 	deployment string // get deployment (list or object)
+
+	// failDeploymentPatch makes `kubectl patch deployment` exit non-zero, the
+	// way an RBAC denial or an admission webhook rejection would.
+	failDeploymentPatch bool
 }
 
 // writeFakeKubectlDispatch installs a fake kubectl on PATH that dispatches by
@@ -277,8 +264,15 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 	personaFile := write("persona.json", r.persona)
 	deployFile := write("deploy.json", r.deployment)
 	patchLog = filepath.Join(dir, "patch.log")
+	patchFails := "0"
+	if r.failDeploymentPatch {
+		patchFails = "1"
+	}
+
+	callLog := filepath.Join(dir, "calls.log")
 
 	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + callLog + "\n" +
 		"if [ \"$1\" = config ] && [ \"$2\" = current-context ]; then cat " + ctxFile + "; exit 0; fi\n" +
 		"mode=\"\"; kind=\"\"\n" +
 		"for a in \"$@\"; do\n" +
@@ -290,7 +284,9 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"    deployment|deployments|deploy) [ -z \"$kind\" ] && kind=deploy ;;\n" +
 		"  esac\n" +
 		"done\n" +
-		"if [ \"$mode\" = patch ]; then echo \"$@\" >> " + patchLog + "; echo patched; exit 0; fi\n" +
+		"if [ \"$mode\" = patch ]; then echo \"$@\" >> " + patchLog + "\n" +
+		"  if [ \"$kind\" = deploy ] && [ " + patchFails + " = 1 ]; then echo 'Error from server (Forbidden): deployments.apps is forbidden' >&2; exit 1; fi\n" +
+		"  echo patched; exit 0; fi\n" +
 		"if [ \"$mode\" = get ]; then\n" +
 		"  case \"$kind\" in\n" +
 		"    rem) cat " + remFile + " ;;\n" +
@@ -308,6 +304,13 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 const personaFixture = `{"apiVersion":"dorgu.io/v1","kind":"ApplicationPersona","metadata":{"name":"api-server","namespace":"production"},"spec":{"name":"api-server"}}`
 
 const deploymentListFixture = `{"items":[{"metadata":{"name":"api-server"},"spec":{"template":{"spec":{"containers":[{"name":"api-server"}]}}}}]}`
+
+// readCallLog returns every kubectl invocation the fake saw. It lives beside
+// the patch log in the same temp dir.
+func readCallLog(t *testing.T, patchLog string) string {
+	t.Helper()
+	return readPatchLog(t, filepath.Join(filepath.Dir(patchLog), "calls.log"))
+}
 
 func readPatchLog(t *testing.T, path string) string {
 	t.Helper()
@@ -379,12 +382,14 @@ func TestRunRemediationApproveHealRefusesProd(t *testing.T) {
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 
-	// Status patch succeeds; heal refuses the prod context → errSilent.
+	// The prod guard runs in preflight, so nothing is approved either: an
+	// Approved action the CLI will not heal is exactly the divergence F-01
+	// described.
 	err := cmd.Execute()
 	assert.ErrorIs(t, err, errSilent)
 
 	log := readPatchLog(t, patchLog)
-	assert.Contains(t, log, "patch remediationaction", "status is still approved")
+	assert.NotContains(t, log, "patch remediationaction", "nothing may be approved when the heal is refused")
 	assert.NotContains(t, log, "patch deployment", "prod workload must not be patched")
 }
 
@@ -531,4 +536,159 @@ func TestRunRemediationHealAdvisoryOnly(t *testing.T) {
 
 	assert.NotContains(t, readPatchLog(t, patchLog), "patch deployment",
 		"advisory-only remediation must not patch a workload")
+}
+
+// --- F-01: a heal that cannot be applied must never look like success ---
+
+// brownfieldDeploymentListFixture is the clean-room namespace: three
+// Deployments, none of them labelled on the Deployment object, and none of them
+// named after the persona in the remediation fixture (api-server).
+const brownfieldDeploymentListFixture = `{"items":[
+ {"metadata":{"name":"web"},"spec":{"selector":{"matchLabels":{"app":"web"}},"template":{"spec":{"containers":[{"name":"nginx"}]}}}},
+ {"metadata":{"name":"checkout-api"},"spec":{"selector":{"matchLabels":{"app":"checkout-api"}},"template":{"spec":{"containers":[{"name":"api"}]}}}},
+ {"metadata":{"name":"report-worker"},"spec":{"selector":{"matchLabels":{"app":"report-worker"}},"template":{"spec":{"containers":[{"name":"worker"}]}}}}
+]}`
+
+// The heal path resolves the Deployment before approval, so a workload it
+// cannot find approves nothing at all. Approving first is what left the persona
+// at 96Mi, the Deployment at 48Mi, and a 10-minute verification window running
+// over a change that was never applied.
+func TestRunRemediationApproveRefusesWhenWorkloadUnresolvable(t *testing.T) {
+	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
+		context:    "kind-dorgu-spike",
+		rem:        operatorRemediationFixture,
+		persona:    personaFixture,
+		deployment: brownfieldDeploymentListFixture,
+	})
+
+	cmd := newRemediationApproveCmd()
+	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production", "--yes"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	var err error
+	stdout := captureStdout(t, func() { err = cmd.Execute() })
+
+	assert.ErrorIs(t, err, errSilent, "an unappliable heal must exit non-zero")
+	assert.NotContains(t, stdout, "Remediation approved", "approval must not be reported")
+	assert.Contains(t, stdout, "Nothing was approved and nothing was changed.")
+
+	log := readPatchLog(t, patchLog)
+	assert.Empty(t, log, "no RemediationAction and no Deployment may be patched")
+}
+
+// The one the report called the blocker inside the blocker: when the workload
+// patch itself fails, approve must not exit 0 and must not claim the workload
+// was healed.
+func TestRunRemediationApproveFailedWorkloadPatchNeverReportsSuccess(t *testing.T) {
+	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
+		context:             "kind-dorgu-spike",
+		rem:                 operatorRemediationFixture,
+		persona:             personaFixture,
+		deployment:          deploymentListFixture,
+		failDeploymentPatch: true,
+	})
+
+	cmd := newRemediationApproveCmd()
+	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production", "--yes"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	var err error
+	stdout := captureStdout(t, func() { err = cmd.Execute() })
+
+	assert.ErrorIs(t, err, errSilent, "a failed workload patch must exit non-zero")
+	assert.NotContains(t, stdout, "Healed production/api-server",
+		"a failed patch must never be reported as a heal")
+	assert.Contains(t, stdout, "was NOT patched",
+		"the persona-vs-workload divergence must be surfaced, not hidden")
+
+	log := readPatchLog(t, patchLog)
+	assert.Contains(t, log, "patch deployment api-server", "the patch was attempted")
+}
+
+// Same failure through `dorgu remediation heal`.
+func TestRunRemediationHealFailedPatchNeverReportsSuccess(t *testing.T) {
+	approved := strings.Replace(operatorRemediationFixture, `"phase": "Pending"`, `"phase": "Approved"`, 1)
+	writeFakeKubectlDispatch(t, fakeKubectlResponses{
+		context:             "kind-dorgu-spike",
+		rem:                 approved,
+		persona:             personaFixture,
+		deployment:          deploymentListFixture,
+		failDeploymentPatch: true,
+	})
+
+	cmd := newRemediationHealCmd()
+	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production", "--yes"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	var err error
+	stdout := captureStdout(t, func() { err = cmd.Execute() })
+
+	assert.ErrorIs(t, err, errSilent)
+	assert.NotContains(t, stdout, "Healed production/api-server")
+}
+
+// The fallback chain, end to end: a Deployment labelled only on the pod template
+// is found and patched, where before the heal died with "no Deployment found".
+func TestRunRemediationHealResolvesPodTemplateLabelledWorkload(t *testing.T) {
+	approved := strings.Replace(operatorRemediationFixture, `"phase": "Pending"`, `"phase": "Approved"`, 1)
+	brownfieldAPIServer := `{"items":[
+ {"metadata":{"name":"web"},"spec":{"selector":{"matchLabels":{"app":"web"}},"template":{"spec":{"containers":[{"name":"nginx"}]}}}},
+ {"metadata":{"name":"api-server"},"spec":{"selector":{"matchLabels":{"app":"api-server"}},"template":{"spec":{"containers":[{"name":"api-server"}]}}}}
+]}`
+
+	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
+		context:    "kind-dorgu-spike",
+		rem:        approved,
+		persona:    personaFixture,
+		deployment: brownfieldAPIServer,
+	})
+
+	cmd := newRemediationHealCmd()
+	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production", "--yes"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	require.NoError(t, cmd.Execute())
+
+	log := readPatchLog(t, patchLog)
+	assert.Contains(t, log, "patch deployment api-server")
+	assert.Contains(t, log, `"memory":"512Mi"`)
+}
+
+// Discovery must not filter by label server-side: a -l selector can only find
+// workloads labelled on the Deployment object, which is the whole bug.
+func TestDiscoveryListsDeploymentsWithoutALabelSelector(t *testing.T) {
+	approved := strings.Replace(operatorRemediationFixture, `"phase": "Pending"`, `"phase": "Approved"`, 1)
+	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
+		context:    "kind-dorgu-spike",
+		rem:        approved,
+		persona:    personaFixture,
+		deployment: deploymentListFixture,
+	})
+
+	cmd := newRemediationHealCmd()
+	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production", "--yes"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	require.NoError(t, cmd.Execute())
+
+	for _, call := range strings.Split(strings.TrimSpace(readCallLog(t, patchLog)), "\n") {
+		if strings.Contains(call, "get deployment") {
+			assert.NotContains(t, call, " -l ", "deployment discovery must not use a label selector")
+		}
+	}
+}
+
+func TestParseDeploymentList_CarriesLabelsAndSelector(t *testing.T) {
+	ds, err := parseDeploymentList([]byte(brownfieldDeploymentListFixture))
+
+	require.NoError(t, err)
+	require.Len(t, ds, 3)
+	assert.Equal(t, "web", ds[0].Name)
+	assert.Empty(t, ds[0].Labels, "the brownfield shape has no labels on the Deployment object")
+	assert.Equal(t, map[string]string{"app": "web"}, ds[0].SelectorLabels,
+		"selector labels must survive parsing; they are rung 4 of the chain")
 }

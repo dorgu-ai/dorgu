@@ -2,6 +2,7 @@ package output
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/charmbracelet/lipgloss"
@@ -44,27 +45,39 @@ func Error(msg string) {
 
 // Warn prints a warning message
 func Warn(msg string) {
+	Fwarn(os.Stdout, msg)
+}
+
+// Fwarn prints a warning message to w. Use it when stdout is carrying data the
+// user is likely to redirect (generated YAML, JSON) and diagnostics belong on
+// stderr instead.
+func Fwarn(w io.Writer, msg string) {
 	if IsJSON() {
 		return
 	}
 	text := "⚠ " + msg
 	if IsTTY() {
-		fmt.Println(warnStyle.Render(text))
+		fmt.Fprintln(w, warnStyle.Render(text))
 	} else {
-		fmt.Println(text)
+		fmt.Fprintln(w, text)
 	}
 }
 
 // Info prints an info message
 func Info(msg string) {
+	Finfo(os.Stdout, msg)
+}
+
+// Finfo prints an info message to w. See Fwarn.
+func Finfo(w io.Writer, msg string) {
 	if IsJSON() {
 		return
 	}
 	text := "ℹ " + msg
 	if IsTTY() {
-		fmt.Println(infoStyle.Render(text))
+		fmt.Fprintln(w, infoStyle.Render(text))
 	} else {
-		fmt.Println(text)
+		fmt.Fprintln(w, text)
 	}
 }
 
