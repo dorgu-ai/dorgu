@@ -39,6 +39,12 @@ Examples:
   # Initialize org standards config
   dorgu init`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Flag parsing and argument validation both happen before this hook, so
+		// they keep their usage output. Anything that fails from here on is a
+		// runtime failure, where 15 lines of manual bury the one line that says
+		// what went wrong (F-13).
+		cmd.SilenceUsage = true
+
 		jsonFlag, _ := cmd.Flags().GetBool("json")
 		noColor, _ := cmd.Flags().GetBool("no-color")
 		output.Init(jsonFlag, noColor)

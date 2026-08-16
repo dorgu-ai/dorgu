@@ -10,7 +10,10 @@ import (
 )
 
 var configCmd = &cobra.Command{
-	Use:   "config",
+	Use: "config",
+	// Reject a stray subcommand instead of printing help and exiting 0 (F-12).
+	Args:  noUnknownSubcommand,
+	RunE:  runSubcommandGroup,
 	Short: "Manage dorgu configuration",
 	Long: `Manage dorgu global and project configuration.
 

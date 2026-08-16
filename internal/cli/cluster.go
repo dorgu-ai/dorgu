@@ -26,7 +26,10 @@ var clusterFlags struct {
 }
 
 var clusterCmd = &cobra.Command{
-	Use:   "cluster",
+	Use: "cluster",
+	// Reject a stray subcommand instead of printing help and exiting 0 (F-12).
+	Args:  noUnknownSubcommand,
+	RunE:  runSubcommandGroup,
 	Short: "Manage ClusterPersona CRDs",
 	Long: `View and manage ClusterPersona Custom Resources that represent
 your Kubernetes cluster's identity and configuration.
