@@ -20,6 +20,16 @@ import (
 // remediationCmdTimeout is the maximum time to wait for each kubectl call.
 const remediationCmdTimeout = 30 * time.Second
 
+// maxStepCommandLength and stepCommandForbidden mirror the operator's
+// SanitizeStepCommand (dorgu-operator api/v1). They are duplicated rather than
+// imported because the CLI does not depend on the operator module, and because
+// this guard has to hold even when the object was written by something other
+// than the operator. Keep the two in step.
+const (
+	maxStepCommandLength = 1024
+	stepCommandForbidden = ";&|<>`$\n\r"
+)
+
 // activeRemediationPhases are phases considered "active" (shown by default without --all).
 var activeRemediationPhases = map[string]bool{
 	"Pending":   true,
@@ -66,6 +76,7 @@ type remediationStep struct {
 	Rationale      string          `json:"rationale"`
 	Risk           string          `json:"risk"`
 	AutoExecutable bool            `json:"autoExecutable"`
+	Command        string          `json:"command"`
 	Patch          json.RawMessage `json:"patch"`
 	PrePatchState  json.RawMessage `json:"prePatchState"`
 }
@@ -209,7 +220,7 @@ func fetchRemediations(ctx context.Context, kubeconfig, namespace string) ([]rem
 
 	out, err := kubectlCmd(ctx, kubeconfig, args...).CombinedOutput()
 	if err != nil {
-		outputStr := strings.TrimSpace(string(out))
+		outputStr := kubectlErrText(out)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			output.ErrorWithHint("RemediationAction CRD not found. Is the dorgu operator installed?",
 				"To install the operator: dorgu cluster setup")
@@ -337,7 +348,7 @@ func fetchRemediation(ctx context.Context, kubeconfig, name, namespace string) (
 		"-n", namespace, "-o", "json")
 	rawOutput, err := kcmd.CombinedOutput()
 	if err != nil {
-		outputStr := strings.TrimSpace(string(rawOutput))
+		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			output.ErrorWithHint("RemediationAction CRD not found. Is the dorgu operator installed?",
 				"To install the operator: dorgu cluster setup")
@@ -386,10 +397,11 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 	}
 	fmt.Fprintln(w)
 
-	// Explanation
-	if r.Spec.Explanation != "" {
+	// Explanation. printRemediationPlan prints the plan summary below, so this
+	// skips the explanation when the two say the same thing (F-15).
+	if explanation := nonRedundantExplanation(r); explanation != "" {
 		fmt.Fprintln(w, "Explanation:")
-		for _, line := range strings.Split(r.Spec.Explanation, "\n") {
+		for _, line := range strings.Split(explanation, "\n") {
 			fmt.Fprintf(w, "  %s\n", line)
 		}
 		fmt.Fprintln(w)
@@ -479,7 +491,7 @@ func printRemediationPlan(w io.Writer, r *remediationFull) {
 		return
 	}
 
-	if r.Spec.PlanSummary != "" {
+	if planSummaryIsPrinted(r) {
 		fmt.Fprintln(w, "Plan summary:")
 		for _, line := range strings.Split(r.Spec.PlanSummary, "\n") {
 			fmt.Fprintf(w, "  %s\n", line)
@@ -505,6 +517,9 @@ func printRemediationPlan(w io.Writer, r *remediationFull) {
 				fmt.Fprintf(w, "      %s\n", line)
 			}
 		}
+		if cmd := displayableStepCommand(s.Command); cmd != "" {
+			fmt.Fprintf(w, "      Run: %s\n", cmd)
+		}
 		pre := rawJSONToString(s.PrePatchState)
 		patch := rawJSONToString(s.Patch)
 		if pre != "" || patch != "" {
@@ -512,6 +527,64 @@ func printRemediationPlan(w io.Writer, r *remediationFull) {
 		}
 		fmt.Fprintln(w)
 	}
+}
+
+// planSummaryIsPrinted reports whether printRemediationPlan will render a
+// "Plan summary:" block, so the explanation above it can avoid repeating it.
+func planSummaryIsPrinted(r *remediationFull) bool {
+	return len(r.Spec.Steps) > 0 && strings.TrimSpace(r.Spec.PlanSummary) != ""
+}
+
+// nonRedundantExplanation returns the explanation to print, or "" when the plan
+// summary below already says the same thing.
+//
+// F-15: the operator used to write the root cause into PlanSummary and the same
+// sentence with a prefix into Explanation, so `remediation diff` printed one
+// paragraph twice under two headings. The operator no longer does that, but
+// RemediationActions created by older operators are still in clusters, so the
+// renderer has to cope with them.
+func nonRedundantExplanation(r *remediationFull) string {
+	explanation := strings.TrimSpace(r.Spec.Explanation)
+	if explanation == "" || !planSummaryIsPrinted(r) {
+		return explanation
+	}
+
+	summary := normalizeProse(r.Spec.PlanSummary)
+	body := normalizeProse(explanation)
+	if strings.Contains(body, summary) || strings.Contains(summary, body) {
+		return ""
+	}
+	return explanation
+}
+
+// normalizeProse collapses case and whitespace so two renderings of the same
+// sentence compare equal.
+func normalizeProse(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}
+
+// displayableStepCommand returns a step's suggested command if it is safe to
+// print as something a reader will paste into a shell, and "" otherwise.
+//
+// The operator sanitizes the command before persisting it, but this CLI reads
+// RemediationActions straight out of the cluster: an older operator, a
+// hand-written object, or anything with permission to create the CRD could put
+// arbitrary text here. A guard the user's shell depends on belongs on the side
+// that does the printing, so the same rules are enforced again.
+//
+// Nothing here executes the command. It is printed for a human to read and run.
+func displayableStepCommand(cmd string) string {
+	trimmed := strings.TrimSpace(cmd)
+	if trimmed == "" || len(trimmed) > maxStepCommandLength {
+		return ""
+	}
+	if !strings.HasPrefix(trimmed, "kubectl ") {
+		return ""
+	}
+	if strings.ContainsAny(trimmed, stepCommandForbidden) {
+		return ""
+	}
+	return trimmed
 }
 
 // sortedSteps returns a new slice of steps ordered by Order (ascending), without
@@ -668,7 +741,7 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		"--type", "merge", "--subresource", "status", "-p", patch}
 	patchOut, err := kubectlCmd(ctx, kubeconfig, patchArgs...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to approve remediation: %s", strings.TrimSpace(string(patchOut)))
+		return fmt.Errorf("failed to approve remediation: %s", kubectlErrText(patchOut))
 	}
 
 	// Say what approval actually does for this plan. An advisory plan changes
@@ -813,7 +886,7 @@ func runRemediationReject(cmd *cobra.Command, args []string) error {
 		"--type", "merge", "--subresource", "status", "-p", patch}
 	patchOut, err := kubectlCmd(ctx, kubeconfig, patchArgs...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to reject remediation: %s", strings.TrimSpace(string(patchOut)))
+		return fmt.Errorf("failed to reject remediation: %s", kubectlErrText(patchOut))
 	}
 
 	msg := "Remediation rejected."

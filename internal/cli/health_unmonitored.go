@@ -159,7 +159,7 @@ func fetchDeploymentsInScope(ctx context.Context, kubeconfig, namespace string) 
 
 	out, err := kubectlCmd(ctx, kubeconfig, args...).CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("%s", kubectlErrText(out))
 	}
 	return parseDeploymentObjects(out)
 }
@@ -176,7 +176,7 @@ func fetchPersonaBriefs(ctx context.Context, kubeconfig, namespace string) ([]pe
 
 	out, err := kubectlCmd(ctx, kubeconfig, args...).CombinedOutput()
 	if err != nil {
-		text := strings.TrimSpace(string(out))
+		text := kubectlErrText(out)
 		if strings.Contains(text, "the server doesn't have a resource type") {
 			return nil, true, nil
 		}

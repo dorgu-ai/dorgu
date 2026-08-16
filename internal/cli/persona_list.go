@@ -70,7 +70,7 @@ func runPersonaList(cmd *cobra.Command, args []string) error {
 	kubectlCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs...)
 	rawOutput, err := kubectlCmd.CombinedOutput()
 	if err != nil {
-		outputStr := strings.TrimSpace(string(rawOutput))
+		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			return fmt.Errorf("ApplicationPersona CRD is not installed on this cluster. Install the Dorgu Operator first")
 		}

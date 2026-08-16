@@ -215,7 +215,7 @@ func runPersonaStatus(cmd *cobra.Command, args []string) error {
 	}
 	rawOutput, err := tryGet(name)
 	if err != nil {
-		outputStr := strings.TrimSpace(string(rawOutput))
+		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "not found") && strings.Contains(name, "_") {
 			// App names with underscores are sanitized to hyphens in the cluster
 			sanitized := generator.ToDNSSubdomain(name)
@@ -226,7 +226,7 @@ func runPersonaStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if err != nil {
-		outputStr := strings.TrimSpace(string(rawOutput))
+		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "not found") {
 			return fmt.Errorf("ApplicationPersona '%s' not found in namespace '%s' (hint: use DNS-safe name, e.g. sample-app-go-net-http)", name, personaFlags.namespace)
 		}

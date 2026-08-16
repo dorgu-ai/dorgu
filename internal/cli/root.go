@@ -25,19 +25,38 @@ var (
 var rootCmd = &cobra.Command{
 	Use:           "dorgu",
 	SilenceErrors: true,
-	Short:         "AI-powered Kubernetes application onboarding",
-	Long: `Dorgu analyzes your containerized applications and generates
-production-ready Kubernetes manifests, CI/CD pipelines, and documentation.
+	Short:         "Open-source AI SRE for Kubernetes",
+	Long: `Dorgu detects what is wrong in your cluster, diagnoses the root cause,
+proposes a reviewable fix, and heals the workload once you approve it.
 
-Examples:
-  # Generate manifests for an application
+The operator watches the cluster and writes proposals. This CLI is how you read
+them and apply them: the workload change is made here, with your credentials,
+and nothing is applied without your approval.
+
+The self-healing loop:
+  # What is wrong right now
+  dorgu health
+
+  # What was detected, and why
+  dorgu incidents list
+  dorgu incidents describe <incident> -n <namespace>
+
+  # Read the proposed fix, then approve or reject it
+  dorgu remediation list
+  dorgu remediation diff <remediation> -n <namespace>
+  dorgu remediation approve <remediation> -n <namespace>
+
+Dorgu only watches workloads that have an ApplicationPersona. On a cluster that
+already has apps, create them from the running Deployments:
+  dorgu persona import -n <namespace> --all
+
+Manifest generation is also here, as a secondary capability. It analyzes an
+app's Dockerfile, Compose file and source, and emits Kubernetes manifests,
+ArgoCD config, CI workflows and a persona:
   dorgu generate ./my-app
 
-  # Generate with custom output directory
-  dorgu generate ./my-app --output ./manifests
-
-  # Initialize org standards config
-  dorgu init`,
+Requires kubectl on your PATH for every cluster command. Set DORGU_DEBUG=1 to
+see kubectl's raw output in error messages.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Flag parsing and argument validation both happen before this hook, so
 		// they keep their usage output. Anything that fails from here on is a

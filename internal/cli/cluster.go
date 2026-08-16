@@ -117,7 +117,7 @@ func listClusterPersonas() error {
 	kubectlCmd := exec.CommandContext(ctx, "kubectl", "get", "clusterpersona", "-o", "json")
 	rawOutput, err := kubectlCmd.CombinedOutput()
 	if err != nil {
-		outputStr := strings.TrimSpace(string(rawOutput))
+		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			return fmt.Errorf("ClusterPersona CRD is not installed on this cluster. Install the Dorgu Operator first")
 		}
@@ -184,7 +184,7 @@ func getClusterPersonaStatus(name string) error {
 	kubectlCmd := exec.CommandContext(ctx, "kubectl", "get", "clusterpersona", name, "-o", outputFormat)
 	rawOutput, err := kubectlCmd.CombinedOutput()
 	if err != nil {
-		outputStr := strings.TrimSpace(string(rawOutput))
+		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "not found") {
 			output.ErrorWithHint("ClusterPersona not found: "+name,
 				"List available ClusterPersonas: dorgu cluster status",

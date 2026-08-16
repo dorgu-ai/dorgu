@@ -261,7 +261,7 @@ func summaryOf(deploy *appsv1.Deployment) deploymentSummary {
 func fetchDeployments(ctx context.Context, kubeconfig, namespace string) ([]appsv1.Deployment, error) {
 	out, err := kubectlCmd(ctx, kubeconfig, "get", "deployment", "-n", namespace, "-o", "json").CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list deployments in %s: %s", namespace, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("failed to list deployments in %s: %s", namespace, kubectlErrText(out))
 	}
 	return parseDeploymentObjects(out)
 }

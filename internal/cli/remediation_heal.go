@@ -49,6 +49,9 @@ type advisoryStep struct {
 	Type        string
 	Description string
 	Reason      string
+	// Command is the step's ready-to-run kubectl command, when the plan
+	// supplied one that passes displayableStepCommand. Printed, never run.
+	Command string
 }
 
 // healPlan is the CLI-side interpretation of a RemediationAction for healing:
@@ -115,6 +118,7 @@ func buildHealPlan(r *remediationFull) (*healPlan, error) {
 				Type:        s.Type,
 				Description: s.Description,
 				Reason:      advisoryReason(s.Type),
+				Command:     displayableStepCommand(s.Command),
 			})
 		}
 		return plan, nil
@@ -350,9 +354,9 @@ func guardKubeContext(ctxName string) error {
 func currentKubeContext(ctx context.Context, kubeconfig string) (string, error) {
 	out, err := kubectlCmd(ctx, kubeconfig, "config", "current-context").CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("failed to read current kube-context: %s", strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("failed to read current kube-context: %s", kubectlErrText(out))
 	}
-	return strings.TrimSpace(string(out)), nil
+	return kubectlValue(out), nil
 }
 
 // personaNamespace returns the namespace the workload must live in: the persona's
@@ -409,7 +413,7 @@ func discoverWorkload(ctx context.Context, kubeconfig, ns, appName, workloadFlag
 func listDeployments(ctx context.Context, kubeconfig, ns string) ([]deploymentSummary, error) {
 	out, err := kubectlCmd(ctx, kubeconfig, "get", "deployment", "-n", ns, "-o", "json").CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list deployments: %s", strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("failed to list deployments: %s", kubectlErrText(out))
 	}
 	return parseDeploymentList(out)
 }
@@ -417,7 +421,7 @@ func listDeployments(ctx context.Context, kubeconfig, ns string) ([]deploymentSu
 func getDeployment(ctx context.Context, kubeconfig, ns, name string) (deploymentSummary, error) {
 	out, err := kubectlCmd(ctx, kubeconfig, "get", "deployment", name, "-n", ns, "-o", "json").CombinedOutput()
 	if err != nil {
-		return deploymentSummary{}, fmt.Errorf("failed to get deployment %s: %s", name, strings.TrimSpace(string(out)))
+		return deploymentSummary{}, fmt.Errorf("failed to get deployment %s: %s", name, kubectlErrText(out))
 	}
 	return parseDeploymentObject(out)
 }
@@ -484,7 +488,7 @@ func applyDeploymentPatch(ctx context.Context, kubeconfig, ns, name, patch strin
 	out, err := kubectlCmd(ctx, kubeconfig,
 		"patch", "deployment", name, "-n", ns, "--type", "strategic", "-p", patch).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to patch deployment %s: %s", name, strings.TrimSpace(string(out)))
+		return fmt.Errorf("failed to patch deployment %s: %s", name, kubectlErrText(out))
 	}
 	return nil
 }
@@ -570,6 +574,9 @@ func printHealPreamble(w io.Writer, ctxName string, advisory []advisoryStep) {
 		fmt.Fprintf(w, "  [%d] %s: %s\n", a.Order, a.Type, a.Description)
 		if a.Reason != "" {
 			fmt.Fprintf(w, "      %s\n", output.Dim(a.Reason))
+		}
+		if a.Command != "" {
+			fmt.Fprintf(w, "      Run: %s\n", a.Command)
 		}
 	}
 }
