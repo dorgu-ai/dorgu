@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"errors"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -95,5 +98,64 @@ func TestKubectlErrText_DebugKeepsEverything(t *testing.T) {
 	}
 	if strings.Count(got, "memcache.go:265") != 5 {
 		t.Errorf("expected all 5 klog lines, got %d", strings.Count(got, "memcache.go:265"))
+	}
+}
+
+// TestKubectlFailure_StripsNoise guards the highest-visibility F-14 path: an
+// unreachable API server is the first thing `dorgu health` checks, and kubectl
+// puts its klog output on stderr, which is exactly what kubectlFailure reads.
+func TestKubectlFailure_StripsNoise(t *testing.T) {
+	t.Setenv(debugEnvVar, "")
+
+	err := &exec.ExitError{
+		ProcessState: &os.ProcessState{},
+		Stderr:       []byte(realCleanroomOutput),
+	}
+
+	got := kubectlFailure(err)
+
+	want := "Error from server (NotFound): the server could not find the requested resource"
+	if got != want {
+		t.Errorf("expected only the real error\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// TestKubectlFailure_FallsBackToProcessError: with no stderr there is still an
+// error, and it must not come back empty.
+func TestKubectlFailure_FallsBackToProcessError(t *testing.T) {
+	t.Setenv(debugEnvVar, "")
+
+	if got := kubectlFailure(errors.New("exec: \"kubectl\": executable file not found in $PATH")); got == "" {
+		t.Error("a failure with no stderr must still report something")
+	}
+}
+
+// TestUnreadableIncidents_StripsNoise: `dorgu health` embeds kubectl's output in
+// the reason it shows for an unreadable incident list.
+func TestUnreadableIncidents_StripsNoise(t *testing.T) {
+	t.Setenv(debugEnvVar, "")
+
+	got := unreadableIncidents([]byte(realCleanroomOutput))
+
+	if strings.Contains(got.Reason, "memcache.go") {
+		t.Errorf("klog noise leaked into the health summary: %q", got.Reason)
+	}
+	if !strings.Contains(got.Reason, "Error from server (NotFound)") {
+		t.Errorf("the real reason was lost: %q", got.Reason)
+	}
+}
+
+// The operator-not-installed answer is a different, better message and must
+// survive filtering unchanged.
+func TestUnreadableIncidents_KeepsTheOperatorHint(t *testing.T) {
+	t.Setenv(debugEnvVar, "")
+
+	out := `E0809 23:43:37.678229   72385 memcache.go:265] "Unhandled Error" err="boom"
+error: the server doesn't have a resource type "incidentmemory"`
+
+	got := unreadableIncidents([]byte(out))
+
+	if !strings.Contains(got.Reason, "the dorgu operator is not installed") {
+		t.Errorf("filtering broke the operator-missing hint: %q", got.Reason)
 	}
 }

@@ -271,10 +271,14 @@ func checkClusterReachable(ctx context.Context, kubeconfig string) error {
 
 // kubectlFailure renders a failed kubectl invocation as its stderr, falling back
 // to the process error when there is none.
+//
+// kubectl's stderr is where client-go's klog output lands, and an unreachable
+// API server is exactly the case that produces five of those lines, so the
+// stderr goes through the same filter as every other surfaced kubectl error.
 func kubectlFailure(err error) string {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
+		if stderr := kubectlErrText(exitErr.Stderr); stderr != "" {
 			return stderr
 		}
 	}
@@ -715,7 +719,7 @@ func fetchIncidentsBrief(ctx context.Context, kubeconfig, namespace string) *inc
 // operator not being installed is a different answer from "we could not look",
 // and both are different from "there are none".
 func unreadableIncidents(kubectlOutput []byte) *incidentsSummary {
-	detail := strings.TrimSpace(string(kubectlOutput))
+	detail := kubectlErrText(kubectlOutput)
 
 	reason := "the IncidentMemory records could not be read: " + detail
 	if strings.Contains(detail, "the server doesn't have a resource type") {
