@@ -21,7 +21,10 @@ const incidentsCmdTimeout = 30 * time.Second
 
 func newIncidentsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "incidents",
+		Use: "incidents",
+		// Reject a stray subcommand instead of printing help and exiting 0 (F-12).
+		Args:  noUnknownSubcommand,
+		RunE:  runSubcommandGroup,
 		Short: "Manage and view cluster incidents",
 		Long: `List and inspect IncidentMemory resources created by the Dorgu Operator.
 Requires the Dorgu Operator to be installed on the cluster.

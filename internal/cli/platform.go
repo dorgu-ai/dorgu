@@ -18,7 +18,10 @@ var platformFlags struct {
 
 // platformCmd represents the platform command
 var platformCmd = &cobra.Command{
-	Use:   "platform",
+	Use: "platform",
+	// Reject a stray subcommand instead of printing help and exiting 0 (F-12).
+	Args:  noUnknownSubcommand,
+	RunE:  runSubcommandGroup,
 	Short: "Platform management commands",
 	Long: `Manage the dorgu ClusterPersona visualization platform.
 

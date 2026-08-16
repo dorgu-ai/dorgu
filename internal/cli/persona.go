@@ -29,7 +29,10 @@ var personaFlags struct {
 }
 
 var personaCmd = &cobra.Command{
-	Use:   "persona",
+	Use: "persona",
+	// Reject a stray subcommand instead of printing help and exiting 0 (F-12).
+	Args:  noUnknownSubcommand,
+	RunE:  runSubcommandGroup,
 	Short: "Manage ApplicationPersona CRDs",
 	Long: `Generate, apply, and inspect ApplicationPersona Custom Resources
 for your applications on Kubernetes.

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -40,10 +41,23 @@ cluster add-on namespaces are left out.
 Use --watch to stream real-time health updates via WebSocket. Requires
 the Dorgu Operator to be running with --enable-websocket.
 
+Exit codes:
+  0  the cluster was read and no critical incident is active
+  1  the check could not run (unreachable cluster, bad kubeconfig, no kubectl)
+  2  active critical incidents (only with --exit-code)
+  3  health could not be judged, e.g. the incident records are unreadable
+     (only with --exit-code)
+
+Without --exit-code the command exits 0 whenever it managed to read the
+cluster, so it stays usable interactively. A cluster it cannot reach is
+always a non-zero exit: reporting health from a failed API call would be
+worse than reporting nothing.
+
 Examples:
   dorgu health
   dorgu health --json
   dorgu health -n production
+  dorgu health --exit-code
   dorgu health --watch
   dorgu health --watch --json`,
 		RunE: runHealth,
@@ -51,6 +65,8 @@ Examples:
 
 	cmd.Flags().StringP("namespace", "n", "", "filter incidents by namespace")
 	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	cmd.Flags().Bool("exit-code", false,
+		"exit 2 when critical incidents are active, 3 when health cannot be judged (for monitoring scripts)")
 	cmd.Flags().BoolP("watch", "w", false, "stream health updates in real-time via WebSocket")
 	cmd.Flags().String("operator-url", "ws://localhost:9090/ws",
 		"WebSocket URL of the Dorgu Operator (used with --watch)")
@@ -103,6 +119,28 @@ type controlPlaneComponent struct {
 type incidentsSummary struct {
 	Count int             `json:"count"`
 	Items []incidentBrief `json:"items"`
+
+	// Unavailable is set when the incident records could not be read at all, so
+	// a reader can tell "none" from "unknown". Rendering an unreadable API as
+	// "Active Incidents: 0" is a blind spot dressed up as health (F-04).
+	Unavailable bool `json:"unavailable,omitempty"`
+
+	// Reason explains an Unavailable result in one line.
+	Reason string `json:"reason,omitempty"`
+}
+
+// criticalCount returns the number of active critical incidents.
+func (s *incidentsSummary) criticalCount() int {
+	if s == nil {
+		return 0
+	}
+	n := 0
+	for _, inc := range s.Items {
+		if strings.EqualFold(inc.Severity, "critical") {
+			n++
+		}
+	}
+	return n
 }
 
 type incidentBrief struct {
@@ -131,14 +169,26 @@ func runHealth(cmd *cobra.Command, args []string) error {
 
 	namespace, _ := cmd.Flags().GetString("namespace")
 	kubeconfigFlag, _ := cmd.Flags().GetString("kubeconfig")
+	exitCode, _ := cmd.Flags().GetBool("exit-code")
 
 	kubeconfig, err := validateKubeconfig(kubeconfigFlag)
 	if err != nil {
-		return err
+		return withExitCode(ExitError, err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), healthCmdTimeout)
 	defer cancel()
+
+	// Probe the API server before assembling anything. Against a cluster it could
+	// not reach, this command used to print an empty node table, "Active
+	// Incidents: 0" and exit 0: a blind spot presented as health (F-04).
+	if err := checkClusterReachable(ctx, kubeconfig); err != nil {
+		output.ErrorWithHint(err.Error(),
+			"Check your current context: kubectl config current-context",
+			"List available contexts: kubectl config get-contexts",
+			"Point at a specific file with --kubeconfig <path>")
+		return withExitCode(ExitError, nil)
+	}
 
 	summary := &healthSummary{}
 
@@ -165,11 +215,70 @@ func runHealth(cmd *cobra.Command, args []string) error {
 	summary.Unmonitored = fetchUnmonitored(ctx, kubeconfig, namespace)
 
 	if output.IsJSON() {
-		return output.PrintJSON(summary)
+		if err := output.PrintJSON(summary); err != nil {
+			return withExitCode(ExitError, err)
+		}
+		return healthExit(summary, exitCode)
 	}
 
 	printHealthSummary(os.Stdout, summary)
+	return healthExit(summary, exitCode)
+}
+
+// healthExit turns the collected summary into the process exit code. Without
+// --exit-code the command reports success whenever it managed to read the
+// cluster; with it, "on fire" and "cannot judge" become distinguishable from
+// "healthy", which is the whole point of running this in a monitoring script.
+func healthExit(s *healthSummary, exitCode bool) error {
+	if !exitCode {
+		return nil
+	}
+
+	if s.ActiveIncidents != nil && s.ActiveIncidents.Unavailable {
+		output.Warn("Health could not be judged: " + s.ActiveIncidents.Reason)
+		return withExitCode(ExitUnknown, nil)
+	}
+
+	if criticals := s.ActiveIncidents.criticalCount(); criticals > 0 {
+		output.Warn(fmt.Sprintf("%d critical incident(s) active", criticals))
+		return withExitCode(ExitCritical, nil)
+	}
+
 	return nil
+}
+
+// checkClusterReachable confirms the API server answers before any health data is
+// collected. It reads /version, which every authenticated user can see, so a
+// namespace-scoped RBAC role is not mistaken for an unreachable cluster.
+func checkClusterReachable(ctx context.Context, kubeconfig string) error {
+	out, err := kubectlCmd(ctx, kubeconfig, "version", "-o", "json").Output()
+	if err != nil {
+		return fmt.Errorf("cannot reach cluster; check your kubeconfig/context: %s", kubectlFailure(err))
+	}
+
+	var version struct {
+		ServerVersion *struct {
+			GitVersion string `json:"gitVersion"`
+		} `json:"serverVersion"`
+	}
+	if err := json.Unmarshal(out, &version); err != nil || version.ServerVersion == nil {
+		return errors.New("cannot reach cluster; check your kubeconfig/context: " +
+			"the API server did not report a version")
+	}
+
+	return nil
+}
+
+// kubectlFailure renders a failed kubectl invocation as its stderr, falling back
+// to the process error when there is none.
+func kubectlFailure(err error) string {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
+			return stderr
+		}
+	}
+	return err.Error()
 }
 
 func printHealthSummary(w io.Writer, s *healthSummary) {
@@ -241,6 +350,15 @@ func printHealthSummary(w io.Writer, s *healthSummary) {
 
 	// Active incidents
 	if s.ActiveIncidents != nil {
+		if s.ActiveIncidents.Unavailable {
+			fmt.Fprintf(w, "Active Incidents: %s\n", output.Yellow("unknown"))
+			output.DimPrint("  " + s.ActiveIncidents.Reason)
+			fmt.Fprintln(w)
+			printUnmonitored(w, s.Unmonitored)
+			printPendingRemediations(w, s.PendingRemediations)
+			return
+		}
+
 		fmt.Fprintf(w, "Active Incidents: %d\n", s.ActiveIncidents.Count)
 		if s.ActiveIncidents.Count > 0 {
 			itbl := output.NewTable(w, "SEVERITY", "CATEGORY", "SIGNAL", "PERSONA", "AGE")
@@ -265,10 +383,14 @@ func printHealthSummary(w io.Writer, s *healthSummary) {
 	// Unmonitored Deployments
 	printUnmonitored(w, s.Unmonitored)
 
-	// Pending remediations
-	if s.PendingRemediations != nil {
-		fmt.Fprintf(w, "Pending Remediations: %d\n", s.PendingRemediations.Count)
-		if s.PendingRemediations.Count > 0 {
+	printPendingRemediations(w, s.PendingRemediations)
+}
+
+// printPendingRemediations renders the pending-remediation tail of the summary.
+func printPendingRemediations(w io.Writer, r *remediationSummary) {
+	if r != nil {
+		fmt.Fprintf(w, "Pending Remediations: %d\n", r.Count)
+		if r.Count > 0 {
 			output.DimPrint("  Run 'dorgu remediation list' to review pending fixes")
 		}
 	}
@@ -394,36 +516,36 @@ func parseResourceSaturation(out []byte) (*resourceSaturation, error) {
 
 	sat := &resourceSaturation{}
 	if rs.AllocatableCPU != "" {
-		pct := rs.CPUUtilization
-		if pct == "" || rs.UsedCPU == "" || rs.UsedCPU == "0" {
-			if rs.UsedCPU == "" || rs.UsedCPU == "0" {
-				pct = "n/a"
-			} else {
-				pct = "-"
-			}
-		}
-		sat.CPU = &saturationDetail{
-			Percentage:  pct,
-			Used:        rs.UsedCPU,
-			Allocatable: rs.AllocatableCPU,
-		}
+		sat.CPU = newSaturationDetail(rs.CPUUtilization, rs.UsedCPU, rs.AllocatableCPU)
 	}
 	if rs.AllocatableMemory != "" {
-		pct := rs.MemoryUtilization
-		if pct == "" || rs.UsedMemory == "" || rs.UsedMemory == "0" {
-			if rs.UsedMemory == "" || rs.UsedMemory == "0" {
-				pct = "n/a"
-			} else {
-				pct = "-"
-			}
-		}
-		sat.Memory = &saturationDetail{
-			Percentage:  pct,
-			Used:        rs.UsedMemory,
-			Allocatable: rs.AllocatableMemory,
-		}
+		sat.Memory = newSaturationDetail(rs.MemoryUtilization, rs.UsedMemory, rs.AllocatableMemory)
 	}
 	return sat, nil
+}
+
+// newSaturationDetail builds one saturation line, substituting "n/a" for any
+// figure the cluster did not report.
+//
+// The line renders as "<percentage> requests / allocatable (<used> / <allocatable>)",
+// so an empty value printed as itself produced the nonsense
+// "CPU: n/a requests / allocatable ( / 3860m)" (F-09). A missing value now reads
+// "n/a" wherever it appears. Note that "0" is a real answer on an idle cluster
+// and is left alone.
+func newSaturationDetail(utilization, used, allocatable string) *saturationDetail {
+	return &saturationDetail{
+		Percentage:  orNotAvailable(utilization),
+		Used:        orNotAvailable(used),
+		Allocatable: orNotAvailable(allocatable),
+	}
+}
+
+// orNotAvailable renders an unreported value as "n/a".
+func orNotAvailable(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "n/a"
+	}
+	return value
 }
 
 // controlPlaneComponentNames is the canonical list of self-hosted control plane components.
@@ -536,8 +658,7 @@ func fetchIncidentsBrief(ctx context.Context, kubeconfig, namespace string) *inc
 
 	out, err := kubectlCmd(ctx, kubeconfig, args...).CombinedOutput()
 	if err != nil {
-		// CRD not installed — return zero incidents.
-		return &incidentsSummary{Count: 0}
+		return unreadableIncidents(out)
 	}
 
 	var list struct {
@@ -564,7 +685,10 @@ func fetchIncidentsBrief(ctx context.Context, kubeconfig, namespace string) *inc
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(out, &list); err != nil {
-		return &incidentsSummary{Count: 0}
+		return &incidentsSummary{
+			Unavailable: true,
+			Reason:      "the incident list could not be parsed: " + err.Error(),
+		}
 	}
 
 	summary := &incidentsSummary{}
@@ -585,6 +709,21 @@ func fetchIncidentsBrief(ctx context.Context, kubeconfig, namespace string) *inc
 	}
 	summary.Count = len(summary.Items)
 	return summary
+}
+
+// unreadableIncidents explains why the incident records could not be read. The
+// operator not being installed is a different answer from "we could not look",
+// and both are different from "there are none".
+func unreadableIncidents(kubectlOutput []byte) *incidentsSummary {
+	detail := strings.TrimSpace(string(kubectlOutput))
+
+	reason := "the IncidentMemory records could not be read: " + detail
+	if strings.Contains(detail, "the server doesn't have a resource type") {
+		reason = "the dorgu operator is not installed, so there are no incident records to read " +
+			"(install it with: dorgu cluster setup)"
+	}
+
+	return &incidentsSummary{Unavailable: true, Reason: reason}
 }
 
 // fetchPendingRemediations counts pending RemediationAction CRDs.

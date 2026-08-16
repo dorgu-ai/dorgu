@@ -20,7 +20,10 @@ var watchFlags struct {
 }
 
 var watchCmd = &cobra.Command{
-	Use:   "watch",
+	Use: "watch",
+	// Reject a stray subcommand instead of printing help and exiting 0 (F-12).
+	Args:  noUnknownSubcommand,
+	RunE:  runSubcommandGroup,
 	Short: "Watch real-time updates from the Dorgu Operator",
 	Long: `Connect to the Dorgu Operator via WebSocket and stream
 real-time updates about personas, incidents, remediations, cluster state, and events.

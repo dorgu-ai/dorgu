@@ -41,6 +41,9 @@ Examples:
   dorgu remediation approve fix-oom-api-server -n production
   dorgu remediation reject fix-oom-api-server -n production --reason "not needed"`,
 		Aliases: []string{"rem"},
+		// Reject a stray subcommand instead of printing help and exiting 0 (F-12).
+		Args: noUnknownSubcommand,
+		RunE: runSubcommandGroup,
 	}
 	cmd.AddCommand(
 		newRemediationListCmd(),
@@ -414,15 +417,49 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 		fmt.Fprintln(w)
 	}
 
-	// Action hints
-	if r.Status.Phase == "Pending" {
+	printRemediationActions(w, r)
+}
+
+// printRemediationActions prints what the reader can do next.
+//
+// A plan with no auto-applicable step is not something to approve and heal. The
+// CLI already knows it cannot apply anything (it prints "No auto-applicable
+// resource change" a moment later), yet it used to offer the approve command
+// anyway, which is what walked the clean-room tester into a Failed remediation
+// and a 30-minute cooldown on the app (F-03).
+func printRemediationActions(w io.Writer, r *remediationFull) {
+	if r.Status.Phase != "Pending" {
+		return
+	}
+
+	if !hasAutoApplicableChange(r) {
+		fmt.Fprintln(w, "This plan is advisory: nothing in it can be applied for you.")
+		fmt.Fprintln(w, "Carry out the steps above yourself. Nothing changes in the cluster until you do.")
+		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Actions:")
-		fmt.Fprintf(w, "  dorgu remediation approve %s -n %s\n",
-			r.Metadata.Name, r.Metadata.Namespace)
 		fmt.Fprintf(w, "  dorgu remediation reject %s -n %s --reason \"...\"\n",
 			r.Metadata.Name, r.Metadata.Namespace)
 		fmt.Fprintln(w)
+		return
 	}
+
+	fmt.Fprintln(w, "Actions:")
+	fmt.Fprintf(w, "  dorgu remediation approve %s -n %s\n",
+		r.Metadata.Name, r.Metadata.Namespace)
+	fmt.Fprintf(w, "  dorgu remediation reject %s -n %s --reason \"...\"\n",
+		r.Metadata.Name, r.Metadata.Namespace)
+	fmt.Fprintln(w)
+}
+
+// hasAutoApplicableChange reports whether this remediation carries a resource
+// change the CLI can apply to the workload. An unreadable patch counts as not
+// applicable: if it cannot be interpreted, it cannot be applied.
+func hasAutoApplicableChange(r *remediationFull) bool {
+	plan, err := buildHealPlan(r)
+	if err != nil || plan == nil {
+		return false
+	}
+	return !plan.Change.isEmpty()
 }
 
 // printRemediationPlan renders the proposed change. When the ordered Steps[] plan
@@ -634,7 +671,13 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to approve remediation: %s", strings.TrimSpace(string(patchOut)))
 	}
 
+	// Say what approval actually does for this plan. An advisory plan changes
+	// nothing: the operator records the decision and marks it Acknowledged.
 	msg := "Remediation approved. The operator will update the persona and monitor health."
+	if !hasAutoApplicableChange(rem) {
+		msg = "Approval recorded. This plan is advisory, so nothing was applied; " +
+			"the operator will mark it Acknowledged."
+	}
 	if reason != "" {
 		msg += fmt.Sprintf(" Reason: %s", reason)
 	}
@@ -652,7 +695,7 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 	printHealPreamble(out, exec.Context, exec.Advisory)
 
 	if !exec.hasWorkloadChange() {
-		output.Warn("No auto-applicable resource change in this remediation; nothing to heal automatically.")
+		output.Info("No resource change to apply: the steps above are for you to carry out.")
 		return nil
 	}
 

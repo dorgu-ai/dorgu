@@ -82,7 +82,10 @@ func TestPrintRemediationListEmpty(t *testing.T) {
 }
 
 func TestPrintRemediationDiffFull(t *testing.T) {
-	r := makeTestRemediation("fix-oom-api", "production", "Pending", "resource", "85%", "api-server")
+	// persona-update, not the old "resource" placeholder: it is the only action
+	// type the CRD allows for a change that can be applied, and printRemediationDiff
+	// now offers approve only for plans that carry one (F-03).
+	r := makeTestRemediation("fix-oom-api", "production", "Pending", "persona-update", "85%", "api-server")
 	r.Spec.PersonaRef.Kind = "ApplicationPersona"
 	r.Spec.PersonaRef.Namespace = "production"
 	r.Spec.IncidentRef.Name = "im-api-server-oom-20260401"
