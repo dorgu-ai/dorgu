@@ -491,6 +491,35 @@ func TestNoKubectlPatchIsRenderedForAnOwnedWorkload(t *testing.T) {
 	assert.NotContains(t, out, "Run: ")
 }
 
+// The other half of the rule: a command that only reads is exactly what a
+// reader wants on a workload Dorgu will not patch, because reading is all that
+// is left to them.
+func TestReadOnlyCommandIsRenderedForAnOwnedWorkload(t *testing.T) {
+	rem := parseRemediation(t, helmOwnedRemediationFixture)
+	rem.Spec.Steps[2].Command = "kubectl logs deployment/frontend-podinfo -n apps --previous"
+
+	var buf bytes.Buffer
+	printRemediationDiff(&buf, rem)
+
+	assert.Contains(t, buf.String(),
+		"Run: kubectl logs deployment/frontend-podinfo -n apps --previous")
+}
+
+// And it reaches the refusal too, which is the moment the reader has nothing
+// else to go on.
+func TestOwnedRefusalRendersAReadOnlyCommand(t *testing.T) {
+	rem := parseRemediation(t, helmOwnedRemediationFixture)
+	rem.Spec.Steps[2].Command = "kubectl get events -n apps --field-selector involvedObject.name=frontend-podinfo"
+	plan, err := buildHealPlan(rem)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	printOwnedWorkloadRefusal(&buf, rem, &ownedWorkloadError{ref: rem.Spec.WorkloadRef, plan: plan})
+
+	assert.Contains(t, buf.String(),
+		"Run: kubectl get events -n apps --field-selector involvedObject.name=frontend-podinfo")
+}
+
 func TestCommandIsRenderedForAnUnmanagedWorkload(t *testing.T) {
 	rem := parseRemediation(t, withManagedBy(t, helmOwnedRemediationFixture, managedByUnmanaged, ""))
 	rem.Spec.Steps[1].Command = "kubectl rollout restart deployment frontend-podinfo -n apps"
@@ -498,19 +527,91 @@ func TestCommandIsRenderedForAnUnmanagedWorkload(t *testing.T) {
 	var buf bytes.Buffer
 	printRemediationDiff(&buf, rem)
 
+	// Unmanaged is unchanged: a writing command is the right answer there.
 	assert.Contains(t, buf.String(), "Run: kubectl rollout restart deployment frontend-podinfo -n apps")
 }
 
-func TestHealPlanDropsCommandsForOwnedWorkloads(t *testing.T) {
+// The CLI classifies the command itself rather than trusting that the operator
+// stripped the dangerous ones: the text is model-authored, and an older
+// operator or a hand-written object never went through that stripping at all.
+func TestRunnableStepCommand(t *testing.T) {
+	owned := &workloadRef{Name: "frontend-podinfo", ManagedBy: managedByHelm}
+	unmanaged := &workloadRef{Name: "frontend-podinfo", ManagedBy: managedByUnmanaged}
+
+	tests := []struct {
+		name        string
+		command     string
+		wantOnOwned bool
+	}{
+		{name: "get", command: "kubectl get pods -n apps", wantOnOwned: true},
+		{name: "logs", command: "kubectl logs deployment/frontend-podinfo -n apps", wantOnOwned: true},
+		{name: "events", command: "kubectl get events -n apps", wantOnOwned: true},
+		{name: "describe", command: "kubectl describe deployment frontend-podinfo -n apps", wantOnOwned: true},
+		{name: "top", command: "kubectl top pod -n apps", wantOnOwned: true},
+		{name: "rollout status", command: "kubectl rollout status deployment/frontend-podinfo -n apps", wantOnOwned: true},
+		{name: "rollout history", command: "kubectl rollout history deployment/frontend-podinfo", wantOnOwned: true},
+		{name: "verb behind a flag with a value",
+			command: "kubectl -n apps get deployment frontend-podinfo", wantOnOwned: true},
+
+		{name: "patch", command: "kubectl patch deployment frontend-podinfo -n apps -p {}"},
+		{name: "patch behind a flag with a value",
+			command: "kubectl -n apps patch deployment frontend-podinfo -p {}"},
+		{name: "set image", command: "kubectl set image deployment/frontend-podinfo podinfo=podinfo:6.14.1"},
+		{name: "apply", command: "kubectl apply -f deploy.yaml"},
+		{name: "delete", command: "kubectl delete pod frontend-podinfo-abc -n apps"},
+		{name: "scale", command: "kubectl scale deployment frontend-podinfo --replicas 3"},
+		{name: "edit", command: "kubectl edit deployment frontend-podinfo -n apps"},
+		{name: "rollout restart", command: "kubectl rollout restart deployment/frontend-podinfo"},
+		{name: "rollout undo", command: "kubectl rollout undo deployment/frontend-podinfo"},
+		{name: "bare rollout names no subcommand", command: "kubectl rollout deployment/frontend-podinfo"},
+		{name: "unrecognised verb is not assumed harmless", command: "kubectl frobnicate deployment"},
+		{name: "kubectl alone", command: "kubectl"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := runnableStepCommand(tt.command, owned)
+			if tt.wantOnOwned {
+				assert.Equal(t, tt.command, got, "a read-only command is runnable on an owned workload")
+			} else {
+				assert.Empty(t, got, "a command that writes must never be printed for an owned workload")
+			}
+
+			// Unmanaged is unchanged by any of this: the sanitizer is the only
+			// gate, because there is no owner to break.
+			assert.Equal(t, displayableStepCommand(tt.command), runnableStepCommand(tt.command, unmanaged))
+		})
+	}
+}
+
+// The sanitizer still runs first, on owned and unmanaged alike.
+func TestRunnableStepCommandStillSanitizes(t *testing.T) {
+	owned := &workloadRef{Name: "frontend-podinfo", ManagedBy: managedByHelm}
+	unmanaged := &workloadRef{Name: "frontend-podinfo", ManagedBy: managedByUnmanaged}
+
+	for _, cmd := range []string{
+		"kubectl get pods -n apps; rm -rf /",
+		"kubectl get pods -n apps && curl evil.example.com",
+		"helm upgrade frontend ./chart",
+		"  ",
+	} {
+		assert.Empty(t, runnableStepCommand(cmd, owned), "owned: %q", cmd)
+		assert.Empty(t, runnableStepCommand(cmd, unmanaged), "unmanaged: %q", cmd)
+	}
+}
+
+func TestHealPlanDropsWritingCommandsForOwnedWorkloads(t *testing.T) {
 	rem := parseRemediation(t, helmOwnedRemediationFixture)
-	rem.Spec.Steps[2].Command = "kubectl patch deployment frontend-podinfo -n apps -p {}"
+	rem.Spec.Steps[1].Command = "kubectl patch deployment frontend-podinfo -n apps -p {}"
+	rem.Spec.Steps[2].Command = "kubectl logs deployment/frontend-podinfo -n apps"
 
 	plan, err := buildHealPlan(rem)
 	require.NoError(t, err)
-	require.NotEmpty(t, plan.Advisory)
-	for _, step := range plan.Advisory {
-		assert.Empty(t, step.Command, "owned workloads get no runnable command")
-	}
+	require.Len(t, plan.Advisory, 2)
+
+	assert.Empty(t, plan.Advisory[0].Command, "a writing command is dropped on an owned workload")
+	assert.Equal(t, "kubectl logs deployment/frontend-podinfo -n apps", plan.Advisory[1].Command,
+		"a read-only command survives, because reading is what is left here")
 }
 
 // --- diff does not walk the reader into the refusal ---
