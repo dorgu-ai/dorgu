@@ -418,8 +418,13 @@ func TestRunRemediationHealCommand(t *testing.T) {
 
 const deploymentObjectFixture = `{"metadata":{"name":"custom-api"},"spec":{"template":{"spec":{"containers":[{"name":"main"},{"name":"sidecar"}]}}}}`
 
+// --workload and --container still steer the heal, as long as they agree with
+// the workload the operator observed and decided ownership for. Disagreement is
+// refused (see remediation_ownership_test.go).
 func TestRunRemediationHealExplicitWorkloadAndContainer(t *testing.T) {
-	approved := strings.Replace(operatorRemediationFixture, `"phase": "Pending"`, `"phase": "Approved"`, 1)
+	approved := strings.Replace(
+		withObservedWorkload(t, operatorRemediationFixture, "custom-api", "main"),
+		`"phase":"Pending"`, `"phase":"Approved"`, 1)
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:    "kind-dorgu-spike",
 		rem:        approved,

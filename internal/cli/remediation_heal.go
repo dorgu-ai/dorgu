@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -118,7 +119,7 @@ func buildHealPlan(r *remediationFull) (*healPlan, error) {
 				Type:        s.Type,
 				Description: s.Description,
 				Reason:      advisoryReason(s.Type),
-				Command:     displayableStepCommand(s.Command),
+				Command:     runnableStepCommand(s.Command, r.Spec.WorkloadRef),
 			})
 		}
 		return plan, nil
@@ -153,6 +154,8 @@ func advisoryReason(stepType string) string {
 		return "restart is handled by the workload controller after the resource patch"
 	case "scale":
 		return "scaling is a workload change; apply via your GitOps/deploy pipeline"
+	case "workload-apply":
+		return "this changes the workload; apply it where its desired state lives"
 	case "config-change":
 		return "config change requires manual review"
 	case "manual":
@@ -368,6 +371,46 @@ func personaNamespace(r *remediationFull) string {
 	return r.Metadata.Namespace
 }
 
+// workloadNamespace returns the namespace the workload lives in: the one the
+// operator actually observed it in, falling back to the persona's namespace for
+// remediations that carry no observation.
+func workloadNamespace(r *remediationFull) string {
+	if r.Spec.WorkloadRef != nil && r.Spec.WorkloadRef.Namespace != "" {
+		return r.Spec.WorkloadRef.Namespace
+	}
+	return personaNamespace(r)
+}
+
+// confirmObservedWorkload checks that the Deployment about to be patched is the
+// one whose ownership was checked.
+//
+// The ownership decision is a fact about a specific object. Resolving a
+// different Deployment here, whether through --workload or through the fallback
+// chain disagreeing with the operator, would apply a decision made about one
+// workload to another. An empty observed name means there was nothing to
+// compare against, and that case is already refused as owned.
+func confirmObservedWorkload(ref *workloadRef, resolved string) error {
+	if ref == nil || ref.Name == "" || ref.Name == resolved {
+		return nil
+	}
+	return fmt.Errorf(
+		"refusing to patch Deployment %s: Dorgu checked ownership for %s, and a decision about one workload does not carry to another",
+		resolved, ref.Name)
+}
+
+// observedContainer picks the container to patch: an explicit --container wins,
+// otherwise the container the operator actually read, whose resources are the
+// before-state of the diff the user reviewed.
+func observedContainer(ref *workloadRef, flag string) string {
+	if flag != "" {
+		return flag
+	}
+	if ref == nil {
+		return ""
+	}
+	return ref.Container
+}
+
 // resolveAppName determines the app name to resolve the workload by. The
 // operator resolves Deployments from persona.spec.name, so we read spec.name
 // from the ApplicationPersona (best-effort); if that lookup fails we fall back to
@@ -527,12 +570,22 @@ func planHeal(ctx context.Context, r *remediationFull, opts healOptions) (*healE
 	}
 
 	// Advisory-only plan: there is no workload change to resolve, so there is
-	// nothing that can fail later either.
+	// nothing that can fail later either, and nothing to refuse.
 	if plan.Change.isEmpty() {
 		return &healExecution{Advisory: plan.Advisory, Context: ctxName}, nil
 	}
 
-	ns := personaNamespace(r)
+	// Ownership gate (CF4-3). Everything except an explicitly unmanaged
+	// workload belongs to Helm, ArgoCD, Flux or kustomize, and a workload with
+	// no record at all belongs to nobody Dorgu can see. In both cases the fix
+	// has to reach the cluster through the owner, so the CLI recommends and
+	// declines. There is no override flag on purpose.
+	ref := r.Spec.WorkloadRef
+	if ref.isOwned() {
+		return nil, &ownedWorkloadError{ref: ref, plan: plan}
+	}
+
+	ns := workloadNamespace(r)
 	if ns == "" {
 		return nil, fmt.Errorf("remediation has no namespace; cannot locate the workload")
 	}
@@ -542,7 +595,13 @@ func planHeal(ctx context.Context, r *remediationFull, opts healOptions) (*healE
 	if err != nil {
 		return nil, err
 	}
-	container, err := selectContainer(deploy.Containers, appName, opts.container)
+	// The refusal above was decided for the workload the operator observed. A
+	// patch aimed anywhere else is that guard with a hole in it, so the two
+	// have to agree.
+	if err := confirmObservedWorkload(ref, deploy.Name); err != nil {
+		return nil, err
+	}
+	container, err := selectContainer(deploy.Containers, appName, observedContainer(ref, opts.container))
 	if err != nil {
 		return nil, err
 	}
@@ -618,6 +677,13 @@ func executeHeal(ctx context.Context, exec *healExecution, opts healOptions, in 
 func healWorkload(ctx context.Context, r *remediationFull, opts healOptions, in io.Reader, w io.Writer) error {
 	exec, err := planHeal(ctx, r, opts)
 	if err != nil {
+		// An owned workload is a decision, not a breakage: print the owner and
+		// the steps that will actually work, and exit "declined".
+		var declined *ownedWorkloadError
+		if errors.As(err, &declined) {
+			printOwnedWorkloadRefusal(w, r, declined)
+			return withExitCode(ExitDeclined, errSilent)
+		}
 		return err
 	}
 

@@ -21,6 +21,13 @@ const (
 	// --exit-code. Reporting a clean bill of health from a partial read is the
 	// failure mode this exists to avoid.
 	ExitUnknown = 3
+
+	// ExitDeclined means Dorgu understood the request, could see exactly what
+	// to do, and chose not to write: the workload is owned by Helm, ArgoCD,
+	// Flux or kustomize, so changing it belongs to that owner. Nothing failed
+	// and nothing changed. It is separate from ExitError so a script can tell
+	// "Dorgu declined by design" from "Dorgu broke".
+	ExitDeclined = 4
 )
 
 // ExitError carries an explicit process exit code out of a command, so a

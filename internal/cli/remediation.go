@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -119,8 +120,12 @@ type remediationFull struct {
 			Patch         json.RawMessage `json:"patch"`
 			PrePatchState json.RawMessage `json:"prePatchState"`
 		} `json:"action"`
-		Steps    []remediationStep `json:"steps"`
-		Rollback *struct {
+		Steps []remediationStep `json:"steps"`
+		// WorkloadRef is the live workload this remediation concerns and who
+		// owns it, recorded by the operator at proposal time. Absent means no
+		// workload was observed, which every consumer must treat as owned.
+		WorkloadRef *workloadRef `json:"workloadRef"`
+		Rollback    *struct {
 			Enabled          bool   `json:"enabled"`
 			HealthCheckAfter string `json:"healthCheckAfter"`
 			MaxRetries       int32  `json:"maxRetries"`
@@ -145,7 +150,7 @@ func newRemediationListCmd() *cobra.Command {
 active remediations (Pending, Approved, Applying, Verifying, Failed).
 Use --all to include completed, rejected, and expired.
 
-Severity lives on the linked IncidentMemory, not on the RemediationAction — read it
+Severity lives on the linked IncidentMemory, not on the RemediationAction. Read it
 with 'dorgu incidents describe <incident>'.
 
 Examples:
@@ -385,6 +390,13 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 	fmt.Fprintln(w, strings.Repeat("═", len([]rune("Remediation: "+r.Metadata.Name))))
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "Target:     %s\n", personaDisplay)
+	// The persona is what Dorgu records; the workload is what actually runs, and
+	// on a brownfield cluster the two rarely share a name. Say both, and say who
+	// owns the one that matters.
+	if ref := r.Spec.WorkloadRef; ref.observed() {
+		fmt.Fprintf(w, "Workload:   %s\n", ref.describe())
+		fmt.Fprintf(w, "Owner:      %s\n", ownerDisplay(ref))
+	}
 	fmt.Fprintf(w, "Type:       %s\n", r.Spec.Action.Type)
 	fmt.Fprintf(w, "Confidence: %s\n", r.Spec.Confidence)
 	if r.Spec.PlanSource != "" {
@@ -410,6 +422,10 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 	// Proposed change: the ordered plan when present, else the legacy single Action.
 	printRemediationPlan(w, r)
 
+	// What this does to the running Deployment. The plan above is a change to
+	// the persona; this is the change to the thing that is actually OOMing.
+	printRemediationWorkloadChange(w, r)
+
 	// Rollback info
 	if r.Spec.Rollback != nil {
 		rb := r.Spec.Rollback
@@ -432,15 +448,68 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 	printRemediationActions(w, r)
 }
 
+// ownerDisplay renders the Owner header line. For an unmanaged workload it says
+// so plainly, because "nothing reconciles this, so Dorgu may patch it" is the
+// fact that explains why the approve path behaves differently here.
+func ownerDisplay(ref *workloadRef) string {
+	if !ref.isOwned() {
+		return "unmanaged (nothing reconciles it, so Dorgu may patch it)"
+	}
+	return ownerName(ref)
+}
+
+// printRemediationWorkloadChange renders the workload-vs-workload diff: what the
+// plan does to the live Deployment, with the observed container resources as the
+// before-state.
+//
+// F-05: the review diff compared persona to persona, so a remediation that
+// silently introduced a CPU limit the workload never had showed nothing. The
+// persona is not the thing being changed, so it cannot be the thing diffed.
+func printRemediationWorkloadChange(w io.Writer, r *remediationFull) {
+	plan, err := buildHealPlan(r)
+	if err != nil || plan.Change.isEmpty() {
+		return
+	}
+
+	printWorkloadDiff(w, r.Spec.WorkloadRef, plan.Change)
+
+	// While the action is Pending, printRemediationActions says this at the
+	// bottom alongside what to do instead. Once it is not, that block is gone
+	// and this is the only place the reader learns Dorgu did not do it.
+	if r.Spec.WorkloadRef.isOwned() && r.Status.Phase != "Pending" {
+		fmt.Fprintf(w, "  Dorgu did not apply this: %s owns this Deployment.\n",
+			ownerName(r.Spec.WorkloadRef))
+		fmt.Fprintln(w)
+	}
+}
+
 // printRemediationActions prints what the reader can do next.
 //
 // A plan with no auto-applicable step is not something to approve and heal. The
 // CLI already knows it cannot apply anything (it prints "No auto-applicable
 // resource change" a moment later), yet it used to offer the approve command
 // anyway, which is what walked the clean-room tester into a Failed remediation
-// and a 30-minute cooldown on the app (F-03).
+// and a 30-minute cooldown on the app (F-03). A plan aimed at a workload Dorgu
+// will not patch is the same mistake wearing a different hat.
 func printRemediationActions(w io.Writer, r *remediationFull) {
 	if r.Status.Phase != "Pending" {
+		return
+	}
+
+	// An owned workload will be declined at approve time. Printing the command
+	// that gets declined is how a guard that is working reads as a guard that
+	// is broken, so say the true thing here instead.
+	if hasAutoApplicableChange(r) && r.Spec.WorkloadRef.isOwned() {
+		fmt.Fprintf(w, "Dorgu will not patch this Deployment: %s owns it.\n",
+			ownerName(r.Spec.WorkloadRef))
+		fmt.Fprintf(w, "Make the change in %s.\n", ownerChangeLocation(r.Spec.WorkloadRef))
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Actions:")
+		fmt.Fprintf(w, "  dorgu remediation approve %s -n %s --no-heal   (record the decision, patch no workload)\n",
+			r.Metadata.Name, r.Metadata.Namespace)
+		fmt.Fprintf(w, "  dorgu remediation reject %s -n %s --reason \"...\"\n",
+			r.Metadata.Name, r.Metadata.Namespace)
+		fmt.Fprintln(w)
 		return
 	}
 
@@ -517,7 +586,7 @@ func printRemediationPlan(w io.Writer, r *remediationFull) {
 				fmt.Fprintf(w, "      %s\n", line)
 			}
 		}
-		if cmd := displayableStepCommand(s.Command); cmd != "" {
+		if cmd := runnableStepCommand(s.Command, r.Spec.WorkloadRef); cmd != "" {
 			fmt.Fprintf(w, "      Run: %s\n", cmd)
 		}
 		pre := rawJSONToString(s.PrePatchState)
@@ -633,6 +702,11 @@ strategic-merge patch on the matching Deployment and applies it with your
 credentials, so the pod recovers. The operator stays advisory and never writes
 workloads. Use --no-heal to only patch the RemediationAction status.
 
+Dorgu only patches a Deployment that nothing else reconciles. If Helm, ArgoCD,
+Flux or kustomize owns it, or if Dorgu could not tell, this declines with exit
+code 4 and prints the change to make in your own source of truth instead.
+Nothing is approved and nothing is written. There is no override flag.
+
 Examples:
   dorgu remediation approve fix-oom-api-server -n production
   dorgu remediation approve --next -n production
@@ -647,7 +721,7 @@ Examples:
 	cmd.Flags().Bool("next", false, "approve the oldest pending remediation")
 	cmd.Flags().Bool("heal", true, "after approval, apply the resource change to the workload")
 	cmd.Flags().Bool("no-heal", false, "skip the workload heal; only patch the RemediationAction status")
-	cmd.Flags().String("workload", "", "explicit Deployment name (overrides label discovery)")
+	cmd.Flags().String("workload", "", "explicit Deployment name; must be the workload Dorgu observed")
 	cmd.Flags().String("container", "", "explicit container name to patch")
 	cmd.Flags().Bool("yes", false, "skip the heal confirmation prompt")
 	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
@@ -724,6 +798,15 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 	var exec *healExecution
 	if heal {
 		exec, err = planHeal(ctx, rem, opts)
+		// An owned workload is declined, not failed: the plan is right, the
+		// write is somebody else's to make. Approving here would patch the
+		// persona and start the verification clock over a workload change that
+		// is never coming, which is the F-01 divergence again.
+		var declined *ownedWorkloadError
+		if errors.As(err, &declined) {
+			printOwnedWorkloadRefusal(cmd.OutOrStdout(), rem, declined)
+			return withExitCode(ExitDeclined, errSilent)
+		}
 		if err != nil {
 			output.Error(fmt.Sprintf("Cannot apply this remediation to the workload: %v", err))
 			output.Info("Nothing was approved and nothing was changed.")
@@ -909,9 +992,13 @@ matching Deployment and apply it with your credentials, so the pod recovers.
 
 This is run automatically by 'approve' (unless --no-heal); use it to re-run the
 workload sync on its own (e.g. after --no-heal, or if a previous heal failed).
-The operator never writes workloads — this is the CLI (your tool) closing the
+The operator never writes workloads: this is the CLI (your tool) closing the
 loop. Non-resource steps (restart/scale/manual) are printed as advisory, not
 executed.
+
+Only a Deployment that nothing else reconciles is patched. When Helm, ArgoCD,
+Flux or kustomize owns it, this declines with exit code 4, names the owner, and
+prints the change to make where that owner reads it from.
 
 Examples:
   dorgu remediation heal fix-oom-api-server -n production
@@ -923,7 +1010,7 @@ Examples:
 
 	cmd.Flags().StringP("namespace", "n", "", "namespace of the remediation (required)")
 	_ = cmd.MarkFlagRequired("namespace")
-	cmd.Flags().String("workload", "", "explicit Deployment name (overrides label discovery)")
+	cmd.Flags().String("workload", "", "explicit Deployment name; must be the workload Dorgu observed")
 	cmd.Flags().String("container", "", "explicit container name to patch")
 	cmd.Flags().Bool("yes", false, "skip the heal confirmation prompt")
 	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
@@ -977,6 +1064,10 @@ func runRemediationHeal(cmd *cobra.Command, args []string) error {
 		assumeYes:  assumeYes,
 	}
 	if err := healWorkload(ctx, rem, opts, cmd.InOrStdin(), cmd.OutOrStdout()); err != nil {
+		// A refusal has already printed itself, and it is not a failure.
+		if errors.Is(err, errSilent) {
+			return err
+		}
 		output.Error(fmt.Sprintf("Workload heal failed: %v", err))
 		return errSilent
 	}

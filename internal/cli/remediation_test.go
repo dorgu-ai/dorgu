@@ -292,6 +292,9 @@ func TestPrintRemediationDiffAutomaticRollbackNoHealthCheck(t *testing.T) {
 // with WS1/WS2): the action.patch is a JSON *object* (apiextensionsv1.JSON) and an
 // ordered steps[] plan is present. This is the exact shape that crashed the CLI
 // with "cannot unmarshal object into ... .spec.action.patch of type string".
+//
+// Its workloadRef is unmanaged, which is the one case where the CLI may patch
+// the Deployment. Owned workloads are covered in remediation_ownership_test.go.
 const operatorRemediationFixture = `{
   "apiVersion": "dorgu.io/v1",
   "kind": "RemediationAction",
@@ -304,6 +307,17 @@ const operatorRemediationFixture = `{
     "incidentRef": {"name": "im-oom", "namespace": "production"},
     "personaRef": {"kind": "ApplicationPersona", "name": "api-server", "namespace": "production"},
     "trustLevel": 2,
+    "workloadRef": {
+      "kind": "Deployment",
+      "name": "api-server",
+      "namespace": "production",
+      "container": "api-server",
+      "managedBy": "unmanaged",
+      "managedByDetail": "",
+      "observedResources": {"limits": {"memory": "256Mi"}},
+      "observedImage": "ghcr.io/acme/api-server:1.4.2",
+      "observedAt": "2026-06-24T09:59:00Z"
+    },
     "action": {
       "type": "persona-update",
       "patch": {"resources": {"limits": {"memory": "512Mi"}}},
@@ -561,6 +575,12 @@ func TestRunRemediationRejectNonRejectablePhase(t *testing.T) {
 // diagnosis whose fix is one kubectl command.
 func imagePullRemediation() remediationFull {
 	r := makeTestRemediation("ai-fix-imagepull", "demo", "Pending", "notification", "0.91", "web")
+	// Nothing reconciles this Deployment, so a kubectl command is a fix the
+	// reader can actually run. On an owned workload it would not be.
+	r.Spec.WorkloadRef = &workloadRef{
+		Kind: "Deployment", Name: "web", Namespace: "demo", Container: "web",
+		ManagedBy: managedByUnmanaged,
+	}
 	r.Spec.PlanSource = "ai-anthropic"
 	r.Spec.PlanSummary = "image tag nginx:1.27-alpineX does not exist; it is a typo for nginx:1.27-alpine"
 	r.Spec.Explanation = "AI remediation plan: 2 steps, all advisory (nothing is applied for you)"
