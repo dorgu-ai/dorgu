@@ -42,7 +42,7 @@ If the user provides an explicit version as argument, skip auto-detection and us
 
 ```bash
 # Must be on main branch and clean
-git branch --show-current    # must be "main" or "master"
+git branch --show-current    # must be "master"
 git status                   # must be clean (no uncommitted changes)
 
 # Full CI check
@@ -120,7 +120,7 @@ Check that `./dist/` contains binaries for expected platforms (linux/darwin amd6
 > Push now?
 
 ```bash
-git push origin main
+git push origin master
 git push origin <VERSION>
 ```
 
