@@ -527,9 +527,17 @@ func parseDeploymentObject(raw []byte) (deploymentSummary, error) {
 	return d.toSummary(), nil
 }
 
+// applyDeploymentPatch applies the resource change with the user's credentials.
+//
+// The patch runs under Dorgu's own field manager rather than kubectl's default
+// `kubectl-patch`. That entry is a footprint stripDorguFootprint removes
+// straight afterwards, and it can only be removed safely if it is
+// distinguishable from a `kubectl patch` the user ran themselves. See
+// heal_footprint.go.
 func applyDeploymentPatch(ctx context.Context, kubeconfig, ns, name, patch string) error {
 	out, err := kubectlCmd(ctx, kubeconfig,
-		"patch", "deployment", name, "-n", ns, "--type", "strategic", "-p", patch).CombinedOutput()
+		"patch", "deployment", name, "-n", ns, "--type", "strategic",
+		"--field-manager", dorguFieldManager, "-p", patch).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to patch deployment %s: %s", name, kubectlErrText(out))
 	}
@@ -640,6 +648,23 @@ func printHealPreamble(w io.Writer, ctxName string, advisory []advisoryStep) {
 	}
 }
 
+// printUnmanagedCaveat states the limit of the classification that got us here,
+// at the last moment before Dorgu writes.
+//
+// Reaching this point means detection found nothing reconciling the Deployment.
+// For Helm, ArgoCD and Flux that is a strong statement: all three stamp their
+// objects, so their absence is evidence. For kustomize it is not. kustomize is
+// a client-side renderer with no controller and it marks nothing by default, so
+// a Deployment from `kubectl apply -k` is indistinguishable from one applied by
+// hand (F-08). Dorgu says which of those two it is rather than letting silence
+// imply the stronger claim.
+func printUnmanagedCaveat(w io.Writer) {
+	fmt.Fprintln(w, output.Dim(
+		"  Nothing Dorgu can see reconciles this Deployment. A kustomize overlay leaves no marker,"))
+	fmt.Fprintln(w, output.Dim(
+		"  so if this app is rendered by one, re-applying it will revert this change."))
+}
+
 // executeHeal prints the resolved plan, confirms (unless assumeYes) and applies
 // the patch. Success is only reported once kubectl has accepted the patch.
 func executeHeal(ctx context.Context, exec *healExecution, opts healOptions, in io.Reader, w io.Writer) error {
@@ -650,6 +675,7 @@ func executeHeal(ctx context.Context, exec *healExecution, opts healOptions, in 
 	for _, line := range resourceChangeSummary(exec.Change) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
+	printUnmanagedCaveat(w)
 
 	if !opts.assumeYes {
 		ok, err := confirmHeal(in, w)
@@ -665,9 +691,20 @@ func executeHeal(ctx context.Context, exec *healExecution, opts healOptions, in 
 	if err := applyDeploymentPatch(ctx, opts.kubeconfig, exec.Namespace, exec.Deployment, exec.Patch); err != nil {
 		return err
 	}
+
+	// We change it, we do not own it. The patch is done and the workload is
+	// fixed, so a failure to take Dorgu's field-manager entry back off is not a
+	// failed heal, but it is a future `helm upgrade` conflict and the user has
+	// to hear about it. See heal_footprint.go.
+	stripErr := stripDorguFootprint(ctx, opts.kubeconfig, exec.Namespace, exec.Deployment)
+
 	output.Success(fmt.Sprintf(
 		"Healed %s/%s (container %s). The pod will restart with the updated resources.",
 		exec.Namespace, exec.Deployment, exec.Container))
+
+	if stripErr != nil {
+		printFootprintWarning(w, exec, stripErr)
+	}
 	return nil
 }
 
