@@ -245,6 +245,18 @@ type fakeKubectlResponses struct {
 	// failDeploymentPatch makes `kubectl patch deployment` exit non-zero, the
 	// way an RBAC denial or an admission webhook rejection would.
 	failDeploymentPatch bool
+
+	// deploymentAfterPatch, when set, is served by `get deployment` once the
+	// resource patch has landed, and deploymentAfterStrip once the
+	// managedFields patch has. They exist so the footprint strip can be driven
+	// through its real sequence: patch, read the field managers, remove
+	// Dorgu's, read back to confirm.
+	deploymentAfterPatch string
+	deploymentAfterStrip string
+
+	// failStripPatch makes the managedFields patch fail with a Conflict, the
+	// way a concurrent write would.
+	failStripPatch bool
 }
 
 // writeFakeKubectlDispatch installs a fake kubectl on PATH that dispatches by
@@ -263,10 +275,16 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 	remFile := write("rem.json", r.rem)
 	personaFile := write("persona.json", r.persona)
 	deployFile := write("deploy.json", r.deployment)
+	afterPatchFile := write("deploy-after-patch.json", r.deploymentAfterPatch)
+	afterStripFile := write("deploy-after-strip.json", r.deploymentAfterStrip)
 	patchLog = filepath.Join(dir, "patch.log")
 	patchFails := "0"
 	if r.failDeploymentPatch {
 		patchFails = "1"
+	}
+	stripFails := "0"
+	if r.failStripPatch {
+		stripFails = "1"
 	}
 
 	callLog := filepath.Join(dir, "calls.log")
@@ -285,13 +303,23 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"  esac\n" +
 		"done\n" +
 		"if [ \"$mode\" = patch ]; then echo \"$@\" >> " + patchLog + "\n" +
+		"  case \"$*\" in\n" +
+		"    *managedFields*)\n" +
+		"      touch " + filepath.Join(dir, "stripped") + "\n" +
+		"      if [ " + stripFails + " = 1 ]; then echo 'Error from server (Conflict): the object has been modified' >&2; exit 1; fi\n" +
+		"      echo patched; exit 0 ;;\n" +
+		"    *) touch " + filepath.Join(dir, "patched") + " ;;\n" +
+		"  esac\n" +
 		"  if [ \"$kind\" = deploy ] && [ " + patchFails + " = 1 ]; then echo 'Error from server (Forbidden): deployments.apps is forbidden' >&2; exit 1; fi\n" +
 		"  echo patched; exit 0; fi\n" +
 		"if [ \"$mode\" = get ]; then\n" +
 		"  case \"$kind\" in\n" +
 		"    rem) cat " + remFile + " ;;\n" +
 		"    persona) cat " + personaFile + " ;;\n" +
-		"    deploy) cat " + deployFile + " ;;\n" +
+		"    deploy)\n" +
+		"      if [ -f " + filepath.Join(dir, "stripped") + " ] && [ -s " + afterStripFile + " ]; then cat " + afterStripFile + "\n" +
+		"      elif [ -f " + filepath.Join(dir, "patched") + " ] && [ -s " + afterPatchFile + " ]; then cat " + afterPatchFile + "\n" +
+		"      else cat " + deployFile + "; fi ;;\n" +
 		"  esac\n" +
 		"  exit 0\n" +
 		"fi\n" +
