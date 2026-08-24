@@ -6,6 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-25
+
+### Upgrade notes
+
+> **Nothing to change on your side. Pair this release with operator v0.10.0.** The two halves fix one defect from opposite ends: this release stops Dorgu leaving a field-manager footprint on the workloads it does heal, and operator v0.10.0 fixes the ownership classification that decides which workloads those are. Either runs without the other, but only together do they make the whole story true.
+>
+> One behaviour change worth knowing about comes from the operator side: because a foreign `Update`-operation manager holding a container's `resources` block now reads as **owned**, a small number of workloads that operator v0.9.0 cleared as `unmanaged` will now be declined rather than healed. A workload carrying only a `kubectl-*` manager is deliberately not among them, and healing that case now clears the stale claim instead of adding to it.
+
+### Changed
+
+- **`dorgu remediation heal` patches under the `dorgu` field manager and strips that entry immediately afterwards, so Dorgu leaves no ownership footprint on your workload.** The ownership guard added in v0.10.0 rested on a premise that turned out to be false: server-side apply conflicts with whoever owns a field, and an `Update`-operation entry owns the fields it set just as an `Apply`-operation one does. Healing is a `kubectl patch`, so on the one class of workload Dorgu is willing to write to it was creating exactly the failure the guard exists to prevent. The next server-side apply hard-failed with Dorgu's fingerprints on it:
+
+  ```
+  error: Apply failed with 1 conflict: conflict with "kubectl-patch" using apps/v1:
+    .spec.template.spec.containers[name="report-worker"].resources.limits.memory
+  ```
+
+  Anyone bringing a Dorgu-healed Deployment under Helm, ArgoCD or Flux later, which is the normal maturation path for a hand-applied app, hit that. The patch now runs under `--field-manager dorgu` for two reasons: the entry has to be distinguishable from a `kubectl patch` the user ran themselves, which Dorgu has no business deleting, and the operator skips `dorgu`-prefixed managers, so a footprint that somehow survives cannot make Dorgu refuse the same workload later. Straight afterwards the entry is removed: read `managedFields`, write the list back without Dorgu's entry, then **read the object again and confirm it is gone**. `--server-side --field-manager=dorgu --force-conflicts` was the alternative and is worse, because it makes Dorgu a *persistent* `Apply`-operation owner of those fields, which is precisely what the next `helm upgrade` would have to fight.
+- **It clears a pre-existing conflict rather than merely avoiding one.** An `Update` takes the fields it writes away from whoever held them, so a heal moves an existing `kubectl-set` claim onto `dorgu` and then drops it, leaving those fields owned by nobody. Verified end to end against kube-apiserver 1.36.2, replaying this CLI's exact command sequence:
+
+  ```
+  before heal:                  [kubectl-client-side-apply:Update kubectl-set:Update]
+  1. heal patch:                [dorgu:Update kubectl-client-side-apply:Update]
+  2. strip patch:               [kubectl-client-side-apply:Update]
+  3. foreign server-side apply: deployment.apps/report-worker serverside-applied
+  ```
+
+  Step 3 used to be `Apply failed with 1 conflict`. So the fix repairs more than it avoids: a workload that already carried a stale `kubectl-set` claim comes out of a heal cleaner than it went in.
+- **A failed strip does not fail the heal, but it is never left silent.** The workload was patched, so the command still exits 0. The footprint is a future `helm upgrade` conflict, so it is reported in full: what Dorgu now owns, what it will break, and the command to clear it.
+
+  ```
+  ⚠ The workload was patched, but Dorgu could not remove its own field-manager entry: ...
+    Dorgu now owns resources.limits.memory on production/api-server.
+    A later server-side apply (helm upgrade, ArgoCD, Flux) will fail with a conflict against it.
+    Clear it with:
+      kubectl patch deployment api-server -n production --type merge -p '{"metadata":{"managedFields":[{}]}}'
+      That clears the whole managedFields list. Every other manager reclaims its fields on its next apply.
+  ```
+- **Three details in the strip are load-bearing.** Removing one entry means rewriting the whole list, so every other manager's entry is kept as raw JSON and written back byte for byte, never round-tripped through a struct: silently dropping a field this CLI does not parse would mean rewriting another manager's ownership record, which is worse than the bug being fixed. The `resourceVersion` is sent as a precondition, because this is a read-modify-write over state Dorgu does not own, and if anything else wrote in between the API server must reject it rather than let Dorgu clobber a list it never saw; conflicts are retried against fresh state and then reported. And the removal is verified by reading the object back, because that is the only honest way to say Dorgu owns nothing here.
+
+### Added
+
+- **The heal plan states the limit of the `unmanaged` classification it rests on.** Reaching a heal means detection called the workload unmanaged. For Helm, ArgoCD and Flux that is a strong statement, because all three stamp their objects. For kustomize it is not: kustomize marks nothing by default, so `kubectl apply -k` is indistinguishable from `kubectl apply -f`. One dim line now appears before the confirmation prompt rather than letting silence imply the stronger claim.
+
+  ```
+    Nothing Dorgu can see reconciles this Deployment. A kustomize overlay leaves no marker,
+    so if this app is rendered by one, re-applying it will revert this change.
+  ```
+
 ## [0.10.0] - 2026-08-23
 
 ### Upgrade notes
