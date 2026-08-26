@@ -4,7 +4,18 @@ All notable changes to the Dorgu CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
 ## [Unreleased]
+
+## [0.12.0] - 2026-08-27
+
+### Upgrade notes
+
+> **BREAKING: anything parsing `dorgu health --json` saturation needs updating.** `resourceSaturation.{cpu,memory}` carried `{percentage, used, allocatable}`, and `used` was never used: it held the requests the scheduler had committed. On the cluster that surfaced this those were 25% and 1%, which is the difference between nearly full and nearly idle, so a consumer that trusted the key name was reading the wrong number rather than a stale one. The shape is now `{allocatable, requested, requestedPercent, used, usedPercent}`, with `nodes`, `scheduledPods`, `unscheduledPods` and `usedUnavailable` added at the top level. Renaming in place was rejected: a key that silently changes meaning is the defect, not the fix.
+>
+> **`dorgu remediation heal` can now exit non-zero after successfully patching a workload.** If the patch lands but the record of it cannot be written to the RemediationAction, the command says which way round the disagreement runs and exits `1`. The workload is patched by then and nothing is undone. Scripts that treat a non-zero heal as "nothing happened" need to read the message.
+>
+> **Guardrail verdicts need operator v0.11.0 or newer to appear.** They are read from the optional `spec.steps[].safety` field that release adds. Against an older operator the field is absent, no guardrail block is printed, `remediation list` grows no `GUARDRAIL` column, and every command renders exactly as it did before. No migration, and no version pinning between the two.
 
 ### Added
 
@@ -38,6 +49,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`dorgu remediation list` grows a GUARDRAIL column when there is a verdict to put in it.** It shows the strongest verdict any guardrail reached on any step of the plan: `rejected` over `clamped` over `derived`. It is a pointer to a plan worth opening, not the record; the field-by-field account is in `dorgu remediation diff`, and the help says so. On a cluster where no guardrail has ruled on anything the column does not appear, and the list prints exactly what it printed before.
 
   The field is optional throughout. A RemediationAction written by an older operator carries no `safety`, renders exactly as it does today, and gains no `"safety"` key in `--json` output.
+- **`dorgu health` names a resource that is close to booked out**, at 90% of allocatable requested or above, so the reader does not have to do the division the old output had already got wrong.
+
+  ```
+  ⚠ CPU requests are at 95% of allocatable; new pods may not schedule.
+  ```
+
+- **A missing used figure says why.** metrics-server is not installed by default, so its absence renders as `n/a (metrics-server did not answer: ...)` rather than as zero. Requested still reports without it.
+
+### Changed
+
+- **`dorgu health --json` reports saturation in a new shape.** `resourceSaturation.{cpu,memory}` carried `{percentage, used, allocatable}`, where `used` was really requests. It now carries `{allocatable, requested, requestedPercent, used, usedPercent}`, and the top level adds `nodes`, `scheduledPods`, `unscheduledPods` and `usedUnavailable`. Anything parsing the old keys needs updating; the old `used` key never meant what it said.
 
 ### Fixed
 
@@ -91,20 +113,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   Computing it here rather than only fixing the operator is deliberate: `dorgu health` documents itself as querying the Kubernetes API directly, saturation was the one section that did not, and a figure read from a five-minute-stale field on whatever operator version happens to be installed cannot be relied on. Saturation now also appears with **no operator installed at all**, which it previously did not. The same defect is fixed at the source in the paired operator release, because the dashboard reads that field.
 
 - **Requested and used are no longer the same number.** The CRD field is called `usedCPU` but holds *requests*; the CLI's struct field was called `Used`; the label said "requests". Requests are what the scheduler has committed, used is what the containers are burning, and on the reported cluster those were 25% and 1%: the difference between "nearly full" and "nearly idle". They are two columns now. `dorgu health --watch` labels the operator's figure `cpu-requested=` / `mem-requested=` for the same reason, since a bare `cpu=25%` reads as usage.
-
-### Added
-
-- **`dorgu health` names a resource that is close to booked out**, at 90% of allocatable requested or above, so the reader does not have to do the division the old output had already got wrong.
-
-  ```
-  ⚠ CPU requests are at 95% of allocatable; new pods may not schedule.
-  ```
-
-- **A missing used figure says why.** metrics-server is not installed by default, so its absence renders as `n/a (metrics-server did not answer: ...)` rather than as zero. Requested still reports without it.
-
-### Changed
-
-- **`dorgu health --json` reports saturation in a new shape.** `resourceSaturation.{cpu,memory}` carried `{percentage, used, allocatable}`, where `used` was really requests. It now carries `{allocatable, requested, requestedPercent, used, usedPercent}`, and the top level adds `nodes`, `scheduledPods`, `unscheduledPods` and `usedUnavailable`. Anything parsing the old keys needs updating; the old `used` key never meant what it said.
 
 ## [0.11.0] - 2026-08-25
 
