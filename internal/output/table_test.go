@@ -167,3 +167,14 @@ func TestHealthColor(t *testing.T) {
 	assert.Equal(t, "Unhealthy", HealthColor("Unhealthy"))
 	assert.Equal(t, "Unknown", HealthColor("Unknown"))
 }
+
+func TestSafetyVerdictColor(t *testing.T) {
+	assert.Equal(t, "rejected", SafetyVerdictColor("rejected"))
+	assert.Equal(t, "clamped", SafetyVerdictColor("clamped"))
+	assert.Equal(t, "derived", SafetyVerdictColor("derived"))
+
+	// A verdict from an operator newer than this CLI comes back verbatim. It is
+	// still Dorgu's verdict, so it is rendered rather than dropped.
+	assert.Equal(t, "quarantined", SafetyVerdictColor("quarantined"))
+	assert.Equal(t, "", SafetyVerdictColor(""))
+}

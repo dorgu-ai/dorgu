@@ -167,6 +167,25 @@ func HealthColor(health string) string {
 	return FormatHealth(health)
 }
 
+// SafetyVerdictColor returns a colored guardrail verdict string.
+//
+// The verdicts come from the operator's spec.steps[].safety (api/v1). An
+// unrecognised one is returned unchanged rather than dropped or recoloured: a
+// newer operator may reach a verdict this CLI has never heard of, and it is
+// still Dorgu's verdict.
+func SafetyVerdictColor(verdict string) string {
+	switch verdict {
+	case "rejected":
+		return Red(verdict)
+	case "clamped":
+		return Yellow(verdict)
+	case "derived":
+		return Blue(verdict)
+	default:
+		return verdict
+	}
+}
+
 // RemediationPhaseColor returns a colored remediation phase string.
 func RemediationPhaseColor(phase string) string {
 	switch phase {

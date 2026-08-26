@@ -80,6 +80,12 @@ type remediationStep struct {
 	Command        string          `json:"command"`
 	Patch          json.RawMessage `json:"patch"`
 	PrePatchState  json.RawMessage `json:"prePatchState"`
+	// Safety is what Dorgu's guardrails decided about this step, one entry per
+	// field they ruled on. Optional: absent means no guardrail ruled, which is
+	// every object written before dorgu-operator #47. It is omitted when empty
+	// so `--json` output for those objects is byte-identical to before.
+	// See remediation_safety.go.
+	Safety []stepSafety `json:"safety,omitempty"`
 }
 
 // remediationStepStatus mirrors the operator's StepStatus (api/v1).
@@ -152,6 +158,12 @@ Use --all to include completed, rejected, and expired.
 
 Severity lives on the linked IncidentMemory, not on the RemediationAction. Read it
 with 'dorgu incidents describe <incident>'.
+
+A GUARDRAIL column appears when one of Dorgu's guardrails has ruled on a field in
+a listed plan: 'rejected' when it refused a value outright, 'clamped' when it
+substituted one of its own, 'derived' when it sized the value itself. That is a
+pointer, not the record. Read the field-by-field account with
+'dorgu remediation diff'.
 
 Examples:
   dorgu remediation list
@@ -259,22 +271,42 @@ func printRemediationList(w io.Writer, remediations []remediationFull, showAll b
 		return
 	}
 
-	tbl := output.NewTable(w, "NAMESPACE", "NAME", "PHASE", "TYPE", "PLAN", "STEPS", "CONFIDENCE", "PERSONA", "AGE")
+	// The GUARDRAIL column appears only when something is in it. A cluster where
+	// no guardrail has ruled on anything sees the list it has always seen.
+	showGuardrail := anyGuardrailVerdict(remediations)
+
+	tbl := output.NewTable(w, remediationListHeaders(showGuardrail)...)
 	for _, r := range remediations {
-		tbl.AddRow(
+		row := []string{
 			r.Metadata.Namespace,
 			r.Metadata.Name,
 			output.RemediationPhaseColor(r.Status.Phase),
 			r.Spec.Action.Type,
 			planSourceDisplay(r.Spec.PlanSource),
 			stepCountDisplay(r),
+		}
+		if showGuardrail {
+			row = append(row, guardrailVerdictSummary(r))
+		}
+		row = append(row,
 			r.Spec.Confidence,
 			r.Spec.PersonaRef.Name,
 			formatAge(r.Metadata.CreationTimestamp),
 		)
+		tbl.AddRow(row...)
 	}
 	tbl.Render()
 	fmt.Fprintln(w)
+}
+
+// remediationListHeaders returns the list's column headers, with GUARDRAIL
+// beside STEPS when any listed remediation carries a guardrail verdict.
+func remediationListHeaders(showGuardrail bool) []string {
+	headers := []string{"NAMESPACE", "NAME", "PHASE", "TYPE", "PLAN", "STEPS"}
+	if showGuardrail {
+		headers = append(headers, "GUARDRAIL")
+	}
+	return append(headers, "CONFIDENCE", "PERSONA", "AGE")
 }
 
 // planSourceDisplay renders the plan source column, using a placeholder for legacy
@@ -303,6 +335,11 @@ func newRemediationDiffCmd() *cobra.Command {
 		Short: "Show remediation proposal diff",
 		Long: `Display detailed information about a remediation proposal including the
 proposed YAML change as a colored diff, explanation, and rollback config.
+
+Where one of Dorgu's guardrails ruled on a field, the verdict is printed under
+its own heading: what the plan asked for, what Dorgu measured it against, and
+what will actually be applied. Those numbers are Dorgu's own, computed against
+the observed workload, which is why they are kept apart from the plan's prose.
 
 Examples:
   dorgu remediation diff fix-oom-api-server -n production
@@ -580,7 +617,11 @@ func printRemediationPlan(w io.Writer, r *remediationFull) {
 		if risk == "" {
 			risk = "unknown"
 		}
-		fmt.Fprintf(w, "  [%d] %s (%s; %s): %s\n", s.Order, s.Type, risk, mode, s.Description)
+		// The operator appends every guardrail message to the description of a
+		// step it ruled on. printStepSafety prints those below, with the numbers
+		// behind them, so they come off here rather than being said twice.
+		description := descriptionWithoutSafetyMessages(s.Description, s.Safety)
+		fmt.Fprintf(w, "  [%d] %s (%s; %s): %s\n", s.Order, s.Type, risk, mode, description)
 		if s.Rationale != "" {
 			for _, line := range strings.Split(s.Rationale, "\n") {
 				fmt.Fprintf(w, "      %s\n", line)
@@ -589,9 +630,18 @@ func printRemediationPlan(w io.Writer, r *remediationFull) {
 		if cmd := runnableStepCommand(s.Command, r.Spec.WorkloadRef); cmd != "" {
 			fmt.Fprintf(w, "      Run: %s\n", cmd)
 		}
+		// What Dorgu's guardrails decided, before the diff that reflects it. A
+		// field a guardrail refused is not in the patch at all, so this block is
+		// the only place the reader learns it was asked for.
+		printStepSafety(w, "      ", s.Safety)
 		pre := rawJSONToString(s.PrePatchState)
 		patch := rawJSONToString(s.Patch)
 		if pre != "" || patch != "" {
+			// The verdict block is dense, and the diff below it is the outcome
+			// of the verdict rather than more of it.
+			if len(s.Safety) > 0 {
+				fmt.Fprintln(w)
+			}
 			output.RenderDiff(w, pre, patch, 3)
 		}
 		fmt.Fprintln(w)
@@ -848,7 +898,7 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	printHealPreamble(out, exec.Context, exec.Advisory)
+	printHealPreamble(out, exec)
 
 	if !exec.hasWorkloadChange() {
 		output.Info("No resource change to apply: the steps above are for you to carry out.")
