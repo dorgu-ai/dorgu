@@ -665,9 +665,14 @@ func printUnmanagedCaveat(w io.Writer) {
 		"  so if this app is rendered by one, re-applying it will revert this change."))
 }
 
-// executeHeal prints the resolved plan, confirms (unless assumeYes) and applies
-// the patch. Success is only reported once kubectl has accepted the patch.
-func executeHeal(ctx context.Context, exec *healExecution, opts healOptions, in io.Reader, w io.Writer) error {
+// executeHeal prints the resolved plan, confirms (unless assumeYes), applies the
+// patch and records what it did on the RemediationAction. Success is only
+// reported once kubectl has accepted the patch.
+//
+// The record write lives here rather than at the two call sites so neither can
+// forget it. `heal` used to patch the workload and write nothing back, leaving
+// the CRD saying `Pending` over a cluster that had already changed (CR-02).
+func executeHeal(ctx context.Context, r *remediationFull, exec *healExecution, opts healOptions, in io.Reader, w io.Writer) error {
 	fmt.Fprintln(w, "\nWorkload heal plan:")
 	fmt.Fprintf(w, "  Namespace:  %s\n", exec.Namespace)
 	fmt.Fprintf(w, "  Deployment: %s\n", exec.Deployment)
@@ -698,12 +703,23 @@ func executeHeal(ctx context.Context, exec *healExecution, opts healOptions, in 
 	// to hear about it. See heal_footprint.go.
 	stripErr := stripDorguFootprint(ctx, opts.kubeconfig, exec.Namespace, exec.Deployment)
 
+	// The cluster has changed, so the record has to say so before this reports
+	// success. See remediation_record.go.
+	recordErr := recordHeal(ctx, opts.kubeconfig, r.Metadata.Namespace, r.Metadata.Name, exec)
+
 	output.Success(fmt.Sprintf(
 		"Healed %s/%s (container %s). The pod will restart with the updated resources.",
 		exec.Namespace, exec.Deployment, exec.Container))
 
 	if stripErr != nil {
 		printFootprintWarning(w, exec, stripErr)
+	}
+	if recordErr != nil {
+		// Unlike the footprint, this one is not a green exit. The record
+		// disagreeing with the cluster is the defect being fixed here, and
+		// reporting it with exit 0 would reproduce it.
+		printRecordWarning(w, r.Metadata.Namespace, r.Metadata.Name, exec, recordErr)
+		return withExitCode(ExitError, errSilent)
 	}
 	return nil
 }
@@ -730,5 +746,5 @@ func healWorkload(ctx context.Context, r *remediationFull, opts healOptions, in 
 		output.Warn("No auto-applicable resource change in this remediation; nothing to heal automatically.")
 		return nil
 	}
-	return executeHeal(ctx, exec, opts, in, w)
+	return executeHeal(ctx, r, exec, opts, in, w)
 }

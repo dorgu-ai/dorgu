@@ -6,6 +6,73 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **`dorgu remediation heal` records what it did.** It patched a workload 64Mi→128Mi, printed `✓ Healed`, exited 0, and left the RemediationAction on `Pending`. The two things Dorgu keeps then disagreed: the cluster carried the new limits, and the record said nobody had approved anything and nothing had happened. For a product sold on organizational memory, memory that contradicts the cluster is worse than none.
+
+  Two writes now follow a patch the cluster accepted, and only ever follow one:
+
+  - A remediation still `Pending` moves to `Approved`. Healing one directly has always been an implicit approval and the command has always said so in a warning; it just never recorded it. That also closes the half nobody noticed: a `Pending` action is a no-op to the operator, so the **persona** never learned the new limits either.
+  - Every successful heal stamps a `WorkloadPatched` condition naming the namespace, the Deployment, the container and each field it set.
+
+  ```
+  $ kubectl get remediationaction fix-oom-report-worker -n apps -o yaml
+  status:
+    phase: Approved
+    approvedBy: cli-user
+    conditions:
+    - type: WorkloadPatched
+      status: "True"
+      reason: CLIAppliedResourceChange
+      message: dorgu CLI applied resources.limits.memory=128Mi to Deployment apps/report-worker (container worker)
+  ```
+
+  The marker is a condition rather than `status.appliedAt` because `appliedAt` is the operator's: it is stamped when the persona patch lands and read during `Applying` to time the verification window, so writing to it would move a clock the CLI does not drive. And it is needed on top of the phase transition, because a re-heal after `--no-heal` starts from a phase already past `Approved`, where a phase change would be both wrong and invisible. The CLI does not move the phase of an action that is already Approved, Applying, Verifying or terminal: that lifecycle belongs to the operator.
+
+- **A heal that cannot be recorded is not reported as a success.** The workload is patched by then, so nothing is undone, but the command exits non-zero and says which way round the disagreement runs. Exiting 0 there would reproduce the defect being fixed.
+
+  ```
+  ⚠ apps/report-worker was patched, but Dorgu could not record that on the remediation: ...
+    The cluster has resources.limits.memory → 128Mi and remediationaction apps/fix-oom-report-worker does not say so.
+    Close the gap by re-running the heal, which will record it on the way through:
+      dorgu remediation heal fix-oom-report-worker -n apps
+    Until then, treat the remediation record as incomplete rather than as evidence.
+  ```
+
+  No paste-ready `kubectl patch` is offered on purpose. The only one that would work replaces the whole `conditions` list, so handing it over would have the user overwrite the operator's own conditions to fix a record bug. Re-running the heal is both shorter and safe. The write itself is a read-modify-write: every other writer's condition goes back as raw JSON byte for byte, the CLI's own prior marker is replaced rather than appended (conditions are keyed by type), the `resourceVersion` is sent as a precondition, and a conflict is retried against fresh state three times before it is reported.
+
+- **`dorgu health` no longer reports impossible saturation.** It printed **1689% CPU** on a cluster where 25% was requested and 1% was in use. The number was not the CLI's: it was `ClusterPersona.status.resourceSummary.cpuUtilization`, rendered verbatim, and the operator computes it as the requests of every non-terminal pod over node allocatable. A pod no node has accepted is non-terminal, so a backlog of unschedulable pods inflates the figure without limit. An unscheduled pod holds no allocation on any node; counting it against allocatable is a category error rather than an approximation.
+
+  Saturation is computed by the CLI now, from the node list the node table already fetched plus a pod list, excluding any pod with no `spec.nodeName`. Those pods are reported as the real problem the old percentage was burying.
+
+  ```
+  Resource Saturation: (2 node(s), 3 scheduled pod(s))
+            REQUESTED            USED
+    CPU     950m / 3860m (25%)   38m / 3860m (1%)
+    Memory  832Mi / 7.1Gi (11%)  1010Mi / 7.1Gi (14%)
+    Requested is what the scheduler has committed. Used is what the containers are consuming.
+  ⚠ 3 pods are not scheduled onto any node, so they are excluded from the figures above.
+    A pod no node has accepted holds no allocation. Counting one would inflate saturation without limit.
+  ```
+
+  Computing it here rather than only fixing the operator is deliberate: `dorgu health` documents itself as querying the Kubernetes API directly, saturation was the one section that did not, and a figure read from a five-minute-stale field on whatever operator version happens to be installed cannot be relied on. Saturation now also appears with **no operator installed at all**, which it previously did not. The same defect is fixed at the source in the paired operator release, because the dashboard reads that field.
+
+- **Requested and used are no longer the same number.** The CRD field is called `usedCPU` but holds *requests*; the CLI's struct field was called `Used`; the label said "requests". Requests are what the scheduler has committed, used is what the containers are burning, and on the reported cluster those were 25% and 1%: the difference between "nearly full" and "nearly idle". They are two columns now. `dorgu health --watch` labels the operator's figure `cpu-requested=` / `mem-requested=` for the same reason, since a bare `cpu=25%` reads as usage.
+
+### Added
+
+- **`dorgu health` names a resource that is close to booked out**, at 90% of allocatable requested or above, so the reader does not have to do the division the old output had already got wrong.
+
+  ```
+  ⚠ CPU requests are at 95% of allocatable; new pods may not schedule.
+  ```
+
+- **A missing used figure says why.** metrics-server is not installed by default, so its absence renders as `n/a (metrics-server did not answer: ...)` rather than as zero. Requested still reports without it.
+
+### Changed
+
+- **`dorgu health --json` reports saturation in a new shape.** `resourceSaturation.{cpu,memory}` carried `{percentage, used, allocatable}`, where `used` was really requests. It now carries `{allocatable, requested, requestedPercent, used, usedPercent}`, and the top level adds `nodes`, `scheduledPods`, `unscheduledPods` and `usedUnavailable`. Anything parsing the old keys needs updating; the old `used` key never meant what it said.
+
 ## [0.11.0] - 2026-08-25
 
 ### Upgrade notes

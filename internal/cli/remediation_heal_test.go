@@ -257,6 +257,12 @@ type fakeKubectlResponses struct {
 	// failStripPatch makes the managedFields patch fail with a Conflict, the
 	// way a concurrent write would.
 	failStripPatch bool
+
+	// statusPatchError, when set, is the stderr every `patch remediationaction
+	// --subresource status` fails with. It drives the case where the workload
+	// changed and the record could not be written (CR-02), and distinguishes a
+	// flat refusal from a Conflict, which is retried.
+	statusPatchError string
 }
 
 // writeFakeKubectlDispatch installs a fake kubectl on PATH that dispatches by
@@ -286,6 +292,11 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 	if r.failStripPatch {
 		stripFails = "1"
 	}
+	statusFails := "0"
+	if r.statusPatchError != "" {
+		statusFails = "1"
+	}
+	statusErrFile := write("status-err.txt", r.statusPatchError)
 
 	callLog := filepath.Join(dir, "calls.log")
 
@@ -307,6 +318,9 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"    *managedFields*)\n" +
 		"      touch " + filepath.Join(dir, "stripped") + "\n" +
 		"      if [ " + stripFails + " = 1 ]; then echo 'Error from server (Conflict): the object has been modified' >&2; exit 1; fi\n" +
+		"      echo patched; exit 0 ;;\n" +
+		"    *--subresource\\ status*)\n" +
+		"      if [ " + statusFails + " = 1 ]; then cat " + statusErrFile + " >&2; exit 1; fi\n" +
 		"      echo patched; exit 0 ;;\n" +
 		"    *) touch " + filepath.Join(dir, "patched") + " ;;\n" +
 		"  esac\n" +
@@ -440,8 +454,11 @@ func TestRunRemediationHealCommand(t *testing.T) {
 	log := readPatchLog(t, patchLog)
 	assert.Contains(t, log, "patch deployment api-server")
 	assert.Contains(t, log, `"memory":"512Mi"`)
-	// heal alone must NOT patch the RemediationAction status.
-	assert.NotContains(t, log, "patch remediationaction")
+	// heal records what it did on the RemediationAction (CR-02). It used to
+	// patch the workload and write nothing back, so the CRD contradicted the
+	// cluster. It does not move the phase of an already-approved action.
+	assert.Contains(t, log, "patch remediationaction fix-oom-api-server")
+	assert.Contains(t, log, conditionWorkloadPatched)
 }
 
 const deploymentObjectFixture = `{"metadata":{"name":"custom-api"},"spec":{"template":{"spec":{"containers":[{"name":"main"},{"name":"sidecar"}]}}}}`

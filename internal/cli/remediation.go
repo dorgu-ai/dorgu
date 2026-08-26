@@ -855,7 +855,14 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := executeHeal(ctx, exec, opts, cmd.InOrStdin(), out); err != nil {
+	if err := executeHeal(ctx, rem, exec, opts, cmd.InOrStdin(), out); err != nil {
+		// executeHeal has already printed a formatted account of what happened
+		// (a failed record write, for instance, where the workload *was*
+		// patched). Adding "the workload was NOT patched" on top of it would be
+		// the CLI contradicting itself two lines apart.
+		if errors.Is(err, errSilent) {
+			return err
+		}
 		output.Error(fmt.Sprintf("Workload heal failed: %v", err))
 		output.Warn(fmt.Sprintf(
 			"The remediation is Approved but %s/%s was NOT patched; the persona and the workload now disagree.",
@@ -996,6 +1003,12 @@ The operator never writes workloads: this is the CLI (your tool) closing the
 loop. Non-resource steps (restart/scale/manual) are printed as advisory, not
 executed.
 
+Once the patch lands, the RemediationAction is updated to match: a
+WorkloadPatched condition records the Deployment, container and fields that
+changed, and a remediation still Pending is moved to Approved, because healing
+one directly is an approval. If the record cannot be written this exits non-zero
+and says so: the cluster and the record disagreeing is not a success.
+
 Only a Deployment that nothing else reconciles is patched. When Helm, ArgoCD,
 Flux or kustomize owns it, this declines with exit code 4, names the owner, and
 prints the change to make where that owner reads it from.
@@ -1052,8 +1065,13 @@ func runRemediationHeal(cmd *cobra.Command, args []string) error {
 	case "Approved", "Applying", "Verifying", "Completed":
 		// Expected: heal (or re-heal) an approved remediation.
 	default:
-		// Pending/unset: allow but warn — running heal directly is an implicit approval.
-		output.Warn(fmt.Sprintf("Remediation is in %s phase; healing anyway. Approve it first to record intent.",
+		// Pending/unset: running heal directly is an implicit approval, and it is
+		// recorded as one once the patch lands (CR-02). The warning used to say
+		// "approve it first to record intent" while recording nothing at all,
+		// which left the CRD claiming nothing had happened to a cluster that had
+		// already changed.
+		output.Warn(fmt.Sprintf(
+			"Remediation is in %s phase; healing it directly is an approval and will be recorded as one.",
 			rem.Status.Phase))
 	}
 

@@ -34,6 +34,11 @@ saturation, control plane status, active incidents, and pending remediations.
 Queries the Kubernetes API directly. When the Dorgu Operator is installed,
 shows richer data from IncidentMemory and RemediationAction CRDs.
 
+Saturation is measured against node allocatable and reported twice: requested
+is what the scheduler has committed, used is what the containers are consuming
+(needs metrics-server). Pods no node has accepted hold no allocation, so they
+are excluded and counted separately.
+
 Also names the Deployments that no ApplicationPersona covers: those are not
 being watched, so nothing about them can appear as an incident. Without -n,
 cluster add-on namespaces are left out.
@@ -93,16 +98,8 @@ type healthNode struct {
 	Age    string `json:"age"`
 }
 
-type resourceSaturation struct {
-	CPU    *saturationDetail `json:"cpu,omitempty"`
-	Memory *saturationDetail `json:"memory,omitempty"`
-}
-
-type saturationDetail struct {
-	Percentage  string `json:"percentage"`
-	Used        string `json:"used"`
-	Allocatable string `json:"allocatable"`
-}
+// resourceSaturation and saturationDetail live in health_saturation.go, which
+// owns the computation as well as the shape (CR-03).
 
 type controlPlaneStatus struct {
 	Healthy    bool                    `json:"healthy"`
@@ -195,14 +192,23 @@ func runHealth(cmd *cobra.Command, args []string) error {
 	// Collect data — warn on per-section failures rather than failing silently.
 	var fetchErr error
 
-	summary.Nodes, fetchErr = fetchNodes(ctx, kubeconfig)
+	// One node list feeds both the node table and the saturation figures: the
+	// allocatable pool saturation is measured against is a property of these
+	// same nodes, so reading them twice would only invite the two sections to
+	// disagree.
+	nodesJSON, fetchErr := fetchNodesJSON(ctx, kubeconfig)
 	if fetchErr != nil {
 		output.Warn("Could not fetch nodes: " + fetchErr.Error())
-	}
+	} else {
+		summary.Nodes, fetchErr = parseNodes(nodesJSON)
+		if fetchErr != nil {
+			output.Warn("Could not read the node list: " + fetchErr.Error())
+		}
 
-	summary.ResourceSaturation, fetchErr = fetchResourceSaturation(ctx, kubeconfig)
-	if fetchErr != nil {
-		output.Warn("Could not fetch resource saturation: " + fetchErr.Error())
+		summary.ResourceSaturation, fetchErr = collectResourceSaturation(ctx, kubeconfig, nodesJSON)
+		if fetchErr != nil {
+			output.Warn("Could not compute resource saturation: " + fetchErr.Error())
+		}
 	}
 
 	summary.ControlPlane, fetchErr = fetchControlPlane(ctx, kubeconfig)
@@ -306,21 +312,8 @@ func printHealthSummary(w io.Writer, s *healthSummary) {
 	tbl.Render()
 	fmt.Fprintln(w)
 
-	// Resource saturation
-	if s.ResourceSaturation != nil {
-		fmt.Fprintln(w, "Resource Saturation:")
-		if s.ResourceSaturation.CPU != nil {
-			cpu := s.ResourceSaturation.CPU
-			fmt.Fprintf(w, "  CPU:    %s requests / allocatable (%s / %s)\n",
-				cpu.Percentage, cpu.Used, cpu.Allocatable)
-		}
-		if s.ResourceSaturation.Memory != nil {
-			mem := s.ResourceSaturation.Memory
-			fmt.Fprintf(w, "  Memory: %s requests / allocatable (%s / %s)\n",
-				mem.Percentage, mem.Used, mem.Allocatable)
-		}
-		fmt.Fprintln(w)
-	}
+	// Resource saturation (health_saturation.go)
+	printResourceSaturation(w, s.ResourceSaturation)
 
 	// Control plane
 	if s.ControlPlane != nil {
@@ -422,13 +415,21 @@ func kubectlCmd(ctx context.Context, kubeconfig string, args ...string) *exec.Cm
 	return exec.CommandContext(ctx, "kubectl", args...)
 }
 
-// fetchNodes lists cluster nodes via kubectl.
-func fetchNodes(ctx context.Context, kubeconfig string) ([]healthNode, error) {
+// fetchNodesJSON lists cluster nodes via kubectl and returns the raw response.
+//
+// The raw JSON is returned rather than parsed nodes because two sections read
+// different halves of it: the node table wants names and conditions, and the
+// saturation figures want status.allocatable. See collectResourceSaturation.
+func fetchNodesJSON(ctx context.Context, kubeconfig string) ([]byte, error) {
 	out, err := kubectlCmd(ctx, kubeconfig, "get", "nodes", "-o", "json").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s", kubectlErrText(out))
 	}
+	return out, nil
+}
 
+// parseNodes reads the node table out of a node list.
+func parseNodes(out []byte) ([]healthNode, error) {
 	var result struct {
 		Items []struct {
 			Metadata struct {
@@ -483,74 +484,12 @@ func nodeRoles(labels map[string]string) string {
 	return strings.Join(roles, ",")
 }
 
-// fetchResourceSaturation gets cluster resource saturation from ClusterPersona if available.
-func fetchResourceSaturation(ctx context.Context, kubeconfig string) (*resourceSaturation, error) {
-	out, err := kubectlCmd(ctx, kubeconfig, "get", "clusterpersona", "-o", "json").CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("%s", kubectlErrText(out))
-	}
-	return parseResourceSaturation(out)
-}
-
-// parseResourceSaturation parses ClusterPersona list JSON into a resourceSaturation.
-// Extracted for unit testability without requiring kubectl.
-func parseResourceSaturation(out []byte) (*resourceSaturation, error) {
-	var list struct {
-		Items []struct {
-			Status struct {
-				ResourceSummary struct {
-					AllocatableCPU    string `json:"allocatableCPU"`
-					AllocatableMemory string `json:"allocatableMemory"`
-					UsedCPU           string `json:"usedCPU"`
-					UsedMemory        string `json:"usedMemory"`
-					CPUUtilization    string `json:"cpuUtilization"`
-					MemoryUtilization string `json:"memoryUtilization"`
-				} `json:"resourceSummary"`
-			} `json:"status"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(out, &list); err != nil || len(list.Items) == 0 {
-		return nil, nil
-	}
-
-	rs := list.Items[0].Status.ResourceSummary
-	if rs.AllocatableCPU == "" && rs.AllocatableMemory == "" {
-		return nil, nil
-	}
-
-	sat := &resourceSaturation{}
-	if rs.AllocatableCPU != "" {
-		sat.CPU = newSaturationDetail(rs.CPUUtilization, rs.UsedCPU, rs.AllocatableCPU)
-	}
-	if rs.AllocatableMemory != "" {
-		sat.Memory = newSaturationDetail(rs.MemoryUtilization, rs.UsedMemory, rs.AllocatableMemory)
-	}
-	return sat, nil
-}
-
-// newSaturationDetail builds one saturation line, substituting "n/a" for any
-// figure the cluster did not report.
-//
-// The line renders as "<percentage> requests / allocatable (<used> / <allocatable>)",
-// so an empty value printed as itself produced the nonsense
-// "CPU: n/a requests / allocatable ( / 3860m)" (F-09). A missing value now reads
-// "n/a" wherever it appears. Note that "0" is a real answer on an idle cluster
-// and is left alone.
-func newSaturationDetail(utilization, used, allocatable string) *saturationDetail {
-	return &saturationDetail{
-		Percentage:  orNotAvailable(utilization),
-		Used:        orNotAvailable(used),
-		Allocatable: orNotAvailable(allocatable),
-	}
-}
-
-// orNotAvailable renders an unreported value as "n/a".
-func orNotAvailable(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return "n/a"
-	}
-	return value
-}
+// Saturation used to be read from ClusterPersona.status.resourceSummary and
+// printed verbatim. It read 1689% CPU on a cluster at 25% requested and 1% used,
+// because the operator's collector counts the requests of pods no node has
+// accepted (CR-03). It is computed from the cluster in health_saturation.go now,
+// so `dorgu health` is right whatever operator version is installed, and right
+// with none installed at all.
 
 // controlPlaneComponentNames is the canonical list of self-hosted control plane components.
 var controlPlaneComponentNames = []string{
@@ -951,11 +890,14 @@ func printHealthUpdateEvent(ts time.Time, event ws.HealthUpdateEvent) {
 	if event.NodeCount > 0 {
 		parts = append(parts, fmt.Sprintf("nodes=%d/%d", event.HealthyNodes, event.NodeCount))
 	}
+	// Labelled "requested", not "cpu", because that is what the operator sends:
+	// the share of allocatable the scheduler has committed, not live consumption
+	// (CR-03). A bare "cpu=25%" reads as usage and is a different number.
 	if event.CPUUtilization != "" {
-		parts = append(parts, fmt.Sprintf("cpu=%s", event.CPUUtilization))
+		parts = append(parts, fmt.Sprintf("cpu-requested=%s", event.CPUUtilization))
 	}
 	if event.MemUtilization != "" {
-		parts = append(parts, fmt.Sprintf("mem=%s", event.MemUtilization))
+		parts = append(parts, fmt.Sprintf("mem-requested=%s", event.MemUtilization))
 	}
 
 	fmt.Printf("[%s] %-10s %s\n", timestamp, output.Blue("HEALTH"), strings.Join(parts, "  "))
