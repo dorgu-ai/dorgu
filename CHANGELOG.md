@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **The guardrail's verdict is rendered as Dorgu's own arithmetic, not as part of the plan's prose.** When one of Dorgu's guardrails rules on a field, the operator now records what it decided as structured data on `spec.steps[].safety`: the rule, the verdict, the field, the baseline it measured against, the value the plan asked for, the value that will actually be applied, the ratio, the ceiling, and a message Dorgu wrote. `dorgu remediation diff` and the approve/heal preview print it under its own heading, with the numbers, away from any sentence a model may have authored.
+
+  It used to arrive as a `[safety:blast-radius] …` prefix spliced onto the model's rationale. In clean-room run #4 that put Dorgu's measurement one line below the model's claim that the same 16x change was "well within a 2x ceiling", with nothing to tell the reader which of the two had been computed. A reader deciding whether to approve a change to a running workload should not have to work that out from the phrasing.
+
+  ```
+  [1] persona-update (low; auto): Set spec.resources.limits.memory to 512Mi on the ApplicationPersona.
+      Dorgu decides what its guardrails permit, so the outcome above is Dorgu's own arithmetic
+      against the workload it observed, not the plan's account of it.
+      Dorgu guardrails (Dorgu's measurement, not the plan's):
+        clamped  spec.resources.limits.memory  (blast-radius)
+          requested 4Gi, baseline 256Mi, 16.0x against a 2.0x ceiling, applying 512Mi
+          Blast-radius guardrail: the plan asked to set spec.resources.limits.memory to 4Gi, ...
+        rejected  spec.resources.limits.cpu  (absent-field)
+          requested 500m, applying nothing
+          Left out: container "checkout" on checkout does not set cpu today, ...
+  ```
+
+  `applying nothing` is stated rather than left to inference. A field a guardrail refused is gone from the step's patch, so it appears in no diff: this block is the only place the reader learns it was asked for at all.
+
+  The verdicts appear in three places, each chosen because it is the last screen before a decision:
+
+  - `dorgu remediation diff`, per step, between the rationale and the diff that reflects the verdict.
+  - The approve and heal preview, above the confirmation prompt, so a value a guardrail chose is visible before the reader answers `y`.
+  - The owned-workload refusal, where Dorgu declines to patch and hands over instructions for Helm or Git. That reader is the one who types the number somewhere Dorgu will never see, so they need to know it is Dorgu's ceiling and not what the plan asked for.
+
+  The operator writes a guarded step's description as its own sentence followed by each safety message verbatim. The renderer takes those back out, so the verdict is printed once, under the heading, with the numbers, rather than twice, three lines apart.
+
+- **`dorgu remediation list` grows a GUARDRAIL column when there is a verdict to put in it.** It shows the strongest verdict any guardrail reached on any step of the plan: `rejected` over `clamped` over `derived`. It is a pointer to a plan worth opening, not the record; the field-by-field account is in `dorgu remediation diff`, and the help says so. On a cluster where no guardrail has ruled on anything the column does not appear, and the list prints exactly what it printed before.
+
+  The field is optional throughout. A RemediationAction written by an older operator carries no `safety`, renders exactly as it does today, and gains no `"safety"` key in `--json` output.
+
 ### Fixed
 
 - **`dorgu remediation heal` records what it did.** It patched a workload 64Mi→128Mi, printed `✓ Healed`, exited 0, and left the RemediationAction on `Pending`. The two things Dorgu keeps then disagreed: the cluster carried the new limits, and the record said nobody had approved anything and nothing had happened. For a product sold on organizational memory, memory that contradicts the cluster is worse than none.

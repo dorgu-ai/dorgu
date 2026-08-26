@@ -60,6 +60,11 @@ type advisoryStep struct {
 type healPlan struct {
 	Change   *healResourceChange
 	Advisory []advisoryStep
+	// Safety is every guardrail verdict on every step of the plan, in step
+	// order. It is collected here rather than left on the steps because the
+	// heal preview does not print steps: it prints one resolved change, and the
+	// reader confirming it has to know which of its values a guardrail chose.
+	Safety []stepSafety
 }
 
 // deploymentSummary is the minimal Deployment shape the heal path needs.
@@ -84,6 +89,7 @@ type healExecution struct {
 	Patch      string
 	Change     *healResourceChange
 	Advisory   []advisoryStep
+	Safety     []stepSafety
 	Context    string
 }
 
@@ -104,6 +110,7 @@ func buildHealPlan(r *remediationFull) (*healPlan, error) {
 
 	if len(r.Spec.Steps) > 0 {
 		for _, s := range sortedSteps(r.Spec.Steps) {
+			plan.Safety = append(plan.Safety, s.Safety...)
 			if s.Type == "persona-update" {
 				rc, err := extractResourceChange(s.Patch)
 				if err != nil {
@@ -580,7 +587,7 @@ func planHeal(ctx context.Context, r *remediationFull, opts healOptions) (*healE
 	// Advisory-only plan: there is no workload change to resolve, so there is
 	// nothing that can fail later either, and nothing to refuse.
 	if plan.Change.isEmpty() {
-		return &healExecution{Advisory: plan.Advisory, Context: ctxName}, nil
+		return &healExecution{Advisory: plan.Advisory, Safety: plan.Safety, Context: ctxName}, nil
 	}
 
 	// Ownership gate (CF4-3). Everything except an explicitly unmanaged
@@ -625,19 +632,34 @@ func planHeal(ctx context.Context, r *remediationFull, opts healOptions) (*healE
 		Patch:      patch,
 		Change:     plan.Change,
 		Advisory:   plan.Advisory,
+		Safety:     plan.Safety,
 		Context:    ctxName,
 	}, nil
 }
 
-// printHealPreamble prints the context header and any advisory steps. Advisory
-// steps are always printed, never executed.
-func printHealPreamble(w io.Writer, ctxName string, advisory []advisoryStep) {
-	fmt.Fprintf(w, "\nHeal (context: %s)\n", ctxName)
-	if len(advisory) == 0 {
+// printHealPreamble prints the context header, any guardrail verdicts, and any
+// advisory steps. Advisory steps are always printed, never executed.
+//
+// The verdicts come first and before the confirmation prompt further down,
+// because a value a guardrail chose is not the value the plan asked for, and
+// the reader is about to approve applying it.
+func printHealPreamble(w io.Writer, e *healExecution) {
+	if e == nil {
+		return
+	}
+
+	fmt.Fprintf(w, "\nHeal (context: %s)\n", e.Context)
+
+	if len(e.Safety) > 0 {
+		fmt.Fprintln(w)
+		printStepSafety(w, "  ", e.Safety)
+	}
+
+	if len(e.Advisory) == 0 {
 		return
 	}
 	fmt.Fprintln(w, "\nManual steps (not applied automatically):")
-	for _, a := range advisory {
+	for _, a := range e.Advisory {
 		fmt.Fprintf(w, "  [%d] %s: %s\n", a.Order, a.Type, a.Description)
 		if a.Reason != "" {
 			fmt.Fprintf(w, "      %s\n", output.Dim(a.Reason))
@@ -740,7 +762,7 @@ func healWorkload(ctx context.Context, r *remediationFull, opts healOptions, in 
 		return err
 	}
 
-	printHealPreamble(w, exec.Context, exec.Advisory)
+	printHealPreamble(w, exec)
 
 	if !exec.hasWorkloadChange() {
 		output.Warn("No auto-applicable resource change in this remediation; nothing to heal automatically.")

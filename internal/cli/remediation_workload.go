@@ -511,6 +511,15 @@ func printOwnedWorkloadRefusal(out io.Writer, r *remediationFull, decline *owned
 		printWorkloadDiff(out, ref, decline.plan.change())
 	}
 
+	// The reader is the one who applies this, in Helm values or in Git, so they
+	// have to know which of the numbers below is Dorgu's ceiling rather than
+	// what the plan asked for. This is the last screen before they go and type
+	// it somewhere Dorgu will never see.
+	if entries := decline.plan.safety(); len(entries) > 0 {
+		printStepSafety(out, "  ", entries)
+		fmt.Fprintln(out)
+	}
+
 	fmt.Fprintln(out, "Apply it where this workload's desired state lives:")
 	printOwnerSteps(out, ref, decline.plan)
 	fmt.Fprintln(out)
@@ -561,6 +570,14 @@ func (p *healPlan) change() *healResourceChange {
 		return nil
 	}
 	return p.Change
+}
+
+// safety returns the plan's guardrail verdicts, tolerating a nil plan.
+func (p *healPlan) safety() []stepSafety {
+	if p == nil {
+		return nil
+	}
+	return p.Safety
 }
 
 // ownerFallbackInstruction builds the one instruction to print when the plan
