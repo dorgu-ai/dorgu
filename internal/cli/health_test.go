@@ -20,15 +20,21 @@ func TestPrintHealthSummary(t *testing.T) {
 			{Name: "node-3", Status: "NotReady", Roles: "worker", Age: "5d"},
 		},
 		ResourceSaturation: &resourceSaturation{
+			Nodes:         3,
+			ScheduledPods: 24,
 			CPU: &saturationDetail{
-				Percentage:  "62%",
-				Used:        "3200m",
-				Allocatable: "5200m",
+				Allocatable:      "5200m",
+				Requested:        "3200m",
+				RequestedPercent: "62%",
+				Used:             "410m",
+				UsedPercent:      "8%",
 			},
 			Memory: &saturationDetail{
-				Percentage:  "74%",
-				Used:        "8.2Gi",
-				Allocatable: "11.1Gi",
+				Allocatable:      "11.1Gi",
+				Requested:        "8.2Gi",
+				RequestedPercent: "74%",
+				Used:             "2.1Gi",
+				UsedPercent:      "19%",
 			},
 		},
 		ControlPlane: &controlPlaneStatus{
@@ -75,9 +81,9 @@ func TestPrintHealthSummary(t *testing.T) {
 	assert.Contains(t, out, "Ready")
 	assert.Contains(t, out, "NotReady")
 	assert.Contains(t, out, "Resource Saturation:")
-	assert.Contains(t, out, "62%")
-	assert.Contains(t, out, "3200m")
-	assert.Contains(t, out, "74%")
+	assert.Contains(t, out, "3200m / 5200m (62%)")
+	assert.Contains(t, out, "410m / 5200m (8%)")
+	assert.Contains(t, out, "8.2Gi / 11.1Gi (74%)")
 	assert.Contains(t, out, "Control Plane:")
 	assert.Contains(t, out, "API Server")
 	assert.Contains(t, out, "Active Incidents: 2")
@@ -128,10 +134,12 @@ func TestPrintHealthSummaryUnhealthyControlPlane(t *testing.T) {
 func TestPrintHealthSummaryResourceSaturationPartial(t *testing.T) {
 	summary := &healthSummary{
 		ResourceSaturation: &resourceSaturation{
+			Nodes:         1,
+			ScheduledPods: 6,
 			CPU: &saturationDetail{
-				Percentage:  "45%",
-				Used:        "2000m",
-				Allocatable: "4400m",
+				Allocatable:      "4400m",
+				Requested:        "2000m",
+				RequestedPercent: "45%",
 			},
 		},
 		ActiveIncidents:     &incidentsSummary{Count: 0},
@@ -142,9 +150,9 @@ func TestPrintHealthSummaryResourceSaturationPartial(t *testing.T) {
 	printHealthSummary(&buf, summary)
 	out := buf.String()
 
-	assert.Contains(t, out, "CPU:")
-	assert.Contains(t, out, "45%")
-	assert.NotContains(t, out, "Memory:")
+	assert.Contains(t, out, "CPU")
+	assert.Contains(t, out, "2000m / 4400m (45%)")
+	assert.NotContains(t, out, "Memory")
 }
 
 func TestNodeRoles(t *testing.T) {
@@ -381,8 +389,8 @@ func TestPrintHealthUpdateEvent(t *testing.T) {
 	assert.Contains(t, out, "incidents=2")
 	assert.Contains(t, out, "pending-remedies=1")
 	assert.Contains(t, out, "nodes=2/3")
-	assert.Contains(t, out, "cpu=65%")
-	assert.Contains(t, out, "mem=78%")
+	assert.Contains(t, out, "cpu-requested=65%")
+	assert.Contains(t, out, "mem-requested=78%")
 }
 
 func TestParseControlPlanePods_NoPodsExternalInferred(t *testing.T) {
@@ -446,27 +454,25 @@ func TestPrintHealthSummaryExternalControlPlane(t *testing.T) {
 	assert.Contains(t, out, "(inferred)")
 }
 
-func TestParseResourceSaturation_EmptyUsed_ShowsNA(t *testing.T) {
-	out := []byte(`{"items":[{"status":{"resourceSummary":{"allocatableCPU":"4000m","allocatableMemory":"8Gi","usedCPU":"","usedMemory":"","cpuUtilization":"","memoryUtilization":""}}}]}`)
-	sat, err := parseResourceSaturation(out)
+// Saturation is computed from nodes and pods now, not read from ClusterPersona
+// (CR-03). The computation and its rendering are covered in
+// health_saturation_test.go; this pins the wiring: parseNodes and the saturation
+// figures read the same node list, so the two sections cannot disagree about the
+// cluster they describe.
+func TestParseNodesAndCapacityShareOneNodeList(t *testing.T) {
+	nodes, err := parseNodes([]byte(twoNodeListFixture))
 	require.NoError(t, err)
-	require.NotNil(t, sat)
-	require.NotNil(t, sat.CPU)
-	assert.Equal(t, "n/a", sat.CPU.Percentage)
-	require.NotNil(t, sat.Memory)
-	assert.Equal(t, "n/a", sat.Memory.Percentage)
+	require.Len(t, nodes, 2)
+	assert.Equal(t, "ip-10-0-1-10", nodes[0].Name)
+
+	capacity, err := parseNodeCapacity([]byte(twoNodeListFixture))
+	require.NoError(t, err)
+	assert.Equal(t, len(nodes), capacity.Nodes)
 }
 
-func TestParseResourceSaturation_WithValues(t *testing.T) {
-	out := []byte(`{"items":[{"status":{"resourceSummary":{"allocatableCPU":"4000m","allocatableMemory":"8Gi","usedCPU":"2000m","usedMemory":"4Gi","cpuUtilization":"50%","memoryUtilization":"50%"}}}]}`)
-	sat, err := parseResourceSaturation(out)
-	require.NoError(t, err)
-	require.NotNil(t, sat)
-	require.NotNil(t, sat.CPU)
-	assert.Equal(t, "50%", sat.CPU.Percentage)
-	assert.Equal(t, "2000m", sat.CPU.Used)
-	require.NotNil(t, sat.Memory)
-	assert.Equal(t, "50%", sat.Memory.Percentage)
+func TestParseNodesRejectsGarbage(t *testing.T) {
+	_, err := parseNodes([]byte(`not json`))
+	assert.Error(t, err)
 }
 
 func TestPrintHealthUpdateEvent_Healthy(t *testing.T) {
@@ -493,5 +499,5 @@ func TestPrintHealthUpdateEvent_Healthy(t *testing.T) {
 	assert.Contains(t, out, "incidents=0")
 	assert.Contains(t, out, "pending-remedies=0")
 	assert.NotContains(t, out, "nodes=")
-	assert.NotContains(t, out, "cpu=")
+	assert.NotContains(t, out, "cpu-requested=")
 }

@@ -104,48 +104,65 @@ func TestUnreadableIncidents(t *testing.T) {
 
 // F-09: "CPU: n/a requests / allocatable ( / 3860m)". The left operand was empty
 // because the cluster never reported a used figure and the CLI printed it raw.
+//
+// The source of the figures changed under this in CF6-2 (the CLI computes them
+// now rather than reading ClusterPersona, see CR-03), so the invariant is
+// re-pinned against the new pipeline: whatever the cluster does or does not
+// report, no figure the summary prints has an empty operand.
 func TestSaturationNeverPrintsAnEmptyOperand(t *testing.T) {
 	tests := []struct {
 		name         string
-		clusterJSON  string
+		nodesJSON    string
+		podsJSON     string
+		metricsJSON  string
 		wantContains []string
 		wantAbsent   []string
 	}{
 		{
-			name: "nothing reported for used",
-			clusterJSON: `{"items":[{"status":{"resourceSummary":{
-				"allocatableCPU":"3860m","allocatableMemory":"7Gi"}}}]}`,
-			wantContains: []string{"CPU:    n/a requests / allocatable (n/a / 3860m)"},
-			wantAbsent:   []string{"( / 3860m)"},
+			name:         "no metrics-server, so no used figure",
+			nodesJSON:    twoNodeListFixture,
+			podsJSON:     saturationPodListFixture,
+			wantContains: []string{"950m / 3860m (25%)", "n/a (no metrics-server)"},
+			wantAbsent:   []string{"( / 3860m)", "(0m / 3860m (0%))"},
 		},
 		{
-			name: "everything reported",
-			clusterJSON: `{"items":[{"status":{"resourceSummary":{
-				"allocatableCPU":"3860m","usedCPU":"1930m","cpuUtilization":"50%",
-				"allocatableMemory":"8Gi","usedMemory":"2Gi","memoryUtilization":"25%"}}}]}`,
+			name:        "everything reported",
+			nodesJSON:   twoNodeListFixture,
+			podsJSON:    saturationPodListFixture,
+			metricsJSON: nodeMetricsFixture,
 			wantContains: []string{
-				"CPU:    50% requests / allocatable (1930m / 3860m)",
-				"Memory: 25% requests / allocatable (2Gi / 8Gi)",
+				"950m / 3860m (25%)",
+				"38m / 3860m (1%)",
 			},
 			wantAbsent: []string{"n/a"},
 		},
 		{
-			name: "an idle cluster reports a real zero, not n/a",
-			clusterJSON: `{"items":[{"status":{"resourceSummary":{
-				"allocatableCPU":"4","usedCPU":"0","cpuUtilization":"0%"}}}]}`,
-			wantContains: []string{"CPU:    0% requests / allocatable (0 / 4)"},
+			name:      "an idle cluster reports a real zero, not n/a",
+			nodesJSON: twoNodeListFixture,
+			podsJSON:  `{"items":[]}`,
+			metricsJSON: `{"items":[{"metadata":{"name":"ip-10-0-1-10"},
+				"usage":{"cpu":"0","memory":"0"}}]}`,
+			wantContains: []string{"0m / 3860m (0%)"},
 			wantAbsent:   []string{"n/a"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sat, err := parseResourceSaturation([]byte(tt.clusterJSON))
+			capacity, err := parseNodeCapacity([]byte(tt.nodesJSON))
 			require.NoError(t, err)
-			require.NotNil(t, sat)
+			claims, err := parsePodClaims([]byte(tt.podsJSON))
+			require.NoError(t, err)
+
+			var usage *nodeUsage
+			if tt.metricsJSON != "" {
+				usage, err = parseNodeUsage([]byte(tt.metricsJSON))
+				require.NoError(t, err)
+			}
 
 			var buf bytes.Buffer
-			printHealthSummary(&buf, &healthSummary{ResourceSaturation: sat})
+			printHealthSummary(&buf, &healthSummary{
+				ResourceSaturation: buildSaturation(capacity, claims, usage, nil)})
 			out := buf.String()
 
 			for _, want := range tt.wantContains {
@@ -154,12 +171,13 @@ func TestSaturationNeverPrintsAnEmptyOperand(t *testing.T) {
 			for _, absent := range tt.wantAbsent {
 				assert.NotContains(t, out, absent)
 			}
-			// No rendered saturation line may have an empty operand.
+			// No rendered figure may have an empty operand.
 			for _, line := range strings.Split(out, "\n") {
-				if strings.Contains(line, "requests / allocatable") {
-					assert.NotContains(t, line, "( /")
-					assert.NotContains(t, line, "/ )")
+				if !strings.Contains(line, " / ") {
+					continue
 				}
+				assert.NotContains(t, line, "( /")
+				assert.NotContains(t, line, "/ )")
 			}
 		})
 	}
