@@ -15,7 +15,8 @@ import (
 )
 
 var clusterFlags struct {
-	name string
+	name       string
+	kubeconfig string
 }
 
 var clusterCmd = &cobra.Command{
@@ -52,6 +53,7 @@ Examples:
 func init() {
 	// Status flags (name is optional, will list all if not provided)
 	clusterStatusCmd.Flags().StringVarP(&clusterFlags.name, "name", "n", "", "ClusterPersona name (optional)")
+	clusterStatusCmd.Flags().StringVar(&clusterFlags.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
 
 	// Register subcommands
 	clusterCmd.AddCommand(clusterStatusCmd)
@@ -70,24 +72,28 @@ func runClusterStatus(cmd *cobra.Command, args []string) error {
 		name = clusterFlags.name
 	}
 
+	kubeconfig, err := validateKubeconfig(clusterFlags.kubeconfig)
+	if err != nil {
+		return err
+	}
+
 	if name == "" {
 		// List all ClusterPersonas
-		return listClusterPersonas()
+		return listClusterPersonas(kubeconfig)
 	}
 
 	// Get specific ClusterPersona
-	return getClusterPersonaStatus(name)
+	return getClusterPersonaStatus(kubeconfig, name)
 }
 
-func listClusterPersonas() error {
+func listClusterPersonas(kubeconfig string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	kubectlCmd := exec.CommandContext(ctx, "kubectl", "get", "clusterpersona", "-o", "json")
-	rawOutput, err := kubectlCmd.CombinedOutput()
+	rawOutput, err := kubectlCmd(ctx, kubeconfig, "get", "clusterpersona", "-o", "json").CombinedOutput()
 	if err != nil {
 		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
-			return fmt.Errorf("ClusterPersona CRD is not installed on this cluster. Install the Dorgu Operator first")
+			return fmt.Errorf("ClusterPersona CRD is not installed on this cluster. Install the Dorgu Operator first: %s", operatorInstallCommand)
 		}
 		return fmt.Errorf("failed to list cluster personas: %s", outputStr)
 	}
@@ -140,7 +146,7 @@ func listClusterPersonas() error {
 	return nil
 }
 
-func getClusterPersonaStatus(name string) error {
+func getClusterPersonaStatus(kubeconfig, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -149,8 +155,7 @@ func getClusterPersonaStatus(name string) error {
 		outputFormat = "json"
 	}
 
-	kubectlCmd := exec.CommandContext(ctx, "kubectl", "get", "clusterpersona", name, "-o", outputFormat)
-	rawOutput, err := kubectlCmd.CombinedOutput()
+	rawOutput, err := kubectlCmd(ctx, kubeconfig, "get", "clusterpersona", name, "-o", outputFormat).CombinedOutput()
 	if err != nil {
 		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "not found") {
@@ -159,7 +164,7 @@ func getClusterPersonaStatus(name string) error {
 			return errSilent
 		}
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
-			return fmt.Errorf("ClusterPersona CRD is not installed on this cluster. Install the Dorgu Operator first")
+			return fmt.Errorf("ClusterPersona CRD is not installed on this cluster. Install the Dorgu Operator first: %s", operatorInstallCommand)
 		}
 		return fmt.Errorf("failed to get cluster persona: %s", outputStr)
 	}

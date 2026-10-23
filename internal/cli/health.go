@@ -392,14 +392,6 @@ func validateKubeconfig(path string) (string, error) {
 	return clean, nil
 }
 
-// kubectlCmd builds a kubectl command with optional kubeconfig and context timeout.
-func kubectlCmd(ctx context.Context, kubeconfig string, args ...string) *exec.Cmd {
-	if kubeconfig != "" {
-		args = append([]string{"--kubeconfig", kubeconfig}, args...)
-	}
-	return exec.CommandContext(ctx, "kubectl", args...)
-}
-
 // fetchNodesJSON lists cluster nodes via kubectl and returns the raw response.
 //
 // The raw JSON is returned rather than parsed nodes because two sections read
@@ -648,7 +640,7 @@ func unreadableIncidents(kubectlOutput []byte) *incidentsSummary {
 	reason := "the IncidentMemory records could not be read: " + detail
 	if strings.Contains(detail, "the server doesn't have a resource type") {
 		reason = "the dorgu operator is not installed, so there are no incident records to read " +
-			"(install it with: dorgu cluster setup)"
+			"(install it with: " + operatorInstallCommand + ")"
 	}
 
 	return &incidentsSummary{Unavailable: true, Reason: reason}

@@ -221,7 +221,7 @@ func runIncidentsDescribe(cmd *cobra.Command, args []string) error {
 		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			output.ErrorWithHint("IncidentMemory CRD not found. Is the dorgu operator installed?",
-				"To install the operator: dorgu cluster setup")
+				operatorInstallHint)
 			return errSilent
 		}
 		if strings.Contains(outputStr, "not found") {
@@ -258,7 +258,7 @@ func fetchIncidents(ctx context.Context, kubeconfig, namespace string) ([]incide
 		outputStr := kubectlErrText(out)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			output.ErrorWithHint("IncidentMemory CRD not found. Is the dorgu operator installed?",
-				"To install the operator: dorgu cluster setup")
+				operatorInstallHint)
 			return nil, errSilent
 		}
 		return nil, fmt.Errorf("failed to list incidents: %s", outputStr)

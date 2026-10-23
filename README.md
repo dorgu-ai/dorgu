@@ -230,8 +230,9 @@ You should see five CRDs: `applicationpersonas`, `clusterpersonas`, `incidentmem
 |------|-------------|---------|
 | `--json` | JSON output, for scripting, CI, and AI agents | `false` |
 | `--no-color` | Disable colored output | `false` |
+| `--context` | kube-context for every kubectl call | kubeconfig current-context |
 
-Cluster commands also accept `--kubeconfig`. Set `DORGU_DEBUG=1` to see kubectl's raw output in error messages.
+Cluster commands also accept `--kubeconfig`; both it and `--context` apply to every kubectl call the command makes. Set `DORGU_DEBUG=1` to see kubectl's raw output in error messages.
 
 The CLI detects whether stdout is a terminal and suppresses colors and spinners when piped. Use `--json` for structured output.
 

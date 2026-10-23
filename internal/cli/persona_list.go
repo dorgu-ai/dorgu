@@ -14,7 +14,8 @@ import (
 )
 
 var personaListFlags struct {
-	namespace string
+	namespace  string
+	kubeconfig string
 }
 
 var personaListCmd = &cobra.Command{
@@ -31,6 +32,7 @@ Examples:
 
 func init() {
 	personaListCmd.Flags().StringVarP(&personaListFlags.namespace, "namespace", "n", "", "namespace (default: all namespaces)")
+	personaListCmd.Flags().StringVar(&personaListFlags.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
 }
 
 // personaListItem represents a single ApplicationPersona in a list response.
@@ -57,6 +59,11 @@ func runPersonaList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("kubectl not found in PATH; required for persona list")
 	}
 
+	kubeconfig, err := validateKubeconfig(personaListFlags.kubeconfig)
+	if err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -67,12 +74,11 @@ func runPersonaList(cmd *cobra.Command, args []string) error {
 		kubectlArgs = append(kubectlArgs, "-A")
 	}
 
-	kubectlCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs...)
-	rawOutput, err := kubectlCmd.CombinedOutput()
+	rawOutput, err := kubectlCmd(ctx, kubeconfig, kubectlArgs...).CombinedOutput()
 	if err != nil {
 		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
-			return fmt.Errorf("ApplicationPersona CRD is not installed on this cluster. Install the Dorgu Operator first")
+			return fmt.Errorf("ApplicationPersona CRD is not installed on this cluster. Install the Dorgu Operator first: %s", operatorInstallCommand)
 		}
 		return fmt.Errorf("failed to list personas: %s", outputStr)
 	}

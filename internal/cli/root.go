@@ -71,6 +71,8 @@ func init() {
 	// Global flags
 	rootCmd.PersistentFlags().Bool("no-color", false, "disable colored output")
 	rootCmd.PersistentFlags().Bool("json", false, "output in JSON format (for scripting and agents)")
+	rootCmd.PersistentFlags().StringVar(&kubeContextOverride, "context", "",
+		"kube-context to use for every kubectl call (default: the kubeconfig's current-context)")
 
 	// Add subcommands
 	rootCmd.AddCommand(versionCmd)

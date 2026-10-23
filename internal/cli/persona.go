@@ -11,7 +11,8 @@ import (
 )
 
 var personaFlags struct {
-	namespace string
+	namespace  string
+	kubeconfig string
 }
 
 var personaCmd = &cobra.Command{
@@ -58,6 +59,7 @@ Examples:
 func init() {
 	// Status flags
 	personaStatusCmd.Flags().StringVarP(&personaFlags.namespace, "namespace", "n", "default", "Kubernetes namespace")
+	personaStatusCmd.Flags().StringVar(&personaFlags.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
 
 	// Register subcommands
 	personaCmd.AddCommand(personaStatusCmd)
@@ -73,13 +75,17 @@ func runPersonaStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("kubectl not found in PATH; required for persona status")
 	}
 
+	kubeconfig, err := validateKubeconfig(personaFlags.kubeconfig)
+	if err != nil {
+		return err
+	}
+
 	// Get the persona resource (Kubernetes resource name is DNS-safe; try sanitized if name has underscores)
 	getCtx, getCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer getCancel()
 	tryGet := func(n string) ([]byte, error) {
-		kubectlCmd := exec.CommandContext(getCtx, "kubectl", "get", "applicationpersona", n,
-			"-n", personaFlags.namespace, "-o", "yaml")
-		return kubectlCmd.CombinedOutput()
+		return kubectlCmd(getCtx, kubeconfig, "get", "applicationpersona", n,
+			"-n", personaFlags.namespace, "-o", "yaml").CombinedOutput()
 	}
 	rawOutput, err := tryGet(name)
 	if err != nil {
@@ -99,7 +105,7 @@ func runPersonaStatus(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("ApplicationPersona '%s' not found in namespace '%s' (hint: use DNS-safe name, e.g. sample-app-go-net-http)", name, personaFlags.namespace)
 		}
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
-			return fmt.Errorf("ApplicationPersona CRD is not installed on this cluster. Install the Dorgu Operator first")
+			return fmt.Errorf("ApplicationPersona CRD is not installed on this cluster. Install the Dorgu Operator first: %s", operatorInstallCommand)
 		}
 		return fmt.Errorf("failed to get persona: %s", outputStr)
 	}

@@ -240,7 +240,7 @@ func fetchRemediations(ctx context.Context, kubeconfig, namespace string) ([]rem
 		outputStr := kubectlErrText(out)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			output.ErrorWithHint("RemediationAction CRD not found. Is the dorgu operator installed?",
-				"To install the operator: dorgu cluster setup")
+				operatorInstallHint)
 			return nil, errSilent
 		}
 		return nil, fmt.Errorf("failed to list remediations: %s", outputStr)
@@ -393,7 +393,7 @@ func fetchRemediation(ctx context.Context, kubeconfig, name, namespace string) (
 		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			output.ErrorWithHint("RemediationAction CRD not found. Is the dorgu operator installed?",
-				"To install the operator: dorgu cluster setup")
+				operatorInstallHint)
 			return nil, errSilent
 		}
 		if strings.Contains(outputStr, "not found") {

@@ -347,8 +347,14 @@ func selectContainer(containers []string, appName, flag string) (string, error) 
 
 // --- kubectl orchestration ---
 
-// currentKubeContext returns the active kube-context name.
+// currentKubeContext returns the kube-context the heal will write to: the
+// global --context when set (kubectl config current-context ignores it, so
+// asking kubectl would check one context and patch another), otherwise the
+// kubeconfig's current-context.
 func currentKubeContext(ctx context.Context, kubeconfig string) (string, error) {
+	if kubeContextOverride != "" {
+		return kubeContextOverride, nil
+	}
 	out, err := kubectlCmd(ctx, kubeconfig, "config", "current-context").CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("failed to read current kube-context: %s", kubectlErrText(out))

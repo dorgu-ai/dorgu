@@ -7,7 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Global `--context` flag**, applied to every kubectl call. `persona status`, `persona list` and `cluster status` gain `--kubeconfig`. Every kubectl invocation now goes through one helper, and a test fails if one does not; previously `persona status/list` and `cluster status` ignored both. `heal`'s production-context guard checks the `--context` value, not the kubeconfig's current-context.
+
 ### Changed
+
+- **"Operator not installed" hints give the Helm command** (`helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator --namespace dorgu-system --create-namespace`) instead of the removed `dorgu cluster setup`.
 
 - **The production-context guard on heal is configurable.** `DORGU_PROTECTED_CONTEXTS` takes comma-separated, case-insensitive substrings of kube context names that `heal` refuses to write to. The default stays `prod`; an empty value keeps the default rather than disabling the guard. A hardcoded context name was removed from the guard.
 

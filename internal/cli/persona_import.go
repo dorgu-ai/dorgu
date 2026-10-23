@@ -287,7 +287,7 @@ func applyPersonaYAML(ctx context.Context, kubeconfig, namespace, yamlDoc string
 		msg := strings.TrimSpace(stderr.String())
 		if strings.Contains(msg, "the server doesn't have a resource type") {
 			output.ErrorWithHint("ApplicationPersona CRD not found. Is the dorgu operator installed?",
-				"To install the operator: dorgu cluster setup")
+				operatorInstallHint)
 			return errSilent
 		}
 		return fmt.Errorf("kubectl apply failed: %s", msg)
