@@ -831,6 +831,19 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		return errSilent
 	}
 
+	// Approval is a cluster write whether or not the CLI heals afterwards: it
+	// tells the operator to patch the persona. So a protected context refuses
+	// every approval, and --no-heal is not a way around it.
+	ctxName, err := currentKubeContext(ctx, kubeconfig)
+	if err != nil {
+		return err
+	}
+	if err := guardKubeContext(ctxName); err != nil {
+		output.Error(err.Error())
+		output.Info("Nothing was approved and nothing was changed.")
+		return errSilent
+	}
+
 	heal := healFlag && !noHealFlag
 	opts := healOptions{
 		kubeconfig: kubeconfig,

@@ -384,6 +384,48 @@ func TestRunRemediationApproveNoHealSkipsWorkload(t *testing.T) {
 	assert.NotContains(t, log, "patch deployment")
 }
 
+// Approval is itself a cluster write: it tells the operator to patch the
+// persona. EKS QA 2026-10-24 (M-1) found --no-heal skipped the protected-context
+// guard, and the refusal message suggested exactly that flag, so one retry
+// changed a protected cluster anyway.
+func TestRunRemediationApproveNoHealRefusesProtectedContext(t *testing.T) {
+	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
+		context:    "acme-prod-cluster",
+		rem:        operatorRemediationFixture,
+		persona:    personaFixture,
+		deployment: deploymentListFixture,
+	})
+
+	cmd := newRemediationApproveCmd()
+	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production", "--no-heal", "--yes"})
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	require.Error(t, cmd.Execute())
+	assert.NotContains(t, readPatchLog(t, patchLog), "patch remediationaction",
+		"a protected context must not be approved, with or without --no-heal")
+}
+
+func TestApproveRefusalOnProtectedContextDoesNotSuggestNoHeal(t *testing.T) {
+	writeFakeKubectlDispatch(t, fakeKubectlResponses{
+		context:    "acme-prod-cluster",
+		rem:        operatorRemediationFixture,
+		persona:    personaFixture,
+		deployment: deploymentListFixture,
+	})
+
+	cmd := newRemediationApproveCmd()
+	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production", "--yes"})
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	stdout := captureStdout(t, func() { _ = cmd.Execute() })
+
+	assert.NotContains(t, out.String()+stdout, "approve without healing",
+		"a protected-context refusal must not point at a flag that would bypass it")
+}
+
 func TestRunRemediationApproveHealRefusesProd(t *testing.T) {
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:    "acme-prod-cluster",
