@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Adversarial bypass suite for the heal path** (`internal/cli/adversarial_test.go`, `ADVERSARIAL.md`, `make adversarial`). One test per attack CLI-01 to CLI-06, each asserting the safe outcome. Unfixed scenarios are skipped as `OPEN` with the checkpoint expected to close them; a fixed one fails until it is removed from the open list. Today: 1/6 blocked.
+
 - **Global `--context` flag**, applied to every kubectl call. `persona status`, `persona list` and `cluster status` gain `--kubeconfig`. Every kubectl invocation now goes through one helper, and a test fails if one does not; previously `persona status/list` and `cluster status` ignored both. `heal`'s production-context guard checks the `--context` value, not the kubeconfig's current-context.
 
 ### Changed

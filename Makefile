@@ -18,7 +18,7 @@ GOFMT=gofmt
 CMD_DIR=./cmd/dorgu
 BUILD_DIR=./build
 
-.PHONY: all build clean test fmt lint check install install-hooks tidy
+.PHONY: all build clean test fmt lint check install install-hooks tidy adversarial
 
 # Default target
 all: build
@@ -50,6 +50,19 @@ test-coverage:
 	@echo "Running tests with coverage..."
 	$(GOTEST) -v -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
+
+## adversarial: Run the adversarial bypass suite (ADVERSARIAL.md) and print blocked/total
+adversarial:
+	@out=$$($(GOTEST) -count=1 -v -run '^TestAdversarial' ./internal/cli/ 2>&1); status=$$?; \
+	echo "$$out" | grep -E '^--- (PASS|SKIP|FAIL)|(OPEN|BLOCKED|NOT blocked|now blocked) CLI-'; \
+	blocked=$$(echo "$$out" | grep -c '^--- PASS: TestAdversarial'); \
+	open=$$(echo "$$out" | grep -c '^--- SKIP: TestAdversarial'); \
+	failed=$$(echo "$$out" | grep -c '^--- FAIL: TestAdversarial'); \
+	total=$$((blocked + open + failed)); \
+	echo ""; \
+	echo "Adversarial (CLI): $$blocked/$$total blocked, $$open open, $$failed failing"; \
+	if [ $$status -ne 0 ]; then echo "$$out" | tail -20; fi; \
+	exit $$status
 
 ## fmt: Format code
 fmt:
