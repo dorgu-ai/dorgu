@@ -76,7 +76,7 @@ Tests live alongside source files (`*_test.go`). The heal path uses fake kubectl
 | Variable | Purpose |
 |----------|---------|
 | `DORGU_DEBUG` | `1` shows kubectl's raw output in error messages |
-| `DORGU_PROTECTED_CONTEXTS` | Comma-separated, case-insensitive substrings of kube context names that `heal` refuses without an explicit confirmation path (default `prod`) |
+| `DORGU_PROTECTED_CONTEXTS` | Comma-separated, case-insensitive substrings of kube context names that `heal` refuses to write to (default `prod`; blank falls back to the default) |
 
 ## Code Style
 

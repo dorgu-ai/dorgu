@@ -387,6 +387,7 @@ Self-healing is only safe if it's bounded. Dorgu enforces:
 | **One remediation per incident** | Dedup: a proposal is skipped if an active RemediationAction already covers the same incident and target. |
 | **Auto-rollback on regression** | After applying, the operator verifies health. If it degrades, the pre-patch snapshot is reapplied and the action moves to `RolledBack`. |
 | **Operator never writes workloads** | Structural, not configurable. Persona CRDs only. |
+| **Protected kube contexts** | `heal` refuses a kube context whose name contains `prod`. Set `DORGU_PROTECTED_CONTEXTS` (comma-separated, case-insensitive substrings) to change the list. A name check only: it is a seatbelt, not a security boundary. |
 
 ---
 

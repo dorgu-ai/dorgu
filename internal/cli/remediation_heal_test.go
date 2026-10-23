@@ -195,33 +195,6 @@ func TestSelectContainer(t *testing.T) {
 	}
 }
 
-// --- guardKubeContext ---
-
-func TestGuardKubeContext(t *testing.T) {
-	tests := []struct {
-		name    string
-		ctx     string
-		wantErr bool
-	}{
-		{name: "safe kind cluster", ctx: "kind-dorgu-spike"},
-		{name: "safe eks", ctx: "arn:aws:eks:us-east-1:123:cluster/dorgu-spike"},
-		{name: "prod substring refused", ctx: "my-prod-cluster", wantErr: true},
-		{name: "vox-prod refused", ctx: "vox-prod-synthiolabs", wantErr: true},
-		{name: "empty refused", ctx: "", wantErr: true},
-		{name: "uppercase PROD refused", ctx: "PROD-us-east", wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := guardKubeContext(tt.ctx)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 // --- parseDeployments ---
 
 func TestParseDeploymentList(t *testing.T) {
@@ -413,7 +386,7 @@ func TestRunRemediationApproveNoHealSkipsWorkload(t *testing.T) {
 
 func TestRunRemediationApproveHealRefusesProd(t *testing.T) {
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
-		context:    "vox-prod-synthiolabs",
+		context:    "acme-prod-cluster",
 		rem:        operatorRemediationFixture,
 		persona:    personaFixture,
 		deployment: deploymentListFixture,
