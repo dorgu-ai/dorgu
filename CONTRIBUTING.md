@@ -98,11 +98,9 @@ make build
 make test
 
 # Run the CLI locally
-./dorgu generate ./testapps/sample_app_java_spring   # if you have a sample app
-./dorgu version
+./build/dorgu version
+./build/dorgu health        # against the cluster in your current kubeconfig
 ```
-
-Optional: set `OPENAI_API_KEY` or `GEMINI_API_KEY` (or use `dorgu config set llm.api_key`) to test LLM-backed analysis.
 
 ---
 

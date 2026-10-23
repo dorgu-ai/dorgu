@@ -88,7 +88,7 @@ func runPersonaList(cmd *cobra.Command, args []string) error {
 			fmt.Println(string(rawOutput))
 			return nil
 		}
-		output.Info("No ApplicationPersona resources found. Create one with: dorgu persona generate ./my-app")
+		output.Info("No ApplicationPersona resources found. Import running apps with: dorgu persona import -n <namespace> --all")
 		return nil
 	}
 

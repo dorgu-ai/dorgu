@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Dorgu** is an AI-powered CLI tool that analyzes containerized applications (Dockerfile, docker-compose, source code) and generates production-ready Kubernetes manifests, ArgoCD configs, CI/CD workflows, and ApplicationPersona CRDs. It pairs with the **Dorgu Operator** (separate repo: `dorgu-ai/dorgu-operator`) for cluster-side validation, cluster discovery, and real-time CLI↔operator communication via WebSocket.
+**Dorgu** is an open-source AI SRE for Kubernetes. The **Dorgu Operator** (separate repo: `dorgu-ai/dorgu-operator`) detects failures, diagnoses them and writes proposals as RemediationAction CRDs. This CLI is how a human reads incidents and proposals and approves, rejects or heals them; an approved heal is applied by the CLI with the user's own kubeconfig credentials.
 
-**Current status (June 2026):** Phases 1 → 1.7, Phase 2a (detection), and Phase 2b (remediation loop) are **shipped**. Current releases: **CLI v0.7.6, Operator v0.6.1**. The full cluster self-healing loop is implemented end-to-end (detect → diagnose → propose → approve → apply → verify → learn). Phase 2c is **partially done**: operator auto-creates a ClusterPersona on startup (shipped v0.6.1), but the remaining 2c scope — app auto-discovery + skeleton personas, the two-state `managed/unmanaged` persona model, `dorgu persona discover`, the REST Query API (`:8088`), and the MCP server (`:8090/mcp`) — is **approved but NOT built**. Work paused ~April 2026 and restarted June 2026. See `docs-internal/PROJECT_SUMMARY.md` for the authoritative state.
+**Current status (October 2026):** CLI v0.12.0 / operator v0.11.x shipped. The harness refactor is under way (plan: `dorgu-docs-internal/harness/README.md`). Phase P0 removed every legacy surface (manifest generation, cluster setup, WebSocket watch/sync, the CLI's own LLM clients) in v0.13.0; see `MIGRATION.md`. The last commit with them is the `pre-harness` tag. Adversarial bypass scenarios are tracked in `ADVERSARIAL.md` and `internal/cli/adversarial_test.go`.
 
 Go module: `github.com/dorgu-ai/dorgu`
 
@@ -16,66 +16,32 @@ Go module: `github.com/dorgu-ai/dorgu`
 make build           # Build binary to ./build/dorgu
 make test            # Run all tests with verbose output
 make test-coverage   # Run tests with coverage; generates coverage.html
+make adversarial     # Run the adversarial bypass suite and print blocked/total
 make fmt             # Format with gofmt -s -w
 make check           # Run gofmt + go vet + tests (same as CI — run before pushing)
 make lint            # Run golangci-lint (installs if missing)
 make tidy            # go mod tidy
 make install         # Install to $GOPATH/bin
-make example-generate # Build and run dorgu generate on ./testdata/node-app --dry-run
 ```
 
-Run a single test package:
+Run a single test:
 ```bash
-go test -v ./internal/generator/...
-go test -v -run TestFunctionName ./internal/analyzer/...
-```
-
-Build and run directly:
-```bash
-./build/dorgu generate ./testdata/node-app --dry-run
-./build/dorgu generate ./testdata/node-app --llm-provider openai --dry-run
+go test -v -run TestFunctionName ./internal/cli/...
 ```
 
 ## Architecture
 
-### CLI Pipeline
+### Command surface
 
-```
-Input (Dockerfile / docker-compose.yml / source code / .dorgu.yaml / ~/.config/dorgu/config.yaml)
-  └─► internal/analyzer/ — parse and produce AppAnalysis
-       └─► internal/llm/ (optional) — LLM-enhance AppAnalysis
-            └─► internal/generator/ — generate manifests + persona YAML
-                 └─► internal/output/ — write files or print (dry-run)
-                      └─► internal/generator/validate.go — post-generation validation report
-```
+`health`, `incidents list|describe`, `remediation list|diff|approve|reject|heal`, `persona import|list|status`, `cluster status`, `version`. Every cluster command shells out to `kubectl` through the single `kubectlCmd` helper (`internal/cli/health.go`), which applies `--kubeconfig` and the global `--context`; `TestNoRawKubectlInvocations` fails on any other `exec.Command("kubectl", ...)`.
 
-The central struct is `types.AppAnalysis` (`internal/types/analysis.go`). Everything — analyzers, generators, LLM clients, validators — reads from or writes to this struct.
+### Enforcement that lives in the CLI (to move into the operator)
 
-### Configuration Layering (highest priority first)
-
-1. CLI flags
-2. App `.dorgu.yaml` (in the app directory)
-3. Workspace `.dorgu.yaml` (cwd)
-4. Global `~/.config/dorgu/config.yaml` (set via `dorgu init --global` or `dorgu config set`)
-5. Environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OLLAMA_HOST`)
-6. Built-in defaults
-
-Config loading: `internal/config/config.go` (app/workspace) and `internal/config/global.go` (global).
-
-### CLI → Operator Communication
-
-For `dorgu watch` and `dorgu sync` commands, the CLI connects to the operator's WebSocket server (`ws://operator:9090/ws`). The WebSocket client is in `internal/ws/client.go`. The operator's WebSocket server is in the `dorgu-operator` repo at `internal/websocket/`.
-
-Message flow: CLI sends `{type: "subscribe", topic: "personas"}` → operator pushes `PersonaEvent` on changes. Also supports request/response (`{type: "request", requestId: "..."}`) for commands like `ListPersonas`.
+The heal path (`internal/cli/remediation_heal.go`) carries guards that today exist only here: ownership refusal, observed-workload binding, the protected-context check (`DORGU_PROTECTED_CONTEXTS`, default `prod`), phase gates, the cpu/memory-only change shape, and the step-command read-only filter (`readsOnly`, positional kubectl verb parsing in `remediation_workload.go`). See `ARCHITECTURE_CLI.md` §11 in the docs repo. The harness plan moves the decision into the operator (apply ticket, P1–P3).
 
 ### Trust Model
 
-Dorgu implements progressive trust levels:
-- **Level 1 (RECOMMEND):** CLI generates manifests — current default
-- **Level 2 (PROPOSE):** Operator validates and proposes changes via persona status
-- **Level 3+ (DEPLOY-DEV → AUTONOMOUS):** Planned in Phase 3–5
-
-**Non-negotiable invariant:** The Dorgu Operator **must not** create or modify Deployments, Services, or other workload resources. It may only: read cluster state, validate against Persona constraints, recommend changes, and update Persona CRD status/learned fields. ArgoCD, Flux, and kubectl remain responsible for deployment.
+**Non-negotiable invariant:** The Dorgu Operator **must not** create or modify Deployments, Services, or other workload resources. It may only read cluster state, propose, and update Persona CRDs. Workload changes are made by the CLI, as the approving user, after approval.
 
 ### CRDs (API group `dorgu.io/v1`)
 
@@ -91,76 +57,36 @@ Source-of-truth hierarchy: CLI/GitOps owns `spec` (desired intent); Operator own
 
 | Package | Role |
 |---------|------|
-| `internal/analyzer/` | Dockerfile, Compose, code (language/framework detection), git repo auto-detect |
-| `internal/cli/` | Cobra commands: generate, init, config, persona (generate/apply/status/list), cluster (init/status/setup/info), platform serve, health, incidents (list/describe), remediation (list/diff/approve/reject), watch (personas/cluster/events/incidents/remediations), sync, version |
-| `internal/config/` | Config loading and merging (app/workspace + global) |
-| `internal/generator/` | Manifest generators + `validate.go` (post-generation checks) + `security.go` + `persona_yaml.go` |
-| `internal/llm/` | LLM provider interface + OpenAI, Anthropic, Gemini, Ollama implementations |
-| `internal/output/` | File writer and terminal formatter |
-| `internal/types/` | Shared `AppAnalysis` type (separate from `internal/analyzer/types.go`) |
-| `internal/ws/` | WebSocket client for CLI↔Operator real-time communication |
-
-## Extending the Codebase
-
-### Adding a New LLM Provider
-
-1. Create `internal/llm/newprovider.go`
-2. Implement the `LLMClient` interface (`internal/llm/client.go`):
-   ```go
-   type LLMClient interface {
-       AnalyzeApp(analysis *types.AppAnalysis) (*types.AppAnalysis, error)
-       GeneratePersona(analysis *types.AppAnalysis) (string, error)
-   }
-   ```
-3. Register in the factory in `internal/llm/client.go`
-
-### Adding a New Manifest Generator
-
-1. Create `internal/generator/newresource.go`
-2. Implement with signature:
-   ```go
-   func GenerateNewResource(analysis *types.AppAnalysis, namespace string, cfg *config.Config) (string, error)
-   ```
-3. Call from `internal/generator/generator.go` and add to file output in `internal/output/writer.go`
+| `internal/cli/` | Cobra commands and the heal path |
+| `internal/importer/` | Synthesizes an ApplicationPersona from a running Deployment (`persona import`) |
+| `internal/output/` | Terminal formatter, tables, diffs, JSON mode |
 
 ### Adding a New CLI Command
 
 1. Create `internal/cli/newcmd.go` with a Cobra command
 2. Add to root in `internal/cli/root.go`
-
-### Adding Framework Detection
-
-Edit `internal/analyzer/code.go`, add detection patterns in `AnalyzeCode()`.
+3. Run kubectl only through `kubectlCmd`
 
 ## Testing Approach
 
-Tests live alongside source files (`*_test.go`). Key test files:
-- `internal/analyzer/dockerfile_test.go`, `compose_test.go`, `code_test.go`, `git_test.go`
-- `internal/generator/deployment_test.go`, `service_test.go`, `validate_test.go`, `persona_yaml_test.go`, `security_test.go`, `names_test.go`
-- `internal/config/config_test.go`, `global_test.go`
-- `internal/ws/client_test.go`
-
-For end-to-end testing against a real cluster, see `docs-internal/QA_TESTING_GUIDE.md`. Use `testapps/` for sample applications and `testdata/` for fixtures.
+Tests live alongside source files (`*_test.go`). The heal path uses fake kubectl/kube seams in `internal/cli/remediation_heal_test.go`. The adversarial suite (`internal/cli/adversarial_test.go`) asserts the *safe* outcome for each bypass scenario; scenarios not yet fixed are listed in its `openScenarios` map and skip with `OPEN`.
 
 ## Environment Variables
 
 | Variable | Purpose |
 |----------|---------|
-| `OPENAI_API_KEY` | OpenAI access (overrides global config) |
-| `ANTHROPIC_API_KEY` | Anthropic Claude access |
-| `GEMINI_API_KEY` | Google Gemini access |
-| `OLLAMA_HOST` | Custom Ollama endpoint |
+| `DORGU_DEBUG` | `1` shows kubectl's raw output in error messages |
+| `DORGU_PROTECTED_CONTEXTS` | Comma-separated, case-insensitive substrings of kube context names that `heal` refuses without an explicit confirmation path (default `prod`) |
 
 ## Code Style
 
 - Go 1.21+
 - `gofmt -s` — enforced by CI (`make check`)
 - Return errors over panicking
-- `internal/types/analysis.go` for types shared across packages; `internal/analyzer/types.go` for analyzer-internal types
 
 ## Related Repositories
 
-- **Operator:** `dorgu-ai/dorgu-operator` — controller-runtime based, watches ApplicationPersona and ClusterPersona CRDs, optional validating webhook, optional WebSocket server, optional ArgoCD and Prometheus integrations
+- **Operator:** `dorgu-ai/dorgu-operator` — controller-runtime based; detection, diagnosis, proposals, verification and rollback
 - **Helm chart:** published to `oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator`
 
 ## Claude Code Agents and Skills
@@ -183,12 +109,7 @@ Invoke with `/skill-name` in Claude Code:
 
 ### Cursor Agents (`.cursor/agents/`)
 
-End-user-facing prompts for Cursor IDE:
-- `dorgu.md` — end-user assistant guide (how to use Dorgu commands)
-- `generate-manifests.md` — manifest generation workflow
-- `create-persona.md` — persona generation/apply/status
-- `review-manifests.md` — K8s manifest review
-- `analyze-application.md` — deep application analysis
+- `dorgu.md` — end-user assistant guide for the self-healing loop
 
 ## Internal Documentation
 

@@ -127,10 +127,3 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/## /  /'
-
-# Example usage shortcuts
-.PHONY: example-generate
-
-## example-generate: Run generate on example app
-example-generate: build
-	$(BUILD_DIR)/$(BINARY_NAME) generate ./testdata/node-app --dry-run
