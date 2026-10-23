@@ -43,7 +43,6 @@ archives:
     files:
       - README.md
       - LICENSE
-      - .dorgu.yaml.example
 
   # Unversioned copies of the archives above so that
   # https://github.com/dorgu-ai/dorgu/releases/latest/download/dorgu_<os>_<arch>.tar.gz
@@ -62,7 +61,6 @@ archives:
     files:
       - README.md
       - LICENSE
-      - .dorgu.yaml.example
 
 checksum:
   name_template: "checksums.txt"
@@ -118,7 +116,7 @@ release:
 #       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
 #     directory: Formula
 #     homepage: "https://github.com/dorgu-ai/dorgu"
-#     description: "AI-powered Kubernetes manifest generator"
+#     description: "Open-source AI SRE for Kubernetes"
 #     license: "Apache-2.0"
 #     skip_upload: auto
 #     test: |

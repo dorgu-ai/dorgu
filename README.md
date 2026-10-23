@@ -26,7 +26,7 @@ Pods start OOMKilling at 3am. Nobody on the team knows why, or which limit to bu
 | **AI is optional and BYO-key** | Rule-based detection and diagnosis work with **no API key at all**. Add an Anthropic key to get AI-enhanced diagnosis and ordered remediation plans. |
 | **No lock-in** | Plain CRDs, plain Helm, plain YAML. ArgoCD, Flux, and `kubectl` stay in charge of deployment. |
 
-Manifest generation (`dorgu generate`) is also part of the CLI — it analyzes your Dockerfile, Compose file, and source, and emits Kubernetes manifests, ArgoCD config, CI workflows, and an ApplicationPersona. That's a secondary capability; the self-healing loop is the point.
+Manifest generation, cluster setup, the WebSocket `watch`/`sync` commands and the CLI's own LLM integration were removed in v0.13.0. See [MIGRATION.md](MIGRATION.md).
 
 ---
 
@@ -39,11 +39,9 @@ Manifest generation (`dorgu generate`) is also part of the CLI — it analyzes y
 - [Health & Incidents](#health--incidents)
 - [Remediation](#remediation)
 - [Guardrails](#guardrails)
-- [Manifest Generation](#manifest-generation)
 - [Persona Commands](#persona-commands)
 - [Cluster Commands](#cluster-commands)
 - [Dorgu Operator](#dorgu-operator)
-- [Configuration](#configuration)
 - [Development](#development)
 - [License](#license)
 
@@ -75,7 +73,6 @@ helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-o
   --namespace dorgu-system \
   --create-namespace \
   --set healthCheck.enabled=true \
-  --set websocket.enabled=true \
   --set llm.provider=claude \
   --set llm.existingSecret=dorgu-llm \
   --set aiRemediation.enabled=true
@@ -170,7 +167,7 @@ dorgu version
 
 ### Operator
 
-The operator is required for `dorgu health`, `dorgu incidents`, `dorgu remediation`, `dorgu watch`, and `dorgu sync`.
+The operator is required for `dorgu incidents`, `dorgu remediation`, `dorgu persona` and `dorgu cluster status`. `dorgu health` works without it but shows no incidents or proposals.
 
 ```bash
 # Latest chart
@@ -221,50 +218,11 @@ You should see five CRDs: `applicationpersonas`, `clusterpersonas`, `incidentmem
 
 | Command | Description |
 |---------|-------------|
-| `dorgu persona generate [path]` | Generate ApplicationPersona YAML from app analysis |
-| `dorgu persona apply [path]` | Apply a persona to the cluster |
+| `dorgu persona import` | Create ApplicationPersonas from running Deployments |
 | `dorgu persona status <name>` | Persona status and validation results |
 | `dorgu persona list` | List ApplicationPersonas across namespaces |
-| `dorgu cluster init` | Create a ClusterPersona for cluster-wide identity |
 | `dorgu cluster status` | Cluster status and discovered information |
-| `dorgu cluster setup` | Install a production-ready Kubernetes stack via interactive wizard |
-| `dorgu cluster info [name]` | Access URLs, port-forward commands, and credentials for components installed by `cluster setup` |
-
-### Generation & Config
-
-| Command | Description |
-|---------|-------------|
-| `dorgu generate [path]` | Analyze an app and generate K8s manifests, ArgoCD, CI/CD, and PERSONA.md |
-| `dorgu init [path]` | Create app-level `.dorgu.yaml`; `--global` for global config |
-| `dorgu config list` | Show global config (provider, masked API key, defaults) |
-| `dorgu config get <key>` | Get a single config value |
-| `dorgu config set <key> <value>` | Set a global config value |
-| `dorgu config path` | Print the global config file path |
-| `dorgu config reset` | Reset global config |
 | `dorgu version` | Show version |
-
-### Real-Time (requires operator with `websocket.enabled=true`)
-
-| Command | Description |
-|---------|-------------|
-| `dorgu watch personas` | Watch ApplicationPersona updates in real time |
-| `dorgu watch cluster` | Watch ClusterPersona updates in real time |
-| `dorgu watch events` | Watch validation events in real time |
-| `dorgu watch incidents` | Watch IncidentMemory updates in real time |
-| `dorgu watch remediations` | Watch RemediationAction updates in real time |
-| `dorgu sync status` | Sync status from the operator |
-| `dorgu sync pull` | Pull latest persona data |
-| `dorgu health --watch` | Stream health updates over WebSocket |
-
-All `watch` subcommands accept `--operator-url` (default `ws://localhost:9090/ws`). `watch personas`, `watch events`, `watch incidents`, and `watch remediations` accept `-n, --namespace`; `watch personas` also accepts `--name`.
-
-### Platform
-
-| Command | Description |
-|---------|-------------|
-| `dorgu platform serve` | Start the ClusterPersona visualization web UI |
-
-Flags: `--port, -p` (default `8080`), `--kubeconfig`, `--context`, `--verbose, -v`.
 
 ### Global Flags
 
@@ -272,7 +230,9 @@ Flags: `--port, -p` (default `8080`), `--kubeconfig`, `--context`, `--verbose, -
 |------|-------------|---------|
 | `--json` | JSON output, for scripting, CI, and AI agents | `false` |
 | `--no-color` | Disable colored output | `false` |
-| `--config` | Path to config file | auto-detected |
+| `--context` | kube-context for every kubectl call | kubeconfig current-context |
+
+Cluster commands also accept `--kubeconfig`; both it and `--context` apply to every kubectl call the command makes. Set `DORGU_DEBUG=1` to see kubectl's raw output in error messages.
 
 The CLI detects whether stdout is a terminal and suppresses colors and spinners when piped. Use `--json` for structured output.
 
@@ -286,14 +246,13 @@ The CLI detects whether stdout is a terminal and suppresses colors and spinners 
 dorgu health                      # summary
 dorgu health -n production        # scope incidents to a namespace
 dorgu health --json               # for scripting
-dorgu health --watch              # stream updates (needs websocket.enabled=true)
+dorgu health --exit-code          # non-zero exit on critical incidents (monitoring)
 ```
 
 | Flag | Description | Default |
 |------|-------------|---------|
 | `-n, --namespace` | Filter incidents by namespace | all |
-| `-w, --watch` | Stream health updates in real time via WebSocket | `false` |
-| `--operator-url` | WebSocket URL for `--watch` | `ws://localhost:9090/ws` |
+| `--exit-code` | Exit 2 on active critical incidents, 3 when health cannot be judged | `false` |
 | `--kubeconfig` | Path to kubeconfig | `~/.kube/config` |
 
 ### Incidents
@@ -429,70 +388,15 @@ Self-healing is only safe if it's bounded. Dorgu enforces:
 | **One remediation per incident** | Dedup: a proposal is skipped if an active RemediationAction already covers the same incident and target. |
 | **Auto-rollback on regression** | After applying, the operator verifies health. If it degrades, the pre-patch snapshot is reapplied and the action moves to `RolledBack`. |
 | **Operator never writes workloads** | Structural, not configurable. Persona CRDs only. |
-
----
-
-## Manifest Generation
-
-```bash
-# One-time global config (optional, for LLM and defaults)
-dorgu init --global
-
-# Per-app config
-cd my-app && dorgu init
-
-# Generate
-dorgu generate .
-
-# Preview without writing files
-dorgu generate ./my-app --dry-run
-```
-
-Output: `k8s/deployment.yaml`, `service.yaml`, `ingress.yaml`, `hpa.yaml`, `argocd/application.yaml`, `.github/workflows/deploy.yaml`, and `PERSONA.md`. Post-generation validation runs automatically.
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--output, -o` | Output directory | `./k8s` |
-| `--name, -n` | Override application name | from config/dir |
-| `--namespace` | Kubernetes namespace | global config or `default` |
-| `--dry-run` | Print manifests to stdout, write nothing | `false` |
-| `--llm-provider` | `openai`, `anthropic`, `gemini`, `ollama` | from config |
-| `--skip-argocd` | Do not generate the ArgoCD Application | `false` |
-| `--skip-ci` | Do not generate the GitHub Actions workflow | `false` |
-| `--skip-persona` | Do not generate `PERSONA.md` | `false` |
-| `--skip-validation` | Skip post-generation and `kubectl` dry-run checks | `false` |
-
-Analysis covers Dockerfile (ports, env, base image), docker-compose, and source (language, framework, health path). LLM enhancement is optional; git remote is used to auto-detect the repository URL.
-
-### Output layout
-
-```
-my-app/
-├── k8s/
-│   ├── deployment.yaml
-│   ├── service.yaml
-│   ├── ingress.yaml
-│   ├── hpa.yaml
-│   └── argocd/
-│       └── application.yaml
-├── .github/workflows/
-│   └── deploy.yaml
-└── PERSONA.md
-```
+| **Protected kube contexts** | `heal` refuses a kube context whose name contains `prod`. Set `DORGU_PROTECTED_CONTEXTS` (comma-separated, case-insensitive substrings) to change the list. A name check only: it is a seatbelt, not a security boundary. |
 
 ---
 
 ## Persona Commands
 
 ```bash
-# Preview
-dorgu persona generate ./my-app --dry-run
-
-# Write to a file
-dorgu persona generate ./my-app -o persona.yaml
-
-# Apply
-dorgu persona apply ./my-app --namespace production
+# Create personas for the Deployments already running in a namespace
+dorgu persona import -n production --all
 
 # Status
 dorgu persona status my-app -n production
@@ -512,21 +416,9 @@ dorgu persona list -n production
 ## Cluster Commands
 
 ```bash
-# Create a ClusterPersona
-dorgu cluster init --name production-cluster --environment production
-
 # Status and discovered information
 dorgu cluster status
-
-# Install a production-ready stack (interactive)
-dorgu cluster setup
-dorgu cluster setup --dry-run
-
-# Access details for what setup installed
-dorgu cluster info
 ```
-
-`cluster init` options: `--name` (required), `--environment` (`development`, `staging`, `production`).
 
 Discovered by the operator: nodes and capacity, Kubernetes version, platform (Kind, Minikube, EKS, GKE, …), installed add-ons (ArgoCD, Prometheus, cert-manager), namespace summary, and ApplicationPersona count. The operator auto-creates a ClusterPersona named `dorgu-cluster` on startup if none exists.
 
@@ -566,10 +458,6 @@ The [operator](https://github.com/dorgu-ai/dorgu-operator) is the cluster-side h
 | `llm.existingSecretKey` | Key within that Secret | `ANTHROPIC_API_KEY` |
 | `llm.model` | Model override (empty = provider default) | `""` |
 | `aiRemediation.enabled` | AI-generated ordered remediation plans (needs `llm.provider=claude`) | `false` |
-| `websocket.enabled` | WebSocket server for `dorgu watch` / `dorgu sync` / `dorgu health --watch` | `false` |
-| `websocket.port` | WebSocket port | `9090` |
-| `webhook.enabled` | Validating webhook for Deployments | `false` |
-| `webhook.mode` | `advisory` (warn) or `enforcing` (reject) | `advisory` |
 | `argocd.enabled` | ArgoCD Application watching | `true` |
 | `prometheus.enabled` | Prometheus integration for baseline learning | `false` |
 | `prometheus.url` | Prometheus server URL | `""` |
@@ -586,67 +474,9 @@ helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-o
   --namespace dorgu-system \
   --create-namespace \
   --set healthCheck.enabled=true \
-  --set websocket.enabled=true \
-  --set webhook.enabled=true \
-  --set webhook.mode=advisory \
   --set prometheus.enabled=true \
   --set prometheus.url=http://prometheus-server.monitoring:9090
 ```
-
----
-
-## Configuration
-
-### App-level (`.dorgu.yaml` in your app directory)
-
-```yaml
-version: "1"
-app:
-  name: "order-service"
-  description: "Order processing API"
-  team: "commerce-backend"
-  owner: "orders@company.com"
-  repository: "https://github.com/company/order-service"  # or leave empty for git auto-detect
-  type: "api"
-  instructions: |
-    High-traffic service; requires MySQL and Redis.
-
-environment: "production"
-resources:
-  requests: { cpu: "500m", memory: "1Gi" }
-  limits:   { cpu: "2000m", memory: "2Gi" }
-scaling:
-  min_replicas: 5
-  max_replicas: 50
-  target_cpu: 65
-health:
-  liveness:  { path: "/health", port: 8080 }
-  readiness: { path: "/ready", port: 8080 }
-dependencies:
-  - name: mysql
-    type: database
-    required: true
-  - name: redis
-    type: cache
-    required: true
-```
-
-### Global config
-
-Set once with `dorgu init --global` or `dorgu config set`:
-
-| Key | Description |
-|-----|-------------|
-| `llm.provider` | `openai`, `anthropic`, `gemini`, `ollama` |
-| `llm.api_key` | API key for the LLM provider |
-| `llm.model` | Model name |
-| `defaults.namespace` | Default Kubernetes namespace |
-| `defaults.registry` | Default container registry |
-| `defaults.org_name` | Organization name for labels |
-
-Stored in `~/.config/dorgu/config.yaml`. This is the CLI's *own* LLM config, used for manifest generation — it is separate from the operator's Anthropic key, which is cluster-side and Secret-based.
-
-Precedence, highest first: CLI flags → app `.dorgu.yaml` → workspace `.dorgu.yaml` → global config → environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OLLAMA_HOST`) → built-in defaults.
 
 ---
 

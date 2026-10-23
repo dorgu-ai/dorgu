@@ -61,9 +61,6 @@ func TestSubcommandGroupsRejectUnknownArgs(t *testing.T) {
 		newIncidentsCmd(),
 		personaCmd,
 		clusterCmd,
-		watchCmd,
-		configCmd,
-		platformCmd,
 	}
 
 	for _, group := range groups {

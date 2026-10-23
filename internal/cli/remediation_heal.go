@@ -343,25 +343,18 @@ func selectContainer(containers []string, appName, flag string) (string, error) 
 
 // --- safety (pure) ---
 
-// guardKubeContext refuses to heal against a production-looking context, mirroring
-// the aws-spike guard_context scripts (deny *prod* and the known prod context).
-func guardKubeContext(ctxName string) error {
-	name := strings.TrimSpace(ctxName)
-	if name == "" {
-		return fmt.Errorf("no active kube-context; point kubectl at your cluster first")
-	}
-	if strings.Contains(strings.ToLower(name), "prod") || name == "vox-prod-synthiolabs" {
-		return fmt.Errorf(
-			"refusing to heal: kube-context %q looks like PRODUCTION; switch to a non-production context",
-			name)
-	}
-	return nil
-}
+// guardKubeContext lives in context_guard.go.
 
 // --- kubectl orchestration ---
 
-// currentKubeContext returns the active kube-context name.
+// currentKubeContext returns the kube-context the heal will write to: the
+// global --context when set (kubectl config current-context ignores it, so
+// asking kubectl would check one context and patch another), otherwise the
+// kubeconfig's current-context.
 func currentKubeContext(ctx context.Context, kubeconfig string) (string, error) {
+	if kubeContextOverride != "" {
+		return kubeContextOverride, nil
+	}
 	out, err := kubectlCmd(ctx, kubeconfig, "config", "current-context").CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("failed to read current kube-context: %s", kubectlErrText(out))

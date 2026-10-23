@@ -89,7 +89,8 @@ func TestUnreadableIncidents(t *testing.T) {
 		`error: the server doesn't have a resource type "incidentmemory"`))
 	require.True(t, missingCRD.Unavailable)
 	assert.Contains(t, missingCRD.Reason, "dorgu operator is not installed")
-	assert.Contains(t, missingCRD.Reason, "dorgu cluster setup")
+	assert.Contains(t, missingCRD.Reason, operatorInstallCommand)
+	assert.NotContains(t, missingCRD.Reason, "cluster setup")
 
 	forbidden := unreadableIncidents([]byte(
 		`Error from server (Forbidden): incidentmemories.dorgu.io is forbidden`))

@@ -7,6 +7,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Adversarial bypass suite for the heal path** (`internal/cli/adversarial_test.go`, `ADVERSARIAL.md`, `make adversarial`). One test per attack CLI-01 to CLI-06, each asserting the safe outcome. Unfixed scenarios are skipped as `OPEN` with the checkpoint expected to close them; a fixed one fails until it is removed from the open list. Today: 1/6 blocked.
+
+- **Global `--context` flag**, applied to every kubectl call. `persona status`, `persona list` and `cluster status` gain `--kubeconfig`. Every kubectl invocation now goes through one helper, and a test fails if one does not; previously `persona status/list` and `cluster status` ignored both. `heal`'s production-context guard checks the `--context` value, not the kubeconfig's current-context.
+
+### Changed
+
+- **"Operator not installed" hints give the Helm command** (`helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator --namespace dorgu-system --create-namespace`) instead of the removed `dorgu cluster setup`.
+
+- **The production-context guard on heal is configurable.** `DORGU_PROTECTED_CONTEXTS` takes comma-separated, case-insensitive substrings of kube context names that `heal` refuses to write to. The default stays `prod`; an empty value keeps the default rather than disabling the guard. A hardcoded context name was removed from the guard.
+
+### Fixed
+
+- **A kubectl flag value equal to a verb name no longer hides a write.** On a workload Dorgu does not own, a step command is printed only if it reads. The verb was found by scanning for the first token that matched a verb name, so `kubectl -n logs delete deployment/foo` classified as read-only and was printed as runnable. The verb is now found positionally, skipping global flags by a table of which take a value; an unrecognised flag makes the command unclassifiable and it is withheld.
+
+### Removed
+
+- **BREAKING: every command that is not part of the self-healing loop.** `generate`, `init`, `config`, `persona generate`, `persona apply`, `cluster init`, `cluster setup`, `cluster info`, `platform serve`, `watch`, `sync`, `health --watch` and the global `--config` flag, with the packages only they used (`internal/analyzer`, `internal/generator`, `internal/types`, `internal/llm`, `internal/config`, `internal/setup`, `internal/ws`) and the `dorgu-platform`, OpenAI, WebSocket and form-prompt dependencies. This also removes the CLI's no-opt-in OpenAI data path. See [MIGRATION.md](MIGRATION.md); the last commit with them is tagged `pre-harness`.
+
 ## [0.12.0] - 2026-08-27
 
 ### Upgrade notes

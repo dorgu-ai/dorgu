@@ -210,60 +210,6 @@ func ownerChangeLocation(w *workloadRef) string {
 	}
 }
 
-// mutatingKubectlVerbs, readOnlyKubectlVerbs and readOnlyRolloutSubcommands
-// mirror the operator's ownership shaping (dorgu-operator
-// internal/remediation/proposer_ownership.go). They are duplicated rather than
-// imported because the CLI does not depend on the operator module, and because
-// this guard has to hold even when the object was written by something other
-// than the operator. Keep the two in step.
-//
-// Read-only verbs are listed explicitly, not inferred from the absence of a
-// mutating one, so a command whose verb matches nothing at all is refused
-// rather than assumed harmless.
-var (
-	mutatingKubectlVerbs = map[string]bool{
-		"annotate":  true,
-		"apply":     true,
-		"autoscale": true,
-		"cordon":    true,
-		"create":    true,
-		"delete":    true,
-		"drain":     true,
-		"edit":      true,
-		"expose":    true,
-		"label":     true,
-		"patch":     true,
-		"replace":   true,
-		"run":       true,
-		"scale":     true,
-		"set":       true,
-		"taint":     true,
-		"uncordon":  true,
-	}
-
-	readOnlyKubectlVerbs = map[string]bool{
-		"api-resources": true,
-		"api-versions":  true,
-		"auth":          true,
-		"cluster-info":  true,
-		"describe":      true,
-		"diff":          true,
-		"events":        true,
-		"explain":       true,
-		"get":           true,
-		"logs":          true,
-		"top":           true,
-		"version":       true,
-	}
-
-	// readOnlyRolloutSubcommands are the `kubectl rollout` forms that only
-	// read. undo, restart, pause and resume all write.
-	readOnlyRolloutSubcommands = map[string]bool{
-		"history": true,
-		"status":  true,
-	}
-)
-
 // runnableStepCommand returns a step's kubectl command where it is actually
 // runnable: any command on an unmanaged workload, and read-only commands on an
 // owned one.
@@ -288,47 +234,6 @@ func runnableStepCommand(cmd string, w *workloadRef) string {
 		return ""
 	}
 	return safe
-}
-
-// readsOnly reports whether a kubectl command only reads cluster state.
-//
-// The verb is found by scanning for the first token that is a known kubectl
-// subcommand, rather than the first non-flag token, so a global flag with a
-// value (`kubectl -n apps patch ...`) cannot hide the verb behind its argument.
-// Anything not positively recognised as read-only is refused.
-func readsOnly(command string) bool {
-	fields := strings.Fields(command)
-	if len(fields) < 2 || fields[0] != "kubectl" {
-		return false
-	}
-
-	for i, arg := range fields[1:] {
-		switch {
-		case arg == "rollout":
-			return rolloutReadsOnly(fields[i+2:])
-		case mutatingKubectlVerbs[arg]:
-			return false
-		case readOnlyKubectlVerbs[arg]:
-			return true
-		}
-	}
-
-	// No recognisable verb. An owned workload does not receive a command Dorgu
-	// could not classify.
-	return false
-}
-
-// rolloutReadsOnly classifies a `kubectl rollout` invocation from its remaining
-// arguments. A bare `kubectl rollout` names no subcommand, so it is refused
-// along with everything else that cannot be classified.
-func rolloutReadsOnly(args []string) bool {
-	for _, arg := range args {
-		if strings.HasPrefix(arg, "-") {
-			continue
-		}
-		return readOnlyRolloutSubcommands[arg]
-	}
-	return false
 }
 
 // --- workload-vs-workload diff ---

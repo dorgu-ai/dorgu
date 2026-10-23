@@ -1,13 +1,10 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"time"
 
@@ -17,12 +14,9 @@ import (
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
 
-var validDNSName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,252}$`)
-
 var clusterFlags struct {
-	name        string
-	environment string
-	dryRun      bool
+	name       string
+	kubeconfig string
 }
 
 var clusterCmd = &cobra.Command{
@@ -38,11 +32,8 @@ Examples:
   # View cluster persona status
   dorgu cluster status
 
-  # Initialize a new cluster persona
-  dorgu cluster init --name my-cluster --environment production
-
-  # Install a curated production-ready stack
-  dorgu cluster setup`,
+The operator creates the ClusterPersona on startup; nothing here writes to the
+cluster.`,
 }
 
 var clusterStatusCmd = &cobra.Command{
@@ -59,34 +50,13 @@ Examples:
 	RunE: runClusterStatus,
 }
 
-var clusterInitCmd = &cobra.Command{
-	Use:   "init",
-	Short: "Initialize a ClusterPersona for the current cluster",
-	Long: `Create a ClusterPersona CRD for the current Kubernetes cluster.
-This establishes the cluster's identity and allows the Dorgu Operator
-to discover and track cluster state.
-
-Examples:
-  dorgu cluster init --name production-cluster --environment production
-  dorgu cluster init --name dev-cluster --environment development --dry-run`,
-	RunE: runClusterInit,
-}
-
 func init() {
 	// Status flags (name is optional, will list all if not provided)
 	clusterStatusCmd.Flags().StringVarP(&clusterFlags.name, "name", "n", "", "ClusterPersona name (optional)")
-
-	// Init flags
-	clusterInitCmd.Flags().StringVar(&clusterFlags.name, "name", "", "cluster name (required)")
-	clusterInitCmd.Flags().StringVar(&clusterFlags.environment, "environment", "development", "cluster environment (development, staging, production, sandbox)")
-	clusterInitCmd.Flags().BoolVar(&clusterFlags.dryRun, "dry-run", false, "print to stdout without applying")
-	_ = clusterInitCmd.MarkFlagRequired("name")
+	clusterStatusCmd.Flags().StringVar(&clusterFlags.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
 
 	// Register subcommands
 	clusterCmd.AddCommand(clusterStatusCmd)
-	clusterCmd.AddCommand(clusterInitCmd)
-	clusterCmd.AddCommand(clusterSetupCmd)
-	clusterCmd.AddCommand(clusterInfoCmd)
 }
 
 func runClusterStatus(cmd *cobra.Command, args []string) error {
@@ -102,24 +72,28 @@ func runClusterStatus(cmd *cobra.Command, args []string) error {
 		name = clusterFlags.name
 	}
 
+	kubeconfig, err := validateKubeconfig(clusterFlags.kubeconfig)
+	if err != nil {
+		return err
+	}
+
 	if name == "" {
 		// List all ClusterPersonas
-		return listClusterPersonas()
+		return listClusterPersonas(kubeconfig)
 	}
 
 	// Get specific ClusterPersona
-	return getClusterPersonaStatus(name)
+	return getClusterPersonaStatus(kubeconfig, name)
 }
 
-func listClusterPersonas() error {
+func listClusterPersonas(kubeconfig string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	kubectlCmd := exec.CommandContext(ctx, "kubectl", "get", "clusterpersona", "-o", "json")
-	rawOutput, err := kubectlCmd.CombinedOutput()
+	rawOutput, err := kubectlCmd(ctx, kubeconfig, "get", "clusterpersona", "-o", "json").CombinedOutput()
 	if err != nil {
 		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
-			return fmt.Errorf("ClusterPersona CRD is not installed on this cluster. Install the Dorgu Operator first")
+			return fmt.Errorf("ClusterPersona CRD is not installed on this cluster. Install the Dorgu Operator first: %s", operatorInstallCommand)
 		}
 		return fmt.Errorf("failed to list cluster personas: %s", outputStr)
 	}
@@ -136,7 +110,7 @@ func listClusterPersonas() error {
 			fmt.Println(string(rawOutput))
 			return nil
 		}
-		output.Info("No ClusterPersona resources found. Create one with: dorgu cluster init --name <name>")
+		output.Info("No ClusterPersona resources found. The Dorgu Operator creates one on startup; check that it is running.")
 		return nil
 	}
 
@@ -172,7 +146,7 @@ func listClusterPersonas() error {
 	return nil
 }
 
-func getClusterPersonaStatus(name string) error {
+func getClusterPersonaStatus(kubeconfig, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -181,18 +155,16 @@ func getClusterPersonaStatus(name string) error {
 		outputFormat = "json"
 	}
 
-	kubectlCmd := exec.CommandContext(ctx, "kubectl", "get", "clusterpersona", name, "-o", outputFormat)
-	rawOutput, err := kubectlCmd.CombinedOutput()
+	rawOutput, err := kubectlCmd(ctx, kubeconfig, "get", "clusterpersona", name, "-o", outputFormat).CombinedOutput()
 	if err != nil {
 		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "not found") {
 			output.ErrorWithHint("ClusterPersona not found: "+name,
-				"List available ClusterPersonas: dorgu cluster status",
-				"Create one: dorgu cluster init --name <name> --environment <env>")
+				"List available ClusterPersonas: dorgu cluster status")
 			return errSilent
 		}
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
-			return fmt.Errorf("ClusterPersona CRD is not installed on this cluster. Install the Dorgu Operator first")
+			return fmt.Errorf("ClusterPersona CRD is not installed on this cluster. Install the Dorgu Operator first: %s", operatorInstallCommand)
 		}
 		return fmt.Errorf("failed to get cluster persona: %s", outputStr)
 	}
@@ -204,69 +176,4 @@ func getClusterPersonaStatus(name string) error {
 
 	displayClusterPersonaStatus(name, string(rawOutput))
 	return nil
-}
-
-func runClusterInit(cmd *cobra.Command, args []string) error {
-	// Check kubectl availability
-	if _, err := exec.LookPath("kubectl"); err != nil {
-		return fmt.Errorf("kubectl not found in PATH; required for cluster init")
-	}
-
-	personaYAML, err := generateClusterPersonaYAML(clusterFlags.name, clusterFlags.environment)
-	if err != nil {
-		return err
-	}
-
-	if clusterFlags.dryRun {
-		fmt.Println(personaYAML)
-		return nil
-	}
-
-	// Apply via kubectl
-	output.Info("Creating ClusterPersona...")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	kubectlCmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
-	kubectlCmd.Stdin = bytes.NewBufferString(personaYAML)
-	kubectlCmd.Stdout = os.Stdout
-	kubectlCmd.Stderr = os.Stderr
-	if err := kubectlCmd.Run(); err != nil {
-		return fmt.Errorf("kubectl apply failed: %w", err)
-	}
-
-	output.Success(fmt.Sprintf("ClusterPersona '%s' created successfully", clusterFlags.name))
-	output.Info("The Dorgu Operator will now discover cluster state. Check status with: dorgu cluster status " + clusterFlags.name)
-	return nil
-}
-
-func generateClusterPersonaYAML(name, environment string) (string, error) {
-	if !validDNSName.MatchString(name) {
-		return "", fmt.Errorf("invalid ClusterPersona name %q: must match RFC 1123 (lowercase alphanumeric, hyphens, dots)", name)
-	}
-	if !validDNSName.MatchString(environment) {
-		return "", fmt.Errorf("invalid environment %q: must match RFC 1123 (lowercase alphanumeric, hyphens, dots)", environment)
-	}
-	return fmt.Sprintf(`apiVersion: dorgu.io/v1
-kind: ClusterPersona
-metadata:
-  name: %s
-spec:
-  name: %s
-  description: "Kubernetes cluster managed by Dorgu"
-  environment: %s
-  policies:
-    security:
-      enforceNonRoot: true
-      disallowPrivileged: true
-      podSecurityStandard: baseline
-    selfHealing:
-      mode: observe
-      trustLevel: 2
-  conventions:
-    requiredLabels:
-      - app.kubernetes.io/name
-      - app.kubernetes.io/version
-  defaults:
-    namespace: default
-`, name, name, environment), nil
 }
