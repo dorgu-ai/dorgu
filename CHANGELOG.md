@@ -17,6 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **The production-context guard on heal is configurable.** `DORGU_PROTECTED_CONTEXTS` takes comma-separated, case-insensitive substrings of kube context names that `heal` refuses to write to. The default stays `prod`; an empty value keeps the default rather than disabling the guard. A hardcoded context name was removed from the guard.
 
+### Fixed
+
+- **A kubectl flag value equal to a verb name no longer hides a write.** On a workload Dorgu does not own, a step command is printed only if it reads. The verb was found by scanning for the first token that matched a verb name, so `kubectl -n logs delete deployment/foo` classified as read-only and was printed as runnable. The verb is now found positionally, skipping global flags by a table of which take a value; an unrecognised flag makes the command unclassifiable and it is withheld.
+
 ### Removed
 
 - **BREAKING: every command that is not part of the self-healing loop.** `generate`, `init`, `config`, `persona generate`, `persona apply`, `cluster init`, `cluster setup`, `cluster info`, `platform serve`, `watch`, `sync`, `health --watch` and the global `--config` flag, with the packages only they used (`internal/analyzer`, `internal/generator`, `internal/types`, `internal/llm`, `internal/config`, `internal/setup`, `internal/ws`) and the `dorgu-platform`, OpenAI, WebSocket and form-prompt dependencies. This also removes the CLI's no-opt-in OpenAI data path. See [MIGRATION.md](MIGRATION.md); the last commit with them is tagged `pre-harness`.
