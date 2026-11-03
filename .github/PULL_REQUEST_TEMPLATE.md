@@ -8,7 +8,7 @@ Fixes #(issue number) — or "None"
 
 ## How to verify
 
-- [ ] Steps to test (e.g. run `dorgu generate ./some-app`, then ...)
+- [ ] Steps to test (e.g. run `dorgu remediation diff <name> -n <ns>` against a Kind cluster, then ...)
 - [ ] `make test` passes
 - [ ] `make lint` passes (or no new lint issues)
 

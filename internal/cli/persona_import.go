@@ -18,8 +18,7 @@ import (
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
 
-// F-02: `persona generate|apply` need local source, which a cluster that already
-// has apps does not have. Until a persona exists Dorgu sees nothing, so a broken
+// F-02: until a persona exists Dorgu sees nothing, so a broken
 // app raises no incident and gets no remediation. `persona import` reads the
 // Deployments that are already running and writes the personas for them.
 
@@ -43,8 +42,8 @@ func newPersonaImportCmd() *cobra.Command {
 from what is already in the spec: resources, probes, replicas, ports, image and
 ownership labels.
 
-This is the onboarding path for a cluster that already has apps. Unlike
-'persona generate', it needs no local source, no Dockerfile and no relabelling.
+This is the onboarding path for a cluster that already has apps. It needs no
+local source, no Dockerfile and no relabelling.
 
 Prints the YAML by default so you can read it before anything reaches the
 cluster. Use --apply to create the personas, or -o to write them to a file.
@@ -288,7 +287,7 @@ func applyPersonaYAML(ctx context.Context, kubeconfig, namespace, yamlDoc string
 		msg := strings.TrimSpace(stderr.String())
 		if strings.Contains(msg, "the server doesn't have a resource type") {
 			output.ErrorWithHint("ApplicationPersona CRD not found. Is the dorgu operator installed?",
-				"To install the operator: dorgu cluster setup")
+				operatorInstallHint)
 			return errSilent
 		}
 		return fmt.Errorf("kubectl apply failed: %s", msg)

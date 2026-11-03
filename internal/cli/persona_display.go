@@ -81,7 +81,9 @@ func displayPersonaStatus(name string, rawYAML string) {
 	}
 
 	if output.IsJSON() {
-		output.PrintJSON(persona)
+		if err := output.PrintJSON(persona); err != nil {
+			output.Error(err.Error())
+		}
 		return
 	}
 

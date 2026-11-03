@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,10 +27,8 @@ func TestRootHelpLeadsWithSelfHealing(t *testing.T) {
 	assert.Contains(t, long, "nothing is applied without your approval",
 		"the approval promise belongs in the first thing a user reads")
 
-	// Generation stays, as a secondary capability, and must not come first.
-	assert.Contains(t, long, "dorgu generate ./my-app")
-	assert.Greater(t, strings.Index(long, "dorgu generate"), strings.Index(long, "dorgu health"),
-		"manifest generation must not lead")
+	// Manifest generation was removed in v0.13.0; help must not advertise it.
+	assert.NotContains(t, long, "dorgu generate")
 
 	// The undocumented prerequisite the clean-room tester hit (F-22).
 	assert.Contains(t, long, "kubectl on your PATH")

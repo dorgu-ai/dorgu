@@ -8,17 +8,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dorgu-ai/dorgu/internal/output"
-	"github.com/dorgu-ai/dorgu/internal/ws"
 )
 
 // healthCmdTimeout is the maximum time to wait for each kubectl call.
@@ -43,9 +40,6 @@ Also names the Deployments that no ApplicationPersona covers: those are not
 being watched, so nothing about them can appear as an incident. Without -n,
 cluster add-on namespaces are left out.
 
-Use --watch to stream real-time health updates via WebSocket. Requires
-the Dorgu Operator to be running with --enable-websocket.
-
 Exit codes:
   0  the cluster was read and no critical incident is active
   1  the check could not run (unreachable cluster, bad kubeconfig, no kubectl)
@@ -62,9 +56,7 @@ Examples:
   dorgu health
   dorgu health --json
   dorgu health -n production
-  dorgu health --exit-code
-  dorgu health --watch
-  dorgu health --watch --json`,
+  dorgu health --exit-code`,
 		RunE: runHealth,
 	}
 
@@ -72,9 +64,6 @@ Examples:
 	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
 	cmd.Flags().Bool("exit-code", false,
 		"exit 2 when critical incidents are active, 3 when health cannot be judged (for monitoring scripts)")
-	cmd.Flags().BoolP("watch", "w", false, "stream health updates in real-time via WebSocket")
-	cmd.Flags().String("operator-url", "ws://localhost:9090/ws",
-		"WebSocket URL of the Dorgu Operator (used with --watch)")
 
 	return cmd
 }
@@ -155,10 +144,6 @@ type remediationSummary struct {
 }
 
 func runHealth(cmd *cobra.Command, args []string) error {
-	watchMode, _ := cmd.Flags().GetBool("watch")
-	if watchMode {
-		return runHealthWatch(cmd, args)
-	}
 
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		return fmt.Errorf("kubectl not found in PATH; required for health check")
@@ -405,14 +390,6 @@ func validateKubeconfig(path string) (string, error) {
 		return "", fmt.Errorf("kubeconfig file not found: %s", clean)
 	}
 	return clean, nil
-}
-
-// kubectlCmd builds a kubectl command with optional kubeconfig and context timeout.
-func kubectlCmd(ctx context.Context, kubeconfig string, args ...string) *exec.Cmd {
-	if kubeconfig != "" {
-		args = append([]string{"--kubeconfig", kubeconfig}, args...)
-	}
-	return exec.CommandContext(ctx, "kubectl", args...)
 }
 
 // fetchNodesJSON lists cluster nodes via kubectl and returns the raw response.
@@ -663,7 +640,7 @@ func unreadableIncidents(kubectlOutput []byte) *incidentsSummary {
 	reason := "the IncidentMemory records could not be read: " + detail
 	if strings.Contains(detail, "the server doesn't have a resource type") {
 		reason = "the dorgu operator is not installed, so there are no incident records to read " +
-			"(install it with: dorgu cluster setup)"
+			"(install it with: " + operatorInstallCommand + ")"
 	}
 
 	return &incidentsSummary{Unavailable: true, Reason: reason}
@@ -701,204 +678,4 @@ func fetchPendingRemediations(ctx context.Context, kubeconfig, namespace string)
 		}
 	}
 	return &remediationSummary{Count: count}
-}
-
-// runHealthWatch connects to the operator WebSocket and streams health events.
-func runHealthWatch(cmd *cobra.Command, _ []string) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Handle interrupt.
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		output.Info("Stopping health watch...")
-		cancel()
-	}()
-
-	operatorURL, _ := cmd.Flags().GetString("operator-url")
-	namespace, _ := cmd.Flags().GetString("namespace")
-
-	client := ws.NewClient(operatorURL)
-	if err := client.Connect(ctx); err != nil {
-		return handleWSConnectError(err, operatorURL)
-	}
-	defer client.Close()
-
-	output.Success("Connected to Dorgu Operator")
-	output.Info("Watching health updates... (Ctrl+C to stop)")
-	fmt.Println()
-
-	// Subscribe to incidents topic.
-	if err := client.Subscribe(ctx, ws.TopicIncidents, func(msg *ws.Message) {
-		var event ws.IncidentEvent
-		if err := json.Unmarshal(msg.Payload, &event); err != nil {
-			return
-		}
-
-		if namespace != "" && event.Namespace != namespace {
-			return
-		}
-
-		if output.IsJSON() {
-			_ = output.PrintJSONLine(event)
-			return
-		}
-
-		printIncidentEvent(msg.Timestamp, event)
-	}); err != nil {
-		return fmt.Errorf("failed to subscribe to incidents: %w", err)
-	}
-
-	// Subscribe to remediations topic.
-	if err := client.Subscribe(ctx, ws.TopicRemediations, func(msg *ws.Message) {
-		var event ws.RemediationEvent
-		if err := json.Unmarshal(msg.Payload, &event); err != nil {
-			return
-		}
-
-		if namespace != "" && event.Namespace != namespace {
-			return
-		}
-
-		if output.IsJSON() {
-			_ = output.PrintJSONLine(event)
-			return
-		}
-
-		printRemediationEvent(msg.Timestamp, event)
-	}); err != nil {
-		return fmt.Errorf("failed to subscribe to remediations: %w", err)
-	}
-
-	// Subscribe to health updates.
-	if err := client.Subscribe(ctx, ws.TopicHealth, func(msg *ws.Message) {
-		var event ws.HealthUpdateEvent
-		if err := json.Unmarshal(msg.Payload, &event); err != nil {
-			return
-		}
-
-		if output.IsJSON() {
-			_ = output.PrintJSONLine(event)
-			return
-		}
-
-		printHealthUpdateEvent(msg.Timestamp, event)
-	}); err != nil {
-		return fmt.Errorf("failed to subscribe to health updates: %w", err)
-	}
-
-	// Emit initial health snapshot for JSON mode so the first output is immediate.
-	if output.IsJSON() {
-		if incidentsResp, err := client.ListIncidents(ctx, namespace); err == nil {
-			for _, inc := range incidentsResp {
-				_ = output.PrintJSONLine(map[string]any{
-					"type": "incident", "eventType": "snapshot", "data": inc,
-				})
-			}
-		}
-		if remediationsResp, err := client.ListRemediations(ctx, namespace); err == nil {
-			for _, rem := range remediationsResp {
-				_ = output.PrintJSONLine(map[string]any{
-					"type": "remediation", "eventType": "snapshot", "data": rem,
-				})
-			}
-		}
-	}
-
-	// Block until context cancellation.
-	<-ctx.Done()
-	return nil
-}
-
-// printIncidentEvent prints a formatted incident event line.
-func printIncidentEvent(ts time.Time, event ws.IncidentEvent) {
-	timestamp := ts.Format("15:04:05")
-	severity := output.SeverityColor(event.Severity)
-	persona := event.PersonaName
-	if event.Namespace != "" {
-		persona = event.Namespace + "/" + persona
-	}
-
-	label := "INCIDENT"
-	switch event.EventType {
-	case "created":
-		fmt.Printf("[%s] %-10s %-10s %-20s %-30s %s\n",
-			timestamp, output.Red(label), severity, event.Signal, persona, output.Yellow("Detected"))
-	case "updated":
-		fmt.Printf("[%s] %-10s %-10s %-20s %-30s %s\n",
-			timestamp, output.Yellow(label), severity, event.Signal, persona, output.Blue("Updated"))
-	case "resolved":
-		fmt.Printf("[%s] %-10s %-10s %-20s %-30s %s\n",
-			timestamp, output.Green(label), output.Green("info"), event.Signal, persona, output.Green("Resolved"))
-	default:
-		fmt.Printf("[%s] %-10s %-10s %-20s %-30s %s\n",
-			timestamp, label, severity, event.Signal, persona, event.EventType)
-	}
-}
-
-// printRemediationEvent prints a formatted remediation event line.
-func printRemediationEvent(ts time.Time, event ws.RemediationEvent) {
-	timestamp := ts.Format("15:04:05")
-	persona := event.PersonaName
-	if event.Namespace != "" {
-		persona = event.Namespace + "/" + persona
-	}
-
-	label := "REMEDY"
-	switch event.EventType {
-	case "created":
-		fmt.Printf("[%s] %-10s %-10s %-20s %-30s %s\n",
-			timestamp, output.Yellow(label), output.Yellow("warning"), event.ActionType, persona, output.Yellow("Pending"))
-	case "approved":
-		fmt.Printf("[%s] %-10s %-10s %-20s %-30s %s\n",
-			timestamp, output.Blue(label), output.Blue("info"), event.ActionType, persona, output.Blue("Approved"))
-	case "completed":
-		fmt.Printf("[%s] %-10s %-10s %-20s %-30s %s\n",
-			timestamp, output.Green(label), output.Green("info"), event.ActionType, persona, output.Green("Completed"))
-	case "rolledback":
-		fmt.Printf("[%s] %-10s %-10s %-20s %-30s %s\n",
-			timestamp, output.Red(label), output.Red("warning"), event.ActionType, persona, output.Red("RolledBack"))
-	case "rejected":
-		fmt.Printf("[%s] %-10s %-10s %-20s %-30s %s\n",
-			timestamp, output.Red(label), output.Red("warning"), event.ActionType, persona, output.Red("Rejected"))
-	default:
-		fmt.Printf("[%s] %-10s %-10s %-20s %-30s %s\n",
-			timestamp, label, "", event.ActionType, persona, event.EventType)
-	}
-}
-
-// printHealthUpdateEvent prints a formatted health update line.
-func printHealthUpdateEvent(ts time.Time, event ws.HealthUpdateEvent) {
-	timestamp := ts.Format("15:04:05")
-
-	incidentStr := output.Green(fmt.Sprintf("%d", event.ActiveIncidents))
-	if event.ActiveIncidents > 0 {
-		incidentStr = output.Red(fmt.Sprintf("%d", event.ActiveIncidents))
-	}
-
-	remedyStr := fmt.Sprintf("%d", event.PendingRemedies)
-	if event.PendingRemedies > 0 {
-		remedyStr = output.Yellow(remedyStr)
-	}
-
-	parts := []string{
-		fmt.Sprintf("incidents=%s", incidentStr),
-		fmt.Sprintf("pending-remedies=%s", remedyStr),
-	}
-	if event.NodeCount > 0 {
-		parts = append(parts, fmt.Sprintf("nodes=%d/%d", event.HealthyNodes, event.NodeCount))
-	}
-	// Labelled "requested", not "cpu", because that is what the operator sends:
-	// the share of allocatable the scheduler has committed, not live consumption
-	// (CR-03). A bare "cpu=25%" reads as usage and is a different number.
-	if event.CPUUtilization != "" {
-		parts = append(parts, fmt.Sprintf("cpu-requested=%s", event.CPUUtilization))
-	}
-	if event.MemUtilization != "" {
-		parts = append(parts, fmt.Sprintf("mem-requested=%s", event.MemUtilization))
-	}
-
-	fmt.Printf("[%s] %-10s %s\n", timestamp, output.Blue("HEALTH"), strings.Join(parts, "  "))
 }

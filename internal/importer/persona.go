@@ -1,10 +1,9 @@
 // Package importer synthesizes an ApplicationPersona from a Deployment that is
 // already running.
 //
-// `dorgu persona generate|apply` read local source (Dockerfile, compose, code),
-// which is no help on a cluster that already has apps: there is nothing to
-// analyze and no persona, so Dorgu stays completely silent. Everything a persona
-// needs is already in the Deployment spec, so read that instead.
+// Until a persona exists Dorgu stays completely silent about an app. Everything
+// a persona needs is already in the Deployment spec, so read that rather than
+// local source.
 package importer
 
 import (

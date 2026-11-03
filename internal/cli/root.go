@@ -2,11 +2,8 @@ package cli
 
 import (
 	"errors"
-	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
@@ -15,11 +12,6 @@ import (
 // formatted error (e.g. via output.ErrorWithHint). Execute() will propagate the
 // non-zero exit but will not double-print the message.
 var errSilent = errors.New("")
-
-var (
-	// Config file path
-	cfgFile string
-)
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -50,11 +42,6 @@ Dorgu only watches workloads that have an ApplicationPersona. On a cluster that
 already has apps, create them from the running Deployments:
   dorgu persona import -n <namespace> --all
 
-Manifest generation is also here, as a secondary capability. It analyzes an
-app's Dockerfile, Compose file and source, and emits Kubernetes manifests,
-ArgoCD config, CI workflows and a persona:
-  dorgu generate ./my-app
-
 Requires kubectl on your PATH for every cluster command. Set DORGU_DEBUG=1 to
 see kubectl's raw output in error messages.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -81,50 +68,17 @@ func Execute() error {
 }
 
 func init() {
-	cobra.OnInitialize(initConfig)
-
 	// Global flags
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is .dorgu.yaml)")
 	rootCmd.PersistentFlags().Bool("no-color", false, "disable colored output")
 	rootCmd.PersistentFlags().Bool("json", false, "output in JSON format (for scripting and agents)")
-
-	// Bind to viper
-	_ = viper.BindPFlag("no-color", rootCmd.PersistentFlags().Lookup("no-color"))
-	_ = viper.BindPFlag("json", rootCmd.PersistentFlags().Lookup("json"))
+	rootCmd.PersistentFlags().StringVar(&kubeContextOverride, "context", "",
+		"kube-context to use for every kubectl call (default: the kubeconfig's current-context)")
 
 	// Add subcommands
 	rootCmd.AddCommand(versionCmd)
-	rootCmd.AddCommand(generateCmd)
-	rootCmd.AddCommand(initCmd)
-	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(personaCmd)
 	rootCmd.AddCommand(clusterCmd)
-	rootCmd.AddCommand(watchCmd)
-	rootCmd.AddCommand(syncCmd)
-	rootCmd.AddCommand(platformCmd)
 	rootCmd.AddCommand(newHealthCmd())
 	rootCmd.AddCommand(newIncidentsCmd())
 	rootCmd.AddCommand(newRemediationCmd())
-}
-
-// initConfig reads in config file and ENV variables if set.
-func initConfig() {
-	if cfgFile != "" {
-		// Use config file from the flag
-		viper.SetConfigFile(cfgFile)
-	} else {
-		// Search for config in current directory
-		viper.AddConfigPath(".")
-		viper.SetConfigType("yaml")
-		viper.SetConfigName(".dorgu")
-	}
-
-	// Read in environment variables that match
-	viper.SetEnvPrefix("DORGU")
-	viper.AutomaticEnv()
-
-	// If a config file is found, read it in
-	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
-	}
 }

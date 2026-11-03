@@ -153,20 +153,10 @@ func displayClusterPersonaStatusTo(w io.Writer, name string, rawYAML string) {
 	fmt.Fprintf(w, "  Next Steps\n")
 	fmt.Fprintf(w, "  %s\n", strings.Repeat("─", 38))
 
-	hasUninstalled := false
-	for _, addon := range s.Addons {
-		if !addon.Installed {
-			hasUninstalled = true
-			break
-		}
-	}
-	if hasUninstalled {
-		fmt.Fprintf(w, "  %s Run 'dorgu cluster setup' to install missing components\n", output.Dim("→"))
-	}
 	if s.ApplicationCount == 0 {
-		fmt.Fprintf(w, "  %s Run 'dorgu persona apply' to onboard an application\n", output.Dim("→"))
+		fmt.Fprintf(w, "  %s Run 'dorgu persona import -n <namespace> --all' to onboard running apps\n", output.Dim("→"))
 	} else {
-		fmt.Fprintf(w, "  %s Run 'dorgu persona apply' to onboard additional applications\n", output.Dim("→"))
+		fmt.Fprintf(w, "  %s Run 'dorgu persona import -n <namespace> --all' to onboard more running apps\n", output.Dim("→"))
 	}
 	if s.Phase == "Degraded" {
 		fmt.Fprintf(w, "  %s Check nodes: kubectl get nodes\n", output.Dim("→"))

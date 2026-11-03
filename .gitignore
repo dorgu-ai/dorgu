@@ -100,7 +100,6 @@ temp/
 
 # Local configuration (keep examples)
 .dorgu.yaml
-!.dorgu.yaml.example
 
 # Fuzzing
 testdata/fuzz/

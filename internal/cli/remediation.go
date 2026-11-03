@@ -240,7 +240,7 @@ func fetchRemediations(ctx context.Context, kubeconfig, namespace string) ([]rem
 		outputStr := kubectlErrText(out)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			output.ErrorWithHint("RemediationAction CRD not found. Is the dorgu operator installed?",
-				"To install the operator: dorgu cluster setup")
+				operatorInstallHint)
 			return nil, errSilent
 		}
 		return nil, fmt.Errorf("failed to list remediations: %s", outputStr)
@@ -393,7 +393,7 @@ func fetchRemediation(ctx context.Context, kubeconfig, name, namespace string) (
 		outputStr := kubectlErrText(rawOutput)
 		if strings.Contains(outputStr, "the server doesn't have a resource type") {
 			output.ErrorWithHint("RemediationAction CRD not found. Is the dorgu operator installed?",
-				"To install the operator: dorgu cluster setup")
+				operatorInstallHint)
 			return nil, errSilent
 		}
 		if strings.Contains(outputStr, "not found") {
@@ -828,6 +828,19 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 	if rem.Status.Phase != "Pending" {
 		output.Error(fmt.Sprintf("Remediation is in %s phase, can only approve Pending remediations",
 			rem.Status.Phase))
+		return errSilent
+	}
+
+	// Approval is a cluster write whether or not the CLI heals afterwards: it
+	// tells the operator to patch the persona. So a protected context refuses
+	// every approval, and --no-heal is not a way around it.
+	ctxName, err := currentKubeContext(ctx, kubeconfig)
+	if err != nil {
+		return err
+	}
+	if err := guardKubeContext(ctxName); err != nil {
+		output.Error(err.Error())
+		output.Info("Nothing was approved and nothing was changed.")
 		return errSilent
 	}
 

@@ -48,14 +48,6 @@ func IsJSON() bool {
 	return currentMode == ModeJSON
 }
 
-// IsInteractive returns true if both stdin and stdout are terminals
-// and we're not in JSON mode. Used to decide whether to show huh forms.
-func IsInteractive() bool {
-	return term.IsTerminal(int(os.Stdin.Fd())) &&
-		term.IsTerminal(int(os.Stdout.Fd())) &&
-		currentMode != ModeJSON
-}
-
 // IsTTY returns true if stdout is a terminal and colors are not disabled.
 func IsTTY() bool {
 	return term.IsTerminal(int(os.Stdout.Fd())) && !colorDisabled

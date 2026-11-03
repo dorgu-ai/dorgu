@@ -521,6 +521,9 @@ func writeFakeKubectl(t *testing.T, getResponse string) {
 
 func TestRunRemediationApprovePending(t *testing.T) {
 	writeFakeKubectl(t, operatorRemediationFixture)
+	// Approval checks the protected-context guard first, and this fake answers
+	// no current-context, so name a non-protected one explicitly.
+	setKubeContext(t, "kind-dorgu-test")
 
 	// --no-heal isolates the status-patch behaviour; the heal path (default on)
 	// is covered by TestRunRemediationApproveHealsWorkload with a dispatching fake.

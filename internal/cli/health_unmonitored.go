@@ -225,7 +225,7 @@ func printUnmonitored(w io.Writer, s *unmonitoredSummary) {
 	if s.PersonaCRDMissing {
 		fmt.Fprintf(w, "Unmonitored: %s\n", output.Yellow(fmt.Sprintf(
 			"all %d Deployments; the ApplicationPersona CRD is not installed", s.Count)))
-		fmt.Fprintf(w, "  %s\n", output.Dim("→ install the operator first: dorgu cluster setup"))
+		fmt.Fprintf(w, "  %s\n", output.Dim("→ install the operator first: "+operatorInstallCommand))
 		fmt.Fprintln(w)
 		return
 	}

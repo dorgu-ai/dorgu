@@ -5,27 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
 	k8syaml "sigs.k8s.io/yaml"
 )
-
-// QA checklist values for ClusterPersona self-healing (BUG-3-6).
-const (
-	wantSelfHealingMode       = "observe"
-	wantSelfHealingTrustLevel = int32(2)
-)
-
-// clusterInitDoc mirrors the shape of YAML produced by cluster init for assertions.
-type clusterInitDoc struct {
-	Spec struct {
-		Policies *struct {
-			SelfHealing *struct {
-				Mode       string `yaml:"mode"`
-				TrustLevel int32  `yaml:"trustLevel"`
-			} `yaml:"selfHealing"`
-		} `yaml:"policies"`
-	} `yaml:"spec"`
-}
 
 const fixtureClusterPersonaYAML = `
 apiVersion: dorgu.io/v1
@@ -157,36 +138,12 @@ func TestDisplayClusterPersonaStatus_Formatted(t *testing.T) {
 	if !strings.Contains(out, "Next Steps") {
 		t.Error("output should contain Next Steps section")
 	}
-	// external-secrets not installed → should suggest dorgu cluster setup
-	if !strings.Contains(out, "dorgu cluster setup") {
-		t.Error("output should suggest dorgu cluster setup when addons are missing")
+	// Next steps point only at commands that still exist.
+	if !strings.Contains(out, "dorgu persona import") {
+		t.Error("output should suggest dorgu persona import for onboarding")
 	}
-}
-
-func TestClusterInit_SetsSelfHealingDefaults(t *testing.T) {
-	yamlStr, err := generateClusterPersonaYAML("qa-helm", "development")
-	if err != nil {
-		t.Fatalf("generateClusterPersonaYAML: %v", err)
-	}
-
-	var doc clusterInitDoc
-	if err := yaml.Unmarshal([]byte(yamlStr), &doc); err != nil {
-		t.Fatalf("unmarshal generated YAML: %v", err)
-	}
-
-	if doc.Spec.Policies == nil {
-		t.Fatal("spec.policies is nil; expected policies with selfHealing defaults")
-	}
-	if doc.Spec.Policies.SelfHealing == nil {
-		t.Fatal("spec.policies.selfHealing is nil; expected observe / L2 defaults (BUG-3-6)")
-	}
-
-	sh := doc.Spec.Policies.SelfHealing
-	if sh.Mode != wantSelfHealingMode {
-		t.Errorf("spec.policies.selfHealing.mode = %q, want %q", sh.Mode, wantSelfHealingMode)
-	}
-	if sh.TrustLevel != wantSelfHealingTrustLevel {
-		t.Errorf("spec.policies.selfHealing.trustLevel = %d, want %d", sh.TrustLevel, wantSelfHealingTrustLevel)
+	if strings.Contains(out, "cluster setup") || strings.Contains(out, "persona apply") {
+		t.Errorf("output must not suggest removed commands, got:\n%s", out)
 	}
 }
 

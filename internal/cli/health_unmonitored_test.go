@@ -211,7 +211,7 @@ func TestPrintUnmonitored_MissingCRDIsAboutTheOperatorNotTheApps(t *testing.T) {
 	out := buf.String()
 
 	assert.Contains(t, out, "the ApplicationPersona CRD is not installed")
-	assert.Contains(t, out, "install the operator first: dorgu cluster setup")
+	assert.Contains(t, out, "install the operator first: "+operatorInstallCommand)
 	assert.NotContains(t, out, "persona import")
 }
 
