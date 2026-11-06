@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-06
+
+### Upgrade notes
+
+> **BREAKING: most of the old command surface is removed.** `generate`, `init`, `config`, `persona generate|apply`, `cluster init|setup|info`, `platform serve`, `watch`, `sync` and `health --watch`, plus the global `--config` flag, are gone. What remains is the self-healing loop: `health`, `incidents`, `remediation`, `persona import|list|status`, `cluster status` and `version`. [MIGRATION.md](MIGRATION.md) maps each removed command to its replacement, and the `pre-harness` tag holds the last commit that has them. Install the operator with Helm.
+>
+> **The contexts `heal` refuses to write to are now configurable** with `DORGU_PROTECTED_CONTEXTS`. The default is still `prod`; a context name that used to be hardcoded in the guard is removed, so a context that matched only because of that name is no longer protected unless you list it.
+>
+> Operator v0.12.0 is recommended alongside this release.
+
 ### Added
 
 - **Adversarial bypass suite for the heal path** (`internal/cli/adversarial_test.go`, `ADVERSARIAL.md`, `make adversarial`). One test per attack CLI-01 to CLI-06, each asserting the safe outcome. Unfixed scenarios are skipped as `OPEN` with the checkpoint expected to close them; a fixed one fails until it is removed from the open list. Today: 1/6 blocked.
