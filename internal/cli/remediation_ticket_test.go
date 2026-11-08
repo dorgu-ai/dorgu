@@ -126,7 +126,7 @@ func TestApproveRefusesATicketForAnotherWorkloadOrAStaleOne(t *testing.T) {
 		want   string
 	}{
 		"another workload": {func(ticket map[string]any) { ticket["workloadUID"] = "uid-someone-else" }, "not the workload the ticket was issued for"},
-		"changed since":    {func(ticket map[string]any) { ticket["observedResourceVersion"] = "99" }, "changed since the ticket"},
+		"changed since":    {func(ticket map[string]any) { ticket["observedGeneration"] = 99 }, "spec changed since the ticket"},
 		"unbound":          {func(ticket map[string]any) { ticket["workloadUID"] = "" }, "not bound to a workload"},
 		"no container":     {func(ticket map[string]any) { ticket["container"] = "" }, "not bound to a workload"},
 		"other container":  {func(ticket map[string]any) { ticket["container"] = "sidecar" }, "ticket names"},

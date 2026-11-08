@@ -29,7 +29,21 @@ and patches exactly the ticket; `heal` needs an approved remediation and the sam
 (CLI-03). Before patching, the CLI re-reads the live Deployment, re-detects ownership from it (Helm, Argo CD, Flux,
 kustomize stamps, a controller ownerReference, GitOps field managers) and refuses a Deployment the proposal called
 unmanaged (CLI-01, CLI-06), refuses a record that names no workload (CLI-02), and requires the Deployment's UID and
-resourceVersion to match the ticket.
+`metadata.generation` to match the ticket (generation, not resourceVersion: status and scale writes move the latter
+and change nothing the ticket would patch).
+
+Review fixes (B5 fix round): the CLI ignores any ticket that was on the action before its own approval write, and
+accepts one only if it was issued (`status.applyTicket.issuedAt`, operator-set) at or after the `status.approvedAt` the
+server holds, with at most ten minutes of life, in phase `Ticketed` or the `Applying` the operator moves to in the same
+pass. Immediately before it writes, it re-reads the RemediationAction (same ticket, unexpired, still `Ticketed` or
+`Applying`), the Deployment (same UID and generation) and the ClusterPersona (not `observe`; unreadable refuses). The
+footprint strip removes only the exact `dorgu` Update entry it created, never another manager's.
+
+Known P1 gap, not closed here: a client with `remediationactions/status` can write a whole ticket and its history, and
+the CLI cannot tell it from the operator's. The checks above make a forgery harder (it has to be issued after the
+approval, short-lived, bound to the live UID and generation, and pass the observe-mode check) but not impossible.
+Closing it is P2 task 2.5: an admission policy that lets only the operator ServiceAccount write the ticket and the
+phases after approval (maps to the ID-01 scenarios, open until CP2).
 
 CLI-04 is blocked for the scenario as written: an approved action that holds no ticket is not applied. It is not an
 identity binding. The protected-context guard is still a name match, and a ticket does not say which context the

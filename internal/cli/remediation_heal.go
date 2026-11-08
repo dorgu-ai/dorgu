@@ -81,6 +81,8 @@ type deploymentSummary struct {
 	// the read. An apply ticket is bound to both.
 	UID             string
 	ResourceVersion string
+	// Generation is metadata.generation, which moves only when the spec does.
+	Generation int64
 
 	// Annotations, OwnerReferences and Managers are ownership evidence: the
 	// CLI re-detects ownership from the live object instead of trusting the
@@ -509,6 +511,7 @@ type deploymentJSON struct {
 		Name            string            `json:"name"`
 		UID             string            `json:"uid"`
 		ResourceVersion string            `json:"resourceVersion"`
+		Generation      int64             `json:"generation"`
 		Labels          map[string]string `json:"labels"`
 		Annotations     map[string]string `json:"annotations"`
 		OwnerReferences []ownerReference  `json:"ownerReferences"`
@@ -546,6 +549,7 @@ func (d deploymentJSON) toSummary() deploymentSummary {
 		SelectorLabels:  d.Spec.Selector.MatchLabels,
 		UID:             d.Metadata.UID,
 		ResourceVersion: d.Metadata.ResourceVersion,
+		Generation:      d.Metadata.Generation,
 		Annotations:     d.Metadata.Annotations,
 		OwnerReferences: d.Metadata.OwnerReferences,
 		Managers:        managers,
@@ -749,7 +753,13 @@ func printUnmanagedCaveat(w io.Writer) {
 // The record write lives here rather than at the two call sites so neither can
 // forget it. `heal` used to patch the workload and write nothing back, leaving
 // the CRD saying `Pending` over a cluster that had already changed (CR-02).
-func executeHeal(ctx context.Context, r *remediationFull, exec *healExecution, opts healOptions, in io.Reader, w io.Writer) error {
+//
+// beforePatch, when set, runs after the confirmation and immediately before the
+// write; an error from it refuses the patch.
+func executeHeal(
+	ctx context.Context, r *remediationFull, exec *healExecution, opts healOptions, in io.Reader, w io.Writer,
+	beforePatch func(context.Context) error,
+) error {
 	fmt.Fprintln(w, "\nWorkload heal plan:")
 	fmt.Fprintf(w, "  Namespace:  %s\n", exec.Namespace)
 	fmt.Fprintf(w, "  Deployment: %s\n", exec.Deployment)
@@ -767,6 +777,14 @@ func executeHeal(ctx context.Context, r *remediationFull, exec *healExecution, o
 		if !ok {
 			output.Info("Heal skipped by user; the RemediationAction status is unchanged.")
 			return nil
+		}
+	}
+
+	if beforePatch != nil {
+		if err := beforePatch(ctx); err != nil {
+			output.Error(fmt.Sprintf("Refusing to patch: %v", err))
+			output.Info("Nothing was applied to the workload.")
+			return errSilent
 		}
 	}
 
@@ -811,18 +829,17 @@ func executeHeal(ctx context.Context, r *remediationFull, exec *healExecution, o
 func healWithTicket(
 	ctx context.Context, r *remediationFull, exec *healExecution, opts healOptions, in io.Reader, w io.Writer,
 ) error {
-	ticketed := r
-	if r.Status.ApplyTicket == nil {
-		var err error
-		ticketed, err = waitForTicket(ctx, opts.kubeconfig, r.Metadata.Name, r.Metadata.Namespace, w)
-		if err != nil {
-			printTicketRefusal(w, err)
-			var refused *gateRefusedError
-			if errors.As(err, &refused) {
-				return withExitCode(ExitDeclined, errSilent)
-			}
-			return errSilent
+	// The ticket is always read fresh, after the approval: whatever the RemediationAction
+	// held when this command started (r) may be a ticket someone wrote onto a Pending
+	// action, and is never applied (F2).
+	ticketed, err := waitForTicket(ctx, opts.kubeconfig, r.Metadata.Name, r.Metadata.Namespace, w)
+	if err != nil {
+		printTicketRefusal(w, err)
+		var refused *gateRefusedError
+		if errors.As(err, &refused) {
+			return withExitCode(ExitDeclined, errSilent)
 		}
+		return errSilent
 	}
 
 	bound, err := bindTicket(ctx, opts.kubeconfig, ticketed.Status.ApplyTicket, exec, time.Now())
@@ -845,7 +862,9 @@ func healWithTicket(
 	if narrowed := ticketNarrowed(exec.Change, bound.Change); narrowed {
 		output.Info("The operator's gate re-checked this on the live cluster and applied a different change than the preview; the ticket is what is applied.")
 	}
-	return executeHeal(ctx, ticketed, bound, opts, in, w)
+	return executeHeal(ctx, ticketed, bound, opts, in, w, func(ctx context.Context) error {
+		return reverifyBeforePatch(ctx, opts.kubeconfig, ticketed, bound)
+	})
 }
 
 // ticketNarrowed reports whether the ticket's change differs from the preview the

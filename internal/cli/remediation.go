@@ -756,7 +756,7 @@ func newRemediationApproveCmd() *cobra.Command {
 		Long: `Approve a RemediationAction, transitioning it from Pending to Approved.
 The operator then re-checks the plan against the cluster as it is now. If it
 clears, it writes an apply ticket (the one change that may be applied, bound to
-the live Deployment's UID and resourceVersion, valid for a few minutes), applies
+the live Deployment's UID and generation, valid for ten minutes), applies
 the persona update and monitors health. If it refuses, nothing is applied and
 this command shows the refusal and its reason.
 
@@ -766,9 +766,13 @@ After approval the CLI waits up to 30 seconds for that ticket, then heals the
 running workload with exactly the ticket: it translates the ticketed
 persona-update resource change (memory/CPU limits/requests) into an equivalent
 strategic-merge patch on the Deployment the ticket names and applies it with your
-credentials, so the pod recovers. It refuses without a ticket, with an expired
-one, or if the Deployment is not the one the ticket was issued for or has changed
-since; it never falls back to patching from the plan. This needs an operator that
+credentials, so the pod recovers. It uses only a ticket the operator issued
+after your approval was recorded (one already sitting on the action is ignored),
+re-reads the action, the Deployment and the cluster's self-healing mode right
+before it writes, and refuses without a ticket, with an expired one, if the
+Deployment is not the one the ticket was issued for or its spec has changed
+since, or if the cluster is in observe mode; it never falls back to patching from
+the plan. This needs an operator that
 issues tickets (v0.13.0 or newer). The operator stays advisory and never writes
 workloads. Use --no-heal to only patch the RemediationAction status.
 
@@ -1095,7 +1099,7 @@ This is run automatically by 'approve' (unless --no-heal); use it to re-run the
 workload sync on its own (e.g. after --no-heal, or if a previous heal failed).
 It needs an approved remediation and applies the operator's apply ticket, not the
 plan: a Pending remediation is refused (approve it first), and so is one whose
-ticket is missing or expired.
+ticket is missing or expired, or was issued before the approval on record.
 The operator never writes workloads: this is the CLI (your tool) closing the
 loop. Non-resource steps (restart/scale/manual) are printed as advisory, not
 executed.

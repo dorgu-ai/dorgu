@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -246,6 +247,18 @@ type fakeKubectlResponses struct {
 	// changed and the record could not be written (CR-02), and distinguishes a
 	// flat refusal from a Conflict, which is retried.
 	statusPatchError string
+
+	// remSequence, when set, serves successive `get remediationaction` calls in
+	// order (the last one repeats), instead of rem / remAfterApprove. It drives the
+	// "the RemediationAction changed between the ticket and the patch" cases. The
+	// reads are: 1 the preflight fetch, 2 the first poll after the approval write,
+	// then one more per poll; the last read before the patch is the re-read the CLI
+	// makes immediately before it writes.
+	remSequence []string
+
+	// clusterPersona is what `get clusterpersona` returns; the default is a list
+	// with none, which is the cluster with no policy object (propose).
+	clusterPersona string
 }
 
 // writeFakeKubectlDispatch installs a fake kubectl on PATH that dispatches by
@@ -264,7 +277,13 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 			}
 		case "Approved", "Ticketed", "Applying", "Verifying", "Completed":
 			if !hasTicket(r.rem) {
-				r.rem = withTicket(t, r.rem, phase)
+				// The cooperative operator ticketed an approval it has processed: an
+				// Approved action it has not yet answered holds no ticket.
+				ticketPhase := phase
+				if phase == "Approved" {
+					ticketPhase = "Ticketed"
+				}
+				r.rem = withTicket(t, r.rem, ticketPhase)
 			}
 		}
 	}
@@ -279,6 +298,17 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 	remFile := write("rem.json", r.rem)
 	remApprovedFile := write("rem-approved.json", r.remAfterApprove)
 	personaFile := write("persona.json", r.persona)
+	clusterPersonaDoc := r.clusterPersona
+	if clusterPersonaDoc == "" {
+		clusterPersonaDoc = `{"items":[]}`
+	}
+	clusterPersonaFile := write("clusterpersona.json", clusterPersonaDoc)
+	seqDir := filepath.Join(dir, "seq")
+	require.NoError(t, os.MkdirAll(seqDir, 0o700))
+	for i, doc := range r.remSequence {
+		write(filepath.Join("seq", fmt.Sprintf("%d.json", i+1)), doc)
+	}
+	seqCount := len(r.remSequence)
 	deployFile := write("deploy.json", r.deployment)
 	afterPatchFile := write("deploy-after-patch.json", r.deploymentAfterPatch)
 	afterStripFile := write("deploy-after-strip.json", r.deploymentAfterStrip)
@@ -310,6 +340,7 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"    remediationaction|remediationactions) [ -z \"$kind\" ] && kind=rem ;;\n" +
 		"    applicationpersona|applicationpersonas) [ -z \"$kind\" ] && kind=persona ;;\n" +
 		"    deployment|deployments|deploy) [ -z \"$kind\" ] && kind=deploy ;;\n" +
+		"    clusterpersona|clusterpersonas) [ -z \"$kind\" ] && kind=cp ;;\n" +
 		"  esac\n" +
 		"done\n" +
 		"if [ \"$mode\" = patch ]; then echo \"$@\" >> " + patchLog + "\n" +
@@ -328,8 +359,14 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"  echo patched; exit 0; fi\n" +
 		"if [ \"$mode\" = get ]; then\n" +
 		"  case \"$kind\" in\n" +
+		"    cp) cat " + clusterPersonaFile + " ;;\n" +
 		"    rem)\n" +
-		"      if [ -f " + filepath.Join(dir, "approved") + " ] && [ -s " + remApprovedFile + " ]; then cat " + remApprovedFile + "\n" +
+		"      if [ " + fmt.Sprint(seqCount) + " -gt 0 ]; then\n" +
+		"        n=0; [ -f " + filepath.Join(dir, "seq.n") + " ] && n=$(cat " + filepath.Join(dir, "seq.n") + ")\n" +
+		"        n=$((n+1)); echo $n > " + filepath.Join(dir, "seq.n") + "\n" +
+		"        [ $n -gt " + fmt.Sprint(seqCount) + " ] && n=" + fmt.Sprint(seqCount) + "\n" +
+		"        cat " + seqDir + "/$n.json\n" +
+		"      elif [ -f " + filepath.Join(dir, "approved") + " ] && [ -s " + remApprovedFile + " ]; then cat " + remApprovedFile + "\n" +
 		"      else cat " + remFile + "; fi ;;\n" +
 		"    persona) cat " + personaFile + " ;;\n" +
 		"    deploy)\n" +

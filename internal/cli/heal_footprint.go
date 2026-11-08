@@ -75,17 +75,29 @@ type deploymentFootprint struct {
 	Entries         []footprintEntry
 }
 
-// footprintEntry is one managedFields entry: the manager name Dorgu matches on,
-// and the untouched JSON it came in as.
+// footprintEntry is one managedFields entry: what Dorgu matches on (the manager
+// name, the operation, the subresource), and the untouched JSON it came in as.
 type footprintEntry struct {
-	Manager string
-	Raw     json.RawMessage
+	Manager     string
+	Operation   string
+	Subresource string
+	Raw         json.RawMessage
 }
 
-// has reports whether any entry belongs to the given field manager.
+// isFootprintOf reports whether the entry is the one `kubectl patch
+// --field-manager <manager>` leaves: that exact manager name (a different case
+// or a longer name is another manager), an Update operation (a patch is never an
+// Apply), and the main resource rather than a subresource. Anything else belongs
+// to somebody else, and rewriting another manager's ownership record is a far
+// worse bug than the footprint being removed.
+func (e footprintEntry) isFootprintOf(manager string) bool {
+	return e.Manager == manager && e.Operation == "Update" && e.Subresource == ""
+}
+
+// has reports whether any entry is the given field manager's footprint.
 func (f deploymentFootprint) has(manager string) bool {
 	for _, e := range f.Entries {
-		if strings.EqualFold(e.Manager, manager) {
+		if e.isFootprintOf(manager) {
 			return true
 		}
 	}
@@ -111,18 +123,22 @@ func parseDeploymentFootprint(raw []byte) (deploymentFootprint, error) {
 	}
 	for _, raw := range obj.Metadata.ManagedFields {
 		var head struct {
-			Manager string `json:"manager"`
+			Manager     string `json:"manager"`
+			Operation   string `json:"operation"`
+			Subresource string `json:"subresource"`
 		}
 		if err := json.Unmarshal(raw, &head); err != nil {
 			return deploymentFootprint{}, fmt.Errorf("parse managedFields entry: %w", err)
 		}
-		out.Entries = append(out.Entries, footprintEntry{Manager: head.Manager, Raw: raw})
+		out.Entries = append(out.Entries, footprintEntry{
+			Manager: head.Manager, Operation: head.Operation, Subresource: head.Subresource, Raw: raw,
+		})
 	}
 	return out, nil
 }
 
-// buildFootprintStripPatch builds the merge patch that removes every
-// managedFields entry belonging to manager and leaves the rest untouched.
+// buildFootprintStripPatch builds the merge patch that removes the managedFields
+// entry (see isFootprintOf) belonging to manager and leaves the rest untouched.
 // It reports false when there is nothing belonging to that manager, which is
 // the normal outcome on a workload Dorgu has not patched.
 //
@@ -134,7 +150,7 @@ func buildFootprintStripPatch(f deploymentFootprint, manager string) (string, bo
 	kept := make([]json.RawMessage, 0, len(f.Entries))
 	removed := false
 	for _, e := range f.Entries {
-		if strings.EqualFold(e.Manager, manager) {
+		if e.isFootprintOf(manager) {
 			removed = true
 			continue
 		}

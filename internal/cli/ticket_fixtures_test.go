@@ -15,7 +15,17 @@ import (
 const (
 	fixtureDeploymentUID = "uid-api-server"
 	fixtureDeploymentRV  = "100"
+
+	// fixtureGeneration is metadata.generation of the fixture Deployments, and the
+	// observedGeneration of the fixture tickets: the spec has not moved.
+	fixtureGeneration = 3
 )
+
+// fixtureApprovedAt is when the fixtures say the approval was recorded. Tickets
+// are issued after it, as the operator's are.
+func fixtureApprovedAt() time.Time {
+	return time.Now().Add(-2 * time.Second).UTC().Truncate(time.Second)
+}
 
 // ticketPatchFor renders the persona-shaped patch a ticket would carry for the
 // change the remediation plans: what the operator's gate would have cleared on an
@@ -51,6 +61,9 @@ func withTicket(t *testing.T, fixture, phase string, mutate ...func(ticket map[s
 		status = map[string]any{}
 	}
 	status["phase"] = phase
+	if _, ok := status["approvedAt"]; !ok {
+		status["approvedAt"] = fixtureApprovedAt().Format(time.RFC3339)
+	}
 	container := "api-server"
 	if rem.Spec.WorkloadRef != nil && rem.Spec.WorkloadRef.Container != "" {
 		container = rem.Spec.WorkloadRef.Container
@@ -60,6 +73,8 @@ func withTicket(t *testing.T, fixture, phase string, mutate ...func(ticket map[s
 		"container":               container,
 		"patch":                   ticketPatchFor(t, &rem),
 		"observedResourceVersion": fixtureDeploymentRV,
+		"observedGeneration":      fixtureGeneration,
+		"issuedAt":                time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano),
 		"expiresAt":               time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339),
 		"verdicts":                []any{map[string]any{"stage": "Guardrails", "guardrail": "blast-radius", "verdict": "pass"}},
 	}
@@ -136,6 +151,9 @@ func withIdentity(t *testing.T, raw string) string {
 		}
 		if _, ok := meta["resourceVersion"]; !ok {
 			meta["resourceVersion"] = fixtureDeploymentRV
+		}
+		if _, ok := meta["generation"]; !ok {
+			meta["generation"] = fixtureGeneration
 		}
 	}
 	if items, ok := doc["items"].([]any); ok {

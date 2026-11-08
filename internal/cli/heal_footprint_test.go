@@ -47,7 +47,7 @@ func TestParseDeploymentFootprint(t *testing.T) {
 	require.Len(t, got.Entries, 3)
 	assert.Equal(t, "kubectl-client-side-apply", got.Entries[0].Manager)
 	assert.True(t, got.has("dorgu"))
-	assert.True(t, got.has("DORGU"), "manager matching is case-insensitive")
+	assert.False(t, got.has("DORGU"), "manager matching is exact, case included (F5)")
 	assert.False(t, got.has("helm"))
 }
 
