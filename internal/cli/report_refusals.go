@@ -44,24 +44,28 @@ func actionsByIncident(all []reportRA) map[string][]string {
 	return idx
 }
 
-// ownFixPhases are the phases of a RemediationAction that is the incident's own fix
-// at work or done: in flight (Pending to Verifying), or finished without going
-// wrong (Completed, Acknowledged, RolledBack). A Failed, Rejected or Expired action is
-// not in flight, so a refusal standing beside one is a real one.
-var ownFixPhases = []string{"Pending", "Approved", "Ticketed", "Applying", "Verifying", "Completed", "Acknowledged", "RolledBack"}
+// ownFixPhases are the phases in which a RemediationAction is the incident's own
+// fix, pending or in flight. A finished one (Completed, Acknowledged, RolledBack,
+// Failed, Rejected, Expired) is not: the incident can be re-proposed after it, and a
+// refusal standing beside it is then a real one.
+var ownFixPhases = []string{"Pending", "Approved", "Ticketed", "Applying", "Verifying"}
 
 // isOwnFixInFlight reports whether a standing Guardrails_Concurrent refusal is the
-// incident's own fix and not another incident's. The gate answers a repeat proposal
-// with Guardrails/concurrent for as long as the incident's own RemediationAction is
-// Approved, Ticketed, Applying or Verifying (and an operator before the fix left the
-// condition standing after the heal). Nothing is refused then: the proposal exists.
-// The same holds once the incident is resolved. With no RemediationAction of its own
-// the persona is held by another incident, and that stays a refusal.
+// incident's own proposal and not another incident's fix holding the persona. The
+// gate answers a repeat proposal with Guardrails/concurrent for as long as the
+// incident's own RemediationAction is in flight (an operator before the fix left the
+// condition standing then), and nothing is refused: the proposal exists. The same
+// holds once the incident is Resolved (the operator clears the condition, an older
+// one did not). Only those two cases. A resolution record that is not Resolved
+// (a rollback leaves the incident open and re-proposable) and a finished action of
+// its own, however old, do not make a real refusal a deferral. With no pending or
+// in-flight action of its own the persona is held by another incident, and that
+// stays a refusal.
 func isOwnFixInFlight(stage, guardrail string, inc *reportIncident, own map[string][]string) bool {
 	if stage != "Guardrails" || guardrail != "Concurrent" {
 		return false
 	}
-	if inc.Status.Phase == "Resolved" || inc.Spec.Resolution != nil {
+	if inc.Status.Phase == "Resolved" {
 		return true
 	}
 	for _, phase := range own[inc.Metadata.Namespace+"/"+inc.Metadata.Name] {

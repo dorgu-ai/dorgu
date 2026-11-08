@@ -37,20 +37,8 @@ func TestN1_AConcurrentRefusalWhileTheIncidentsOwnActionIsInFlightIsDeferred(t *
 	}
 }
 
-func TestN1_AConcurrentRefusalOnAnIncidentWithACompletedActionIsDeferred(t *testing.T) {
-	in := concurrentRefused(t, raOpts{name: "ra-done", phase: "Completed", created: 2 * time.Hour})
-
-	q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
-
-	assert.Empty(t, q6.Rows, "a stale condition must not count against an incident that has been healed")
-	assert.Equal(t, 1, q6.Deferred)
-}
-
 func TestN1_AConcurrentRefusalOnAResolvedIncidentIsDeferred(t *testing.T) {
-	in := reportInputs{Incidents: []reportIncident{mustIncident(t,
-		incidentJSON("inc-1", 3*time.Hour, 3*time.Hour, "resolved", cond("ProposalRefused", "True", "Guardrails_Concurrent", time.Hour)))}}
-
-	q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 := buildReport(resolvedConcurrentIncident(t), reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 	assert.Empty(t, q6.Rows)
 	assert.Equal(t, 1, q6.Deferred)

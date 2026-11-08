@@ -383,7 +383,7 @@ A local KPI summary computed from the cluster's own RemediationActions, Incident
 - the refusal mix: what the gate refused at proposal, approval and apply, by stage and reason, plus what the CLI itself declined (those are Events, which Kubernetes keeps for about an hour by default, so older declines are not counted);
 - the clamps the guardrails applied before you saw a plan.
 
-Where there is nothing to measure it says `no data`, never `0`. KPIs a cluster cannot report (installs, partners, retention) are listed as not measurable. `--json` carries `"schema": "dorgu.report/v1"`.
+Where there is nothing to measure it says `no data`, never `0`. KPIs a cluster cannot report (installs, partners, retention) are listed as not measurable. `--json` carries `"schema": "dorgu.report/v1"`. The `cluster` section is context only and nothing in the report is computed from it: `application_personas` is `null` (never `0`) when the personas could not be read, and `self_healing_modes` is `null` or empty when the ClusterPersonas could not be read or declare no mode.
 
 ### Heal separately
 

@@ -45,6 +45,11 @@ type reportWindow struct {
 	End   string `json:"end"`
 }
 
+// reportCluster is context only: no number in the report is computed from it.
+// application_personas is null when the ApplicationPersonas could not be read
+// (never 0, which would claim the cluster has none), and self_healing_modes is null
+// or empty when the ClusterPersonas could not be read or declare none. They are kept
+// because a design partner pasting the report is asked what mode the cluster runs in.
 type reportCluster struct {
 	Context         string   `json:"context"`
 	Namespace       string   `json:"namespace"`
