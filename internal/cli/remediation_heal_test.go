@@ -210,10 +210,20 @@ func TestParseDeploymentList(t *testing.T) {
 
 // fakeKubectlResponses configures the dispatching fake kubectl.
 type fakeKubectlResponses struct {
-	context    string // `config current-context`
-	rem        string // get remediationaction
-	persona    string // get applicationpersona
-	deployment string // get deployment (list or object)
+	context string // `config current-context`
+	rem     string // get remediationaction
+	// noTicket turns off the cooperative operator the fixtures otherwise simulate:
+	// by default a Pending remediation is ticketed once approved, an already
+	// approved one carries its ticket, and the Deployments carry a UID and a
+	// resourceVersion. Tests of what happens WITHOUT a ticket set it.
+	noTicket bool
+
+	// remAfterApprove, when set, is served by `get remediationaction` once the
+	// approval status patch has landed: the operator's answer (a ticket, or a
+	// refusal) to the approval.
+	remAfterApprove string
+	persona         string // get applicationpersona
+	deployment      string // get deployment (list or object)
 
 	// failDeploymentPatch makes `kubectl patch deployment` exit non-zero, the
 	// way an RBAC denial or an admission webhook rejection would.
@@ -243,6 +253,21 @@ type fakeKubectlResponses struct {
 // Cannot be used with t.Parallel.
 func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog string) {
 	t.Helper()
+	if !r.noTicket {
+		r.deployment = withIdentity(t, r.deployment)
+		r.deploymentAfterPatch = withIdentity(t, r.deploymentAfterPatch)
+		r.deploymentAfterStrip = withIdentity(t, r.deploymentAfterStrip)
+		switch phase := statusPhase(r.rem); phase {
+		case "Pending":
+			if r.remAfterApprove == "" {
+				r.remAfterApprove = withTicket(t, r.rem, "Applying")
+			}
+		case "Approved", "Ticketed", "Applying", "Verifying", "Completed":
+			if !hasTicket(r.rem) {
+				r.rem = withTicket(t, r.rem, phase)
+			}
+		}
+	}
 	dir := t.TempDir()
 
 	write := func(base, content string) string {
@@ -252,6 +277,7 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 	}
 	ctxFile := write("context.txt", r.context)
 	remFile := write("rem.json", r.rem)
+	remApprovedFile := write("rem-approved.json", r.remAfterApprove)
 	personaFile := write("persona.json", r.persona)
 	deployFile := write("deploy.json", r.deployment)
 	afterPatchFile := write("deploy-after-patch.json", r.deploymentAfterPatch)
@@ -294,6 +320,7 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"      echo patched; exit 0 ;;\n" +
 		"    *--subresource\\ status*)\n" +
 		"      if [ " + statusFails + " = 1 ]; then cat " + statusErrFile + " >&2; exit 1; fi\n" +
+		"      touch " + filepath.Join(dir, "approved") + "\n" +
 		"      echo patched; exit 0 ;;\n" +
 		"    *) touch " + filepath.Join(dir, "patched") + " ;;\n" +
 		"  esac\n" +
@@ -301,7 +328,9 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"  echo patched; exit 0; fi\n" +
 		"if [ \"$mode\" = get ]; then\n" +
 		"  case \"$kind\" in\n" +
-		"    rem) cat " + remFile + " ;;\n" +
+		"    rem)\n" +
+		"      if [ -f " + filepath.Join(dir, "approved") + " ] && [ -s " + remApprovedFile + " ]; then cat " + remApprovedFile + "\n" +
+		"      else cat " + remFile + "; fi ;;\n" +
 		"    persona) cat " + personaFile + " ;;\n" +
 		"    deploy)\n" +
 		"      if [ -f " + filepath.Join(dir, "stripped") + " ] && [ -s " + afterStripFile + " ]; then cat " + afterStripFile + "\n" +
@@ -483,7 +512,7 @@ const deploymentObjectFixture = `{"metadata":{"name":"custom-api"},"spec":{"temp
 // refused (see remediation_ownership_test.go).
 func TestRunRemediationHealExplicitWorkloadAndContainer(t *testing.T) {
 	approved := strings.Replace(
-		withObservedWorkload(t, operatorRemediationFixture, "custom-api", "main"),
+		withObservedWorkload(t, operatorRemediationFixture, "custom-api", "sidecar"),
 		`"phase":"Pending"`, `"phase":"Approved"`, 1)
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:    "kind-dorgu-spike",
@@ -541,7 +570,7 @@ func TestHealWorkloadDeclinedConfirmation(t *testing.T) {
 
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:    "kind-dorgu-spike",
-		rem:        operatorRemediationFixture,
+		rem:        approvedRemediation(),
 		persona:    personaFixture,
 		deployment: deploymentListFixture,
 	})

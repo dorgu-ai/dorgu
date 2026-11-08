@@ -15,16 +15,26 @@ checkpoint plan are in the harness plan, phase P0.
 
 | ID | Attack | Safe outcome | Green by | Status |
 |---|---|---|---|---|
-| CLI-01 | A RemediationAction claims `workloadRef.managedBy: unmanaged` for a Deployment that Helm owns | Actuator reads ownership from the live object and refuses | CP3 (stopgap P1) | Open |
-| CLI-02 | `workloadRef.name` empty with `managedBy: unmanaged`, so `--workload` or the fallback chain picks any Deployment | Refused: no workload's ownership was checked | CP3 (stopgap P1) | Open |
-| CLI-03 | `dorgu remediation heal` on a RemediationAction with an empty `status.phase` | Refused: no ticket | CP3 | Open |
-| CLI-04 | The production kube context is renamed so it no longer matches `DORGU_PROTECTED_CONTEXTS` | Safety does not depend on context names (ticket + identity) | CP3 | Open |
+| CLI-01 | A RemediationAction claims `workloadRef.managedBy: unmanaged` for a Deployment that Helm owns | Actuator reads ownership from the live object and refuses | P1 B5 (stopgap) | **Blocked** |
+| CLI-02 | `workloadRef.name` empty with `managedBy: unmanaged`, so `--workload` or the fallback chain picks any Deployment | Refused: no workload's ownership was checked | P1 B5 (stopgap) | **Blocked** |
+| CLI-03 | `dorgu remediation heal` on a RemediationAction with an empty `status.phase` | Refused: no ticket | P1 B5 | **Blocked** |
+| CLI-04 | The production kube context is renamed so it no longer matches `DORGU_PROTECTED_CONTEXTS` | Safety does not depend on context names (ticket + identity) | P1 B5 (partial, see below) | **Blocked** |
 | CLI-05 | A kubectl flag value equal to a verb name (`kubectl -n logs delete deployment/foo`) | Classified as a write; never printed as runnable on an owned workload | CP0 (P0 task 0.11) | **Blocked** |
-| CLI-06 | The workload was unmanaged at proposal time and Argo CD adopted it before the heal | Actuator re-checks ownership live and refuses | CP3 | Open |
+| CLI-06 | The workload was unmanaged at proposal time and Argo CD adopted it before the heal | Actuator re-checks ownership live and refuses | P1 B5 (stopgap) | **Blocked** |
 
-Current: **1/6 blocked**.
+Current: **6/6 blocked** (was 1/6).
 
-Why most are open: the CLI is the actuator, and every check it runs is advisory to anything that does not go through
-it (see `ARCHITECTURE_CLI.md` §11 in the docs repo). The harness moves the decision into the operator, which writes
-an apply ticket bound to the workload UID, the patch and the approver; the CLI then executes only a valid ticket.
-That is phase P3. P1 adds stopgaps for CLI-01 and CLI-02 (live ownership re-detection, refusing an unnamed workload).
+What closed them (P1 B5, task 1.4): `approve` sets Approved, waits up to 30 s for the operator's `status.applyTicket`,
+and patches exactly the ticket; `heal` needs an approved remediation and the same ticket, and refuses a Pending one
+(CLI-03). Before patching, the CLI re-reads the live Deployment, re-detects ownership from it (Helm, Argo CD, Flux,
+kustomize stamps, a controller ownerReference, GitOps field managers) and refuses a Deployment the proposal called
+unmanaged (CLI-01, CLI-06), refuses a record that names no workload (CLI-02), and requires the Deployment's UID and
+resourceVersion to match the ticket.
+
+CLI-04 is blocked for the scenario as written: an approved action that holds no ticket is not applied. It is not an
+identity binding. The protected-context guard is still a name match, and a ticket does not say which context the
+user should be writing to, so a renamed production context with a valid ticket still heals. That is phase P3's
+ticket-plus-identity work, and this row says "blocked" only for the no-ticket case the test asserts.
+
+The CLI-side ownership re-detection is a stopgap and duplicates a subset of the operator's detection on purpose; the
+operator's gate owns the decision, and the CLI no longer trusts the record alone.

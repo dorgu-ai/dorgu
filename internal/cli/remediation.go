@@ -21,6 +21,10 @@ import (
 // remediationCmdTimeout is the maximum time to wait for each kubectl call.
 const remediationCmdTimeout = 30 * time.Second
 
+// healCmdTimeout bounds a whole approve or heal: the kubectl calls plus the wait
+// for the operator's apply ticket.
+const healCmdTimeout = remediationCmdTimeout + 30*time.Second
+
 // maxStepCommandLength and stepCommandForbidden mirror the operator's
 // SanitizeStepCommand (dorgu-operator api/v1). They are duplicated rather than
 // imported because the CLI does not depend on the operator module, and because
@@ -143,6 +147,11 @@ type remediationFull struct {
 		ApprovedAt   string                  `json:"approvedAt"`
 		CurrentStep  int32                   `json:"currentStep"`
 		StepStatuses []remediationStepStatus `json:"stepStatuses"`
+		// ApplyTicket is the operator's clearance to apply one change, written
+		// when its gate re-checked the approval on live state. The heal applies
+		// exactly this.
+		ApplyTicket *applyTicket      `json:"applyTicket"`
+		Conditions  []statusCondition `json:"conditions"`
 	} `json:"status"`
 }
 
@@ -745,14 +754,22 @@ func newRemediationApproveCmd() *cobra.Command {
 		Use:   "approve [name]",
 		Short: "Approve a pending remediation",
 		Long: `Approve a RemediationAction, transitioning it from Pending to Approved.
-The operator will then apply the proposed patch and monitor health.
+The operator then re-checks the plan against the cluster as it is now. If it
+clears, it writes an apply ticket (the one change that may be applied, bound to
+the live Deployment's UID and resourceVersion, valid for a few minutes), applies
+the persona update and monitors health. If it refuses, nothing is applied and
+this command shows the refusal and its reason.
 
 Use --next to approve the oldest pending remediation without naming it.
 
-After approval the CLI heals the running workload: it translates the approved
+After approval the CLI waits up to 30 seconds for that ticket, then heals the
+running workload with exactly the ticket: it translates the ticketed
 persona-update resource change (memory/CPU limits/requests) into an equivalent
-strategic-merge patch on the matching Deployment and applies it with your
-credentials, so the pod recovers. The operator stays advisory and never writes
+strategic-merge patch on the Deployment the ticket names and applies it with your
+credentials, so the pod recovers. It refuses without a ticket, with an expired
+one, or if the Deployment is not the one the ticket was issued for or has changed
+since; it never falls back to patching from the plan. This needs an operator that
+issues tickets (v0.13.0 or newer). The operator stays advisory and never writes
 workloads. Use --no-heal to only patch the RemediationAction status.
 
 Dorgu only patches a Deployment that nothing else reconciles. If Helm, ArgoCD,
@@ -803,7 +820,7 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), remediationCmdTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), healCmdTimeout)
 	defer cancel()
 
 	var name string
@@ -925,12 +942,19 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := executeHeal(ctx, rem, exec, opts, cmd.InOrStdin(), out); err != nil {
-		// executeHeal has already printed a formatted account of what happened
-		// (a failed record write, for instance, where the workload *was*
-		// patched). Adding "the workload was NOT patched" on top of it would be
-		// the CLI contradicting itself two lines apart.
+	// The operator now re-checks the approval on the live cluster and answers
+	// with a ticket or a refusal. The CLI applies the ticket and nothing else.
+	if err := healWithTicket(ctx, rem, exec, opts, cmd.InOrStdin(), out); err != nil {
+		// healWithTicket and executeHeal have already printed a formatted account
+		// of what happened (a refusal, or a failed record write where the
+		// workload *was* patched). Adding "the workload was NOT patched" on top of
+		// it would be the CLI contradicting itself two lines apart.
 		if errors.Is(err, errSilent) {
+			if ExitCode(err) == ExitError {
+				output.Warn(fmt.Sprintf(
+					"The remediation is Approved but %s/%s was NOT patched; the persona and the workload may now disagree.",
+					exec.Namespace, exec.Deployment))
+			}
 			return err
 		}
 		output.Error(fmt.Sprintf("Workload heal failed: %v", err))
@@ -1069,14 +1093,16 @@ matching Deployment and apply it with your credentials, so the pod recovers.
 
 This is run automatically by 'approve' (unless --no-heal); use it to re-run the
 workload sync on its own (e.g. after --no-heal, or if a previous heal failed).
+It needs an approved remediation and applies the operator's apply ticket, not the
+plan: a Pending remediation is refused (approve it first), and so is one whose
+ticket is missing or expired.
 The operator never writes workloads: this is the CLI (your tool) closing the
 loop. Non-resource steps (restart/scale/manual) are printed as advisory, not
 executed.
 
 Once the patch lands, the RemediationAction is updated to match: a
 WorkloadPatched condition records the Deployment, container and fields that
-changed, and a remediation still Pending is moved to Approved, because healing
-one directly is an approval. If the record cannot be written this exits non-zero
+changed. If the record cannot be written this exits non-zero
 and says so: the cluster and the record disagreeing is not a success.
 
 Only a Deployment that nothing else reconciles is patched. When Helm, ArgoCD,
@@ -1118,7 +1144,7 @@ func runRemediationHeal(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), remediationCmdTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), healCmdTimeout)
 	defer cancel()
 
 	rem, err := fetchRemediation(ctx, kubeconfig, name, namespace)
@@ -1132,17 +1158,18 @@ func runRemediationHeal(cmd *cobra.Command, args []string) error {
 		output.Error(fmt.Sprintf("Remediation is in %s phase; refusing to heal a %s remediation.",
 			rem.Status.Phase, rem.Status.Phase))
 		return errSilent
-	case "Approved", "Applying", "Verifying", "Completed":
-		// Expected: heal (or re-heal) an approved remediation.
+	case "Approved", "Ticketed", "Applying", "Verifying", "Completed":
+		// Expected: heal (or re-heal) an approved remediation, under its ticket.
 	default:
-		// Pending/unset: running heal directly is an implicit approval, and it is
-		// recorded as one once the patch lands (CR-02). The warning used to say
-		// "approve it first to record intent" while recording nothing at all,
-		// which left the CRD claiming nothing had happened to a cluster that had
-		// already changed.
-		output.Warn(fmt.Sprintf(
-			"Remediation is in %s phase; healing it directly is an approval and will be recorded as one.",
+		// Pending or unset: nobody approved it, so the operator's gate never
+		// re-checked it and there is no ticket. Healing used to double as an
+		// approval; with tickets it cannot, because the ticket is the operator's
+		// clearance and only an approval asks for one (CLI-03).
+		output.Error(fmt.Sprintf(
+			"Remediation is in %q phase: it has not been approved, so there is no apply ticket and nothing to heal.",
 			rem.Status.Phase))
+		output.Info(fmt.Sprintf("Approve it first: dorgu remediation approve %s -n %s", name, namespace))
+		return errSilent
 	}
 
 	opts := healOptions{

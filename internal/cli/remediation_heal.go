@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
@@ -75,6 +76,26 @@ type deploymentSummary struct {
 	Containers     []string
 	Labels         map[string]string
 	SelectorLabels map[string]string
+
+	// UID and ResourceVersion identify the object and its state at the moment of
+	// the read. An apply ticket is bound to both.
+	UID             string
+	ResourceVersion string
+
+	// Annotations, OwnerReferences and Managers are ownership evidence: the
+	// CLI re-detects ownership from the live object instead of trusting the
+	// proposal's claim about it (see live_ownership.go).
+	Annotations     map[string]string
+	OwnerReferences []ownerReference
+	Managers        []string
+}
+
+// ownerReference is the part of a metadata.ownerReferences entry ownership
+// detection reads.
+type ownerReference struct {
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Controller bool   `json:"controller"`
 }
 
 // healExecution is a fully resolved, ready-to-apply workload change: the
@@ -454,7 +475,7 @@ func discoverWorkload(ctx context.Context, kubeconfig, ns, appName, workloadFlag
 
 // listDeployments returns every Deployment in the namespace.
 func listDeployments(ctx context.Context, kubeconfig, ns string) ([]deploymentSummary, error) {
-	out, err := kubectlCmd(ctx, kubeconfig, "get", "deployment", "-n", ns, "-o", "json").CombinedOutput()
+	out, err := kubectlCmd(ctx, kubeconfig, "get", "deployment", "-n", ns, "-o", "json", "--show-managed-fields").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list deployments: %s", kubectlErrText(out))
 	}
@@ -462,18 +483,38 @@ func listDeployments(ctx context.Context, kubeconfig, ns string) ([]deploymentSu
 }
 
 func getDeployment(ctx context.Context, kubeconfig, ns, name string) (deploymentSummary, error) {
-	out, err := kubectlCmd(ctx, kubeconfig, "get", "deployment", name, "-n", ns, "-o", "json").CombinedOutput()
+	out, err := kubectlCmd(ctx, kubeconfig, "get", "deployment", name, "-n", ns, "-o", "json", "--show-managed-fields").CombinedOutput()
 	if err != nil {
 		return deploymentSummary{}, fmt.Errorf("failed to get deployment %s: %s", name, kubectlErrText(out))
 	}
-	return parseDeploymentObject(out)
+	d, err := parseDeploymentObject(out)
+	if err == nil {
+		return d, nil
+	}
+	// A list answers too (the same call against a fixture or a proxy): pick the
+	// Deployment by name rather than guess.
+	if all, listErr := parseDeploymentList(out); listErr == nil {
+		for _, candidate := range all {
+			if candidate.Name == name {
+				return candidate, nil
+			}
+		}
+	}
+	return deploymentSummary{}, err
 }
 
 // deploymentJSON is the minimal shape parsed from kubectl output.
 type deploymentJSON struct {
 	Metadata struct {
-		Name   string            `json:"name"`
-		Labels map[string]string `json:"labels"`
+		Name            string            `json:"name"`
+		UID             string            `json:"uid"`
+		ResourceVersion string            `json:"resourceVersion"`
+		Labels          map[string]string `json:"labels"`
+		Annotations     map[string]string `json:"annotations"`
+		OwnerReferences []ownerReference  `json:"ownerReferences"`
+		ManagedFields   []struct {
+			Manager string `json:"manager"`
+		} `json:"managedFields"`
 	} `json:"metadata"`
 	Spec struct {
 		Selector struct {
@@ -494,11 +535,20 @@ func (d deploymentJSON) toSummary() deploymentSummary {
 	for _, c := range d.Spec.Template.Spec.Containers {
 		containers = append(containers, c.Name)
 	}
+	managers := make([]string, 0, len(d.Metadata.ManagedFields))
+	for _, mf := range d.Metadata.ManagedFields {
+		managers = append(managers, mf.Manager)
+	}
 	return deploymentSummary{
-		Name:           d.Metadata.Name,
-		Containers:     containers,
-		Labels:         d.Metadata.Labels,
-		SelectorLabels: d.Spec.Selector.MatchLabels,
+		Name:            d.Metadata.Name,
+		Containers:      containers,
+		Labels:          d.Metadata.Labels,
+		SelectorLabels:  d.Spec.Selector.MatchLabels,
+		UID:             d.Metadata.UID,
+		ResourceVersion: d.Metadata.ResourceVersion,
+		Annotations:     d.Metadata.Annotations,
+		OwnerReferences: d.Metadata.OwnerReferences,
+		Managers:        managers,
 	}
 }
 
@@ -592,6 +642,13 @@ func planHeal(ctx context.Context, r *remediationFull, opts healOptions) (*healE
 	if ref.isOwned() {
 		return nil, &ownedWorkloadError{ref: ref, plan: plan}
 	}
+	// CLI-02: "unmanaged" is a claim about a named workload. A record that names
+	// none checked nobody's ownership, and the fallback chain below would then
+	// pick a Deployment nobody checked.
+	if strings.TrimSpace(ref.Name) == "" {
+		return nil, errors.New("the remediation records no workload name, so no workload's ownership was ever checked; " +
+			"refusing to choose one")
+	}
 
 	ns := workloadNamespace(r)
 	if ns == "" {
@@ -608,6 +665,11 @@ func planHeal(ctx context.Context, r *remediationFull, opts healOptions) (*healE
 	// have to agree.
 	if err := confirmObservedWorkload(ref, deploy.Name); err != nil {
 		return nil, err
+	}
+	// CLI-01, CLI-06: ownership is also read from the live Deployment now, not
+	// only from what the proposal claimed when it was written.
+	if owner := liveOwnerOf(deploy); owner != nil {
+		return nil, &ownedWorkloadError{ref: owner.workloadRef(deploy.Name, ns), plan: plan}
 	}
 	container, err := selectContainer(deploy.Containers, appName, observedContainer(ref, opts.container))
 	if err != nil {
@@ -739,9 +801,88 @@ func executeHeal(ctx context.Context, r *remediationFull, exec *healExecution, o
 	return nil
 }
 
-// healWorkload plans and then applies the workload change. Used by
-// `dorgu remediation heal`, which has nothing to preflight for: the
-// RemediationAction has already been approved.
+// healWithTicket applies the preflight plan under the operator's apply ticket:
+// it waits for the ticket if the remediation does not hold one yet, binds it to
+// the live Deployment, and patches exactly what it says.
+//
+// There is no path here that patches without a ticket. A missing, expired or
+// stale ticket, and an operator that does not issue tickets at all, end in a
+// refusal that says so; the CLI never falls back to patching from the spec.
+func healWithTicket(
+	ctx context.Context, r *remediationFull, exec *healExecution, opts healOptions, in io.Reader, w io.Writer,
+) error {
+	ticketed := r
+	if r.Status.ApplyTicket == nil {
+		var err error
+		ticketed, err = waitForTicket(ctx, opts.kubeconfig, r.Metadata.Name, r.Metadata.Namespace, w)
+		if err != nil {
+			printTicketRefusal(w, err)
+			var refused *gateRefusedError
+			if errors.As(err, &refused) {
+				return withExitCode(ExitDeclined, errSilent)
+			}
+			return errSilent
+		}
+	}
+
+	bound, err := bindTicket(ctx, opts.kubeconfig, ticketed.Status.ApplyTicket, exec, time.Now())
+	if err != nil {
+		var declined *ownedWorkloadError
+		if errors.As(err, &declined) {
+			printOwnedWorkloadRefusal(w, ticketed, declined)
+			return withExitCode(ExitDeclined, errSilent)
+		}
+		var noTicket *noTicketError
+		if errors.As(err, &noTicket) {
+			printTicketRefusal(w, err)
+			return errSilent
+		}
+		output.Error(fmt.Sprintf("Refusing to apply the ticket: %v", err))
+		output.Info("Nothing was applied to the workload.")
+		return errSilent
+	}
+
+	if narrowed := ticketNarrowed(exec.Change, bound.Change); narrowed {
+		output.Info("The operator's gate re-checked this on the live cluster and applied a different change than the preview; the ticket is what is applied.")
+	}
+	return executeHeal(ctx, ticketed, bound, opts, in, w)
+}
+
+// ticketNarrowed reports whether the ticket's change differs from the preview the
+// user saw before approving.
+func ticketNarrowed(preview, ticket *healResourceChange) bool {
+	return !equalStringMaps(preview.limits(), ticket.limits()) || !equalStringMaps(preview.requests(), ticket.requests())
+}
+
+func (h *healResourceChange) limits() map[string]string {
+	if h == nil {
+		return nil
+	}
+	return h.Limits
+}
+
+func (h *healResourceChange) requests() map[string]string {
+	if h == nil {
+		return nil
+	}
+	return h.Requests
+}
+
+func equalStringMaps(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// healWorkload plans and then applies the workload change under the operator's
+// ticket. Used by `dorgu remediation heal`, which has nothing to preflight for:
+// the RemediationAction has already been approved.
 func healWorkload(ctx context.Context, r *remediationFull, opts healOptions, in io.Reader, w io.Writer) error {
 	exec, err := planHeal(ctx, r, opts)
 	if err != nil {
@@ -761,5 +902,5 @@ func healWorkload(ctx context.Context, r *remediationFull, opts healOptions, in 
 		output.Warn("No auto-applicable resource change in this remediation; nothing to heal automatically.")
 		return nil
 	}
-	return executeHeal(ctx, r, exec, opts, in, w)
+	return healWithTicket(ctx, r, exec, opts, in, w)
 }

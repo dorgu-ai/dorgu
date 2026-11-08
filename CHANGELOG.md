@@ -7,6 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Upgrade notes
+
+> **`approve` and `heal` now apply the operator's apply ticket, so the CLI and the operator must be upgraded together (harness P1 B5).** This CLI needs operator v0.13.0 or newer (the one that introduces `status.applyTicket` and the `Ticketed` phase; apply its CRDs). Against an older operator, `approve` approves, waits up to 30 seconds, and refuses with an upgrade hint: it never falls back to patching the Deployment from the plan. If you must stay on the older operator, stay on the older CLI.
+>
+> **`dorgu remediation heal` no longer doubles as an approval.** Healing a `Pending` remediation used to patch the workload and record the approval afterwards. It is now refused (approve it first), because the ticket is the operator's clearance and only an approval asks the operator for one.
+
+### Added
+
+- **`approve` waits for the apply ticket and patches exactly the ticket (harness P1, task 1.4).** After setting Approved it polls for `status.applyTicket` for up to 30 seconds (a spinner on a terminal, one line when piped). It then patches the Deployment with the ticket's change, in the ticket's container, and nothing from the plan; if the ticket differs from the preview it says so. It refuses, patching nothing: without a ticket (including an operator that predates tickets), with an expired ticket, when the operator's gate refused the approval (`GateRefusedAtApproval`: the persisted reason, such as `BlastRadius` or `WorkloadGone`, and its detail are shown, exit code 4), when the Deployment's UID is not the one the ticket names, when its resourceVersion has moved since, and when `--container` disagrees with the ticket. The protected-context refusals are unchanged and still come first.
+
+### Changed
+
+- **Ownership is re-detected from the live Deployment before every patch (stopgap for adversarial CLI-01, CLI-02, CLI-06).** The proposal's `workloadRef.managedBy` is a claim made when the plan was written. The CLI now also refuses a Deployment that carries Helm, Argo CD or Flux stamps, kustomize build metadata, a controller ownerReference, or a GitOps field manager, whatever the record says, and refuses a record that names no workload at all. It re-reads the Deployment again immediately before patching. Adversarial: 1/6 blocked before, 6/6 after (CLI-04 only for the no-ticket case; see `ADVERSARIAL.md`).
+
 ### Fixed
 
 - **`--kubeconfig` help is accurate (F-6).** Every `--kubeconfig` flag said `(default: ~/.kube/config)`. The CLI passes nothing to kubectl when the flag is empty, so kubectl resolves the config itself and `$KUBECONFIG` wins. The help (and the README flag tables) now say that.
