@@ -29,6 +29,49 @@ func isDeferredProposal(stage, guardrail string) bool {
 	return stage == "DedupCooldown" && guardrail == "ActiveRemediation"
 }
 
+// actionsByIncident indexes every RemediationAction's phase by the incident it
+// answers (namespace/name), whatever the window.
+func actionsByIncident(all []reportRA) map[string][]string {
+	idx := map[string][]string{}
+	for i := range all {
+		ns := all[i].Spec.IncidentRef.Namespace
+		if ns == "" {
+			ns = all[i].Metadata.Namespace
+		}
+		key := ns + "/" + all[i].Spec.IncidentRef.Name
+		idx[key] = append(idx[key], all[i].Status.Phase)
+	}
+	return idx
+}
+
+// ownFixPhases are the phases of a RemediationAction that is the incident's own fix
+// at work or done: in flight (Pending to Verifying), or finished without going
+// wrong (Completed, Acknowledged, RolledBack). A Failed, Rejected or Expired action is
+// not in flight, so a refusal standing beside one is a real one.
+var ownFixPhases = []string{"Pending", "Approved", "Ticketed", "Applying", "Verifying", "Completed", "Acknowledged", "RolledBack"}
+
+// isOwnFixInFlight reports whether a standing Guardrails_Concurrent refusal is the
+// incident's own fix and not another incident's. The gate answers a repeat proposal
+// with Guardrails/concurrent for as long as the incident's own RemediationAction is
+// Approved, Ticketed, Applying or Verifying (and an operator before the fix left the
+// condition standing after the heal). Nothing is refused then: the proposal exists.
+// The same holds once the incident is resolved. With no RemediationAction of its own
+// the persona is held by another incident, and that stays a refusal.
+func isOwnFixInFlight(stage, guardrail string, inc *reportIncident, own map[string][]string) bool {
+	if stage != "Guardrails" || guardrail != "Concurrent" {
+		return false
+	}
+	if inc.Status.Phase == "Resolved" || inc.Spec.Resolution != nil {
+		return true
+	}
+	for _, phase := range own[inc.Metadata.Namespace+"/"+inc.Metadata.Name] {
+		if contains(ownFixPhases, phase) {
+			return true
+		}
+	}
+	return false
+}
+
 // collectRefusals gathers the refusals the operator persisted, from CRD state
 // (Events expire, conditions do not):
 //
@@ -39,8 +82,9 @@ func isDeferredProposal(stage, guardrail string) bool {
 //     so the stage is "Ticket".
 //   - proposal: an IncidentMemory ProposalRefused condition that is True, recorded as
 //     <Stage>_<Reason>. Those created no RemediationAction.
-func collectRefusals(ras []*reportRA, incidents []reportIncident, start time.Time) collected {
+func collectRefusals(ras []*reportRA, incidents []reportIncident, allRAs []reportRA, start time.Time) collected {
 	c := collected{rows: map[refusalKey]int{}}
+	ownActions := actionsByIncident(allRAs)
 
 	for _, ra := range ras {
 		refused := ra.condition(conditionGateRefused)
@@ -67,7 +111,7 @@ func collectRefusals(ras []*reportRA, incidents []reportIncident, start time.Tim
 			continue
 		}
 		stage, reason := splitProposalRefusal(cond.Reason)
-		if isDeferredProposal(stage, reason) {
+		if isDeferredProposal(stage, reason) || isOwnFixInFlight(stage, reason, &incidents[i], ownActions) {
 			c.deferred++
 			continue
 		}

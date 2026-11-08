@@ -600,7 +600,7 @@ func applyDeploymentPatch(ctx context.Context, kubeconfig, ns, name, patch strin
 
 // confirmHeal reads a y/N answer from in.
 func confirmHeal(in io.Reader, out io.Writer) (bool, error) {
-	fmt.Fprint(out, "\nApply this change to the workload? [y/N]: ")
+	_, _ = fmt.Fprint(out, "\nApply this change to the workload? [y/N]: ")
 	line, err := bufio.NewReader(in).ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false, fmt.Errorf("failed to read confirmation: %w", err)

@@ -23,7 +23,7 @@ func renderReportJSON(w io.Writer, d reportDoc) error {
 // renderReportText prints the report for a person. Anything with no sample behind
 // it reads "no data", never 0.
 func renderReportText(w io.Writer, d reportDoc) {
-	p := func(format string, args ...any) { fmt.Fprintf(w, format+"\n", args...) }
+	p := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format+"\n", args...) }
 
 	p("Dorgu report (%s)", d.Schema)
 	p("  Window:    %s to %s (last %s)", d.Window.Start, d.Window.End, d.Window.Since)
@@ -33,7 +33,7 @@ func renderReportText(w io.Writer, d reportDoc) {
 	p("  Basis:     RemediationActions and IncidentMemories count by when they were created, a proposal-time refusal by when it")
 	p("             was recorded, Events by their last timestamp. A proposal made before the window and decided inside it is not in it.")
 	for _, e := range d.InputErrors {
-		p("  Unreadable: %s (%s): every section computed from it says no data below, never zero", e.Input, e.Error)
+		p("  Unreadable: %s (%s): %s", e.Input, e.Error, unreadableConsequence(e.Input))
 	}
 	p("")
 
@@ -87,8 +87,8 @@ func sourcesLine(s reportSources) string {
 func renderHealAccounting(w io.Writer, h reportHealAccounting) {
 	fmt.Fprintf(w, "Heal accounting (%d RemediationActions created in the window)\n", h.Total)
 	if h.Total == 0 {
-		fmt.Fprintln(w, "  no data: no RemediationActions were created in the window")
-		fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "  no data: no RemediationActions were created in the window")
+		_, _ = fmt.Fprintln(w)
 		return
 	}
 	fmt.Fprintf(w, "  completed: %d\n", h.Completed)
@@ -97,7 +97,7 @@ func renderHealAccounting(w io.Writer, h reportHealAccounting) {
 		return
 	}
 	fmt.Fprintf(w, "  clean heals: %d (HealCredited=True and the incident outcome is resolved)\n", *h.Clean)
-	fmt.Fprintln(w, "  everything else, by why it is not a clean heal:")
+	_, _ = fmt.Fprintln(w, "  everything else, by why it is not a clean heal:")
 	for _, k := range allExclusions {
 		if n := h.Excluded[k]; n > 0 {
 			fmt.Fprintf(w, "    %-20s %d\n", k, n)
@@ -312,4 +312,16 @@ func sumValues(m map[string]int) int {
 		total += n
 	}
 	return total
+}
+
+// unreadableConsequence says what an unreadable input actually affects. Only the
+// inputs a number is computed from blank a section; the personas are context lines
+// and no number in the report depends on them.
+func unreadableConsequence(input string) string {
+	switch input {
+	case "incidents", "events":
+		return "the sections that need it say no data below, never zero"
+	default:
+		return "no number in this report depends on it"
+	}
 }

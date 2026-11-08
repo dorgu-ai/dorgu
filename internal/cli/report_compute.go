@@ -37,14 +37,13 @@ func buildReport(in reportInputs, now time.Time, since time.Duration) reportDoc 
 		incidentsGone = "the IncidentMemories could not be read, and the resolution outcome and proposal-time refusals live on them"
 	}
 	healGone := incidentsGone
-	if healGone == "" && operatorPredatesTickets(in.OperatorVersion) {
-		healGone = fmt.Sprintf("the operator (%s) predates %s, which writes the apply ticket and the HealCredited record a clean heal is judged on",
-			*in.OperatorVersion, reportTicketOperator)
+	if healGone == "" {
+		healGone = ticketSupportGone(in.OperatorVersion, ras)
 	}
 	doc.HealAccounting = accountForHeals(ras, incidents, healGone)
 
 	decisions := countDecisions(ras)
-	refusals := collectRefusals(ras, in.Incidents, start)
+	refusals := collectRefusals(ras, in.Incidents, in.Remediations, start)
 
 	doc.TierA = buildTierA(doc.HealAccounting, decisions, since)
 	q6 := refusalMix(len(ras)+refusals.proposalTime, refusals.rows, refusals.deferred)
@@ -307,6 +306,56 @@ func sortedMapKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// ticketSupportGone is the reason the heal sections cannot be trusted because the
+// operator may predate tickets, or "" when they can. It fails closed, by evidence
+// and not by tag:
+//
+//   - a tag that is a release before v0.13.0 is no data, whatever the records say;
+//   - a tag that is a release at v0.13.0 or later is trusted (a fast path);
+//   - when the version cannot be determined (an unreadable Deployment list, an image
+//     pinned by digest, a tag that is not a version, a Deployment without the label)
+//     the records decide: every Completed RemediationAction from v0.13.0 on carries a
+//     HealCredited condition, so if any Completed action in the window has one the
+//     operator writes them and the data is trusted, and if there are Completed
+//     actions and none has one, every heal would read as unconfirmed and the north
+//     star as a measured zero. That is no data, with this reason;
+//   - with no Completed action there is nothing to blank, and zero is true.
+func ticketSupportGone(version *string, ras []*reportRA) string {
+	if version != nil {
+		if operatorPredatesTickets(version) {
+			return fmt.Sprintf("the operator (%s) predates %s, which writes the apply ticket and the HealCredited record a clean heal is judged on",
+				*version, reportTicketOperator)
+		}
+		if _, ok := parseVersion(*version); ok {
+			return ""
+		}
+	}
+	completed := 0
+	for _, ra := range ras {
+		if ra.Status.Phase != "Completed" {
+			continue
+		}
+		completed++
+		if ra.condition(conditionHealCredited) != nil {
+			return ""
+		}
+	}
+	if completed == 0 {
+		return ""
+	}
+	return fmt.Sprintf("the operator version could not be determined and none of the %d Completed RemediationAction(s) in the window carries a HealCredited record; "+
+		"an operator older than %s writes none, so the heals cannot be judged", completed, reportTicketOperator)
+}
+
+// operatorVersionKnown reports whether the tag is a release version.
+func operatorVersionKnown(tag *string) bool {
+	if tag == nil {
+		return false
+	}
+	_, ok := parseVersion(*tag)
+	return ok
 }
 
 // operatorPredatesTickets reports whether the operator's image tag is a release

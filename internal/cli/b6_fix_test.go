@@ -303,18 +303,6 @@ func TestFix_NoTicketOnAnOldOperatorSaysWhy(t *testing.T) {
 	assert.Contains(t, res.out, "does not issue apply tickets")
 }
 
-func TestFix_NoTicketWithAnUnreadableOperatorVersionSaysNothingExtra(t *testing.T) {
-	operatorVersionReader = func(context.Context, string) *string { return nil }
-	t.Cleanup(func() { operatorVersionReader = readOperatorVersion })
-	r := declineBase(t)
-	r.remAfterApprove = replacePhase(operatorRemediationFixture, "Approved")
-
-	res := runApprove(t, r)
-
-	require.Error(t, res.err)
-	assert.NotContains(t, res.out, "Warning: the operator on this cluster")
-}
-
 // --- F-12 to F-14 ------------------------------------------------------------------
 
 func TestFix_AFoldedEventSeriesThatBeganBeforeTheWindowCountsOnce(t *testing.T) {

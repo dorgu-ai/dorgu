@@ -69,6 +69,7 @@ type reportIncident struct {
 		} `json:"resolution"`
 	} `json:"spec"`
 	Status struct {
+		Phase      string            `json:"phase"`
 		Conditions []reportCondition `json:"conditions"`
 	} `json:"status"`
 }

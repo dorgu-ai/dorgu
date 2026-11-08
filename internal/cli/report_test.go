@@ -102,7 +102,7 @@ func TestReportHealClassification(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ra, incidents := healthy(tc.ra, tc.outcome)
-			got := buildReport(reportInputs{Remediations: []reportRA{ra}, Incidents: incidents}, reportNow, reportFixtureWindow)
+			got := buildReport(reportInputs{Remediations: []reportRA{ra}, Incidents: incidents, OperatorVersion: strp("v0.13.0")}, reportNow, reportFixtureWindow)
 			h := got.HealAccounting
 			if tc.want == "" {
 				assert.Equal(t, 1, *h.Clean)
