@@ -142,3 +142,65 @@ func TestAdvisoryCopyHasNoEmDashes(t *testing.T) {
 
 	require.NotContains(t, buf.String(), "—")
 }
+
+// F-11: for an advisory plan the diff still said "Owner: unmanaged (nothing
+// reconciles it, so Dorgu may patch it)" and printed an automatic-rollback
+// block, in the same output that says "nothing in it can be applied for you".
+// Dorgu will patch nothing and there is nothing to roll back.
+func advisoryRemediationOnUnmanagedWorkload() remediationFull {
+	r := makeTestRemediation("ra-web-imagepull", "apps", "Pending", "notification", "91%", "web")
+	r.Spec.WorkloadRef = &workloadRef{
+		Kind: "Deployment", Name: "web", Namespace: "apps", Container: "web",
+		ManagedBy: "unmanaged",
+	}
+	r.Spec.Steps = []remediationStep{{
+		Order: 1, ID: "step-1", Type: "manual",
+		Description: "Correct the image tag to nginx:1.27-alpine.", Risk: "low",
+	}}
+	r.Spec.Rollback = &struct {
+		Enabled          bool   `json:"enabled"`
+		HealthCheckAfter string `json:"healthCheckAfter"`
+		MaxRetries       int32  `json:"maxRetries"`
+	}{Enabled: true, HealthCheckAfter: "10m0s", MaxRetries: 1}
+	return r
+}
+
+func TestRemediationDiffAdvisoryPlanHasNoRollbackOrMayPatchWording(t *testing.T) {
+	r := advisoryRemediationOnUnmanagedWorkload()
+
+	var buf bytes.Buffer
+	printRemediationDiff(&buf, &r)
+	out := buf.String()
+
+	assert.Contains(t, out, "This plan is advisory", "precondition: this is the advisory case")
+	assert.NotContains(t, out, "Dorgu may patch it")
+	assert.NotContains(t, out, "Rollback:")
+	assert.NotContains(t, out, "rollback")
+	assert.NotContains(t, out, "Max retries")
+	// What the reader does need is still there.
+	assert.Contains(t, out, "Workload:")
+	assert.Contains(t, out, "Correct the image tag to nginx:1.27-alpine.")
+}
+
+// An applicable plan keeps both: they are true for it.
+func TestRemediationDiffApplicablePlanKeepsRollbackAndOwnerWording(t *testing.T) {
+	r := makeTestRemediation("ra-oom-worker", "apps", "Pending", "persona-update", "88%", "report-worker")
+	r.Spec.Action.PrePatchState = json.RawMessage(`{"spec":{"resources":{"limits":{"memory":"48Mi"}}}}`)
+	r.Spec.Action.Patch = json.RawMessage(`{"spec":{"resources":{"limits":{"memory":"96Mi"}}}}`)
+	r.Spec.WorkloadRef = &workloadRef{
+		Kind: "Deployment", Name: "report-worker", Namespace: "apps", Container: "worker",
+		ManagedBy: "unmanaged",
+	}
+	r.Spec.Rollback = &struct {
+		Enabled          bool   `json:"enabled"`
+		HealthCheckAfter string `json:"healthCheckAfter"`
+		MaxRetries       int32  `json:"maxRetries"`
+	}{Enabled: true, HealthCheckAfter: "10m0s"}
+
+	var buf bytes.Buffer
+	printRemediationDiff(&buf, &r)
+	out := buf.String()
+
+	assert.Contains(t, out, "Dorgu may patch it")
+	assert.Contains(t, out, "Automatic rollback if health degrades (verified after 10m0s)")
+}
