@@ -17,6 +17,10 @@ type reportDoc struct {
 	Cluster     reportCluster `json:"cluster"`
 	Sources     reportSources `json:"sources"`
 
+	// InputErrors names every cluster read that failed, with a bounded class. A
+	// section that depends on a failed read is no_data with a reason, never zero.
+	InputErrors []reportInputError `json:"input_errors"`
+
 	// HealAccounting is how every RemediationAction created in the window ended,
 	// and which of them are clean heals under KPIS.md.
 	HealAccounting reportHealAccounting `json:"heal_accounting"`
@@ -55,7 +59,15 @@ type reportSources struct {
 	RemediationActions reportSource `json:"remediation_actions"`
 	Incidents          reportSource `json:"incidents"`
 	Personas           reportSource `json:"personas"`
+	ClusterPersonas    reportSource `json:"cluster_personas"`
 	Events             reportSource `json:"events"`
+}
+
+// reportInputError is one failed cluster read: which input, and what kind of
+// failure (forbidden, not_found, timeout, unparseable, error).
+type reportInputError struct {
+	Input string `json:"input"`
+	Error string `json:"error"`
 }
 
 type reportSource struct {
@@ -71,15 +83,23 @@ type reportHealAccounting struct {
 	Total int `json:"total"`
 
 	// Completed reached phase Completed. Clean is the subset KPIS.md counts as a
-	// heal: HealCredited=True and the incident outcome resolved.
-	Completed int `json:"completed"`
-	Clean     int `json:"clean"`
+	// heal: HealCredited=True and the incident outcome resolved. Clean and SafeHeals
+	// are null when they cannot be known: the incidents could not be read, or the
+	// operator predates the records they are computed from (NoData, Reason).
+	Completed int  `json:"completed"`
+	Clean     *int `json:"clean"`
 
 	// SafeHeals is the north star (NS): clean heals whose approval-time gate run
 	// passed (status.gate is an ApprovalRecheck that cleared).
-	SafeHeals int `json:"safe_heals"`
+	SafeHeals *int `json:"safe_heals"`
 
-	// Excluded is every RemediationAction that is not a clean heal, by why.
+	// NoData is true when the clean-heal accounting cannot be computed, and Reason
+	// says why. It is never a zero.
+	NoData bool   `json:"no_data"`
+	Reason string `json:"reason,omitempty"`
+
+	// Excluded is every RemediationAction that is not a clean heal, by why. Empty
+	// when NoData.
 	Excluded map[string]int `json:"excluded"`
 
 	// HealNotCredited breaks HealCredited=False down by its reason.
@@ -126,6 +146,14 @@ const (
 	// flagged (KPI Q6) when it is over 30% of proposals on at least ten of them.
 	reportMinSampleForFlag = 10
 	reportRefusalFlagShare = 0.30
+
+	// reportMinDecisions is how many decided proposals a rate needs before the
+	// report passes judgement on it (the approval band, "called wrong").
+	reportMinDecisions = 5
+
+	// reportTicketOperator is the first operator release that issues apply tickets
+	// and writes HealCredited. Earlier ones cannot answer the heal questions.
+	reportTicketOperator = "v0.13.0"
 )
 
 // --- tier A ---
@@ -143,8 +171,10 @@ type reportTierA struct {
 }
 
 type reportNorthStar struct {
-	SafeHeals int `json:"safe_heals"`
-	CleanHeal int `json:"clean_heals"`
+	SafeHeals *int   `json:"safe_heals"`
+	CleanHeal *int   `json:"clean_heals"`
+	NoData    bool   `json:"no_data"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // reportActive is A2: a cluster is active in the window when at least one
@@ -167,8 +197,11 @@ type reportApproval struct {
 	Rejected int      `json:"rejected"`
 	Rate     *float64 `json:"rate"`
 	NoData   bool     `json:"no_data"`
+	// TooFewDecisions is true when fewer than five proposals were decided: the
+	// counts are real, a rate and a band would not be.
+	TooFewDecisions bool `json:"too_few_decisions"`
 	// Band is "below" (under 30%, noisy proposals), "in" or "above" (over 80%,
-	// rubber-stamping). Empty with no_data.
+	// rubber-stamping). Empty with no_data or too few decisions.
 	Band string `json:"band,omitempty"`
 }
 
@@ -205,13 +238,17 @@ type reportDistribution struct {
 	P50Seconds *float64 `json:"p50_seconds"`
 	P90Seconds *float64 `json:"p90_seconds"`
 	NoData     bool     `json:"no_data"`
+	Reason     string   `json:"reason,omitempty"`
 }
 
 type reportPrecision struct {
-	Decided int      `json:"decided"`
-	Wrong   int      `json:"wrong"`
-	Rate    *float64 `json:"rate"`
-	NoData  bool     `json:"no_data"`
+	Decided int `json:"decided"`
+	Wrong   int `json:"wrong"`
+	// Wrong counts rejections with reason wrong-diagnosis, the only reason that says
+	// the proposal itself was wrong; Decided is every approved or rejected proposal.
+	Rate            *float64 `json:"rate"`
+	NoData          bool     `json:"no_data"`
+	TooFewDecisions bool     `json:"too_few_decisions"`
 	// RejectionsByReason counts rejected proposals by the enum `reject --reason`
 	// writes, plus no-reason-given for a rejection that carries none.
 	RejectionsByReason map[string]int `json:"rejections_by_reason"`
@@ -229,7 +266,12 @@ type reportRefusals struct {
 	// the gate refused before one was written.
 	Proposals int             `json:"proposals"`
 	NoData    bool            `json:"no_data"`
+	Reason    string          `json:"reason,omitempty"`
 	Rows      []reportRefusal `json:"rows"`
+	// Deferred counts incidents whose proposal is outstanding (the gate answers the
+	// repeat attempt with active-remediation). It is waiting for a human, not a
+	// refusal, and is in neither Rows nor Proposals.
+	Deferred int `json:"deferred_proposals"`
 }
 
 type reportRefusal struct {
@@ -261,6 +303,7 @@ type reportClamps struct {
 
 type reportCLIDeclines struct {
 	NoData   bool           `json:"no_data"`
+	Reason   string         `json:"reason,omitempty"`
 	ByReason map[string]int `json:"by_reason"`
 	Note     string         `json:"note"`
 }

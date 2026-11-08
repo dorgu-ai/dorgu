@@ -28,16 +28,22 @@
       "ok": true,
       "count": 3
     },
+    "cluster_personas": {
+      "ok": true,
+      "count": 1
+    },
     "events": {
       "ok": true,
       "count": 7
     }
   },
+  "input_errors": [],
   "heal_accounting": {
     "total": 12,
     "completed": 4,
     "clean": 1,
     "safe_heals": 1,
+    "no_data": false,
     "excluded": {
       "acknowledged": 0,
       "expired": 0,
@@ -60,7 +66,8 @@
   "tier_a": {
     "ns_safe_heals": {
       "safe_heals": 1,
-      "clean_heals": 1
+      "clean_heals": 1,
+      "no_data": false
     },
     "a2_active_cluster": {
       "active": true,
@@ -77,6 +84,7 @@
       "rejected": 3,
       "rate": 0.7272727272727273,
       "no_data": false,
+      "too_few_decisions": false,
       "band": "in"
     },
     "a7_external_agent_share": {
@@ -95,7 +103,7 @@
   "tier_q": {
     "q1_time_to_heal": {
       "detect_to_proposal": {
-        "n": 6,
+        "n": 7,
         "p50_seconds": 3600,
         "p90_seconds": 3600,
         "no_data": false
@@ -124,13 +132,14 @@
       "wrong": 1,
       "rate": 0.09090909090909091,
       "no_data": false,
+      "too_few_decisions": false,
       "rejections_by_reason": {
         "duplicate": 0,
         "no-reason-given": 1,
         "not-needed": 0,
+        "not-now": 0,
         "other": 0,
         "too-risky": 1,
-        "wrong-action": 0,
         "wrong-diagnosis": 1
       }
     },
@@ -178,7 +187,8 @@
           "share_of_proposals": 0.07142857142857142,
           "flagged": false
         }
-      ]
+      ],
+      "deferred_proposals": 1
     }
   },
   "first_run_clamps": {
@@ -198,10 +208,10 @@
     "by_reason": {
       "DorguCLIDeclined": 2,
       "DorguCLINoTicket": 3,
-      "DorguCLIProtectedContext": 1,
-      "DorguCLITicketExpired": 1
+      "DorguCLITicketExpired": 1,
+      "DorguCLITicketMismatch": 1
     },
-    "note": "The CLI records a decline only as a Kubernetes Event, and Kubernetes keeps Events for about an hour unless the cluster is configured otherwise, so declines older than that are not counted here."
+    "note": "The CLI records a decline only as a Kubernetes Event, and Kubernetes keeps Events for about an hour unless the cluster is configured otherwise, so declines older than that are not counted here. A refusal because the kube context is protected (DORGU_PROTECTED_CONTEXTS) is local only: the CLI writes nothing to a cluster it was told not to touch, so those are never counted."
   },
   "not_measurable": [
     {

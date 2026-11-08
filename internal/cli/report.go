@@ -85,6 +85,8 @@ func runReport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	reads.inputs.OperatorVersion = reads.cluster.OperatorVersion
+	reads.inputs.Errors = reads.errors()
 	doc := buildReport(reads.inputs, time.Now().UTC(), since)
 	doc.Cluster = reads.cluster
 	doc.Sources = reads.sources
@@ -148,6 +150,43 @@ func sourceOf(n int, err error) reportSource {
 	return reportSource{OK: true, Count: n}
 }
 
+// errors lists the inputs that could not be read, each with a bounded class, in a
+// fixed order. The RemediationActions are not here: without them there is no report.
+func (r *reportReads) errors() []reportInputError {
+	out := []reportInputError{}
+	for _, in := range []struct {
+		name string
+		src  reportSource
+	}{
+		{"incidents", r.sources.Incidents},
+		{"events", r.sources.Events},
+		{"personas", r.sources.Personas},
+		{"cluster_personas", r.sources.ClusterPersonas},
+	} {
+		if !in.src.OK {
+			out = append(out, reportInputError{Input: in.name, Error: errorClass(in.src.Error)})
+		}
+	}
+	return out
+}
+
+// errorClass names the kind of a failed read in a bounded vocabulary, so the
+// report's JSON carries a value a reader can group on and no cluster text.
+func errorClass(msg string) string {
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "forbidden"):
+		return "forbidden"
+	case strings.Contains(lower, "doesn't have a resource type"), strings.Contains(lower, "not found"):
+		return "not_found"
+	case strings.Contains(lower, "timed out"), strings.Contains(lower, "deadline exceeded"):
+		return "timeout"
+	case strings.Contains(lower, "could not parse"):
+		return "unparseable"
+	}
+	return "error"
+}
+
 // readReportList lists a resource as items of T, in one namespace or all.
 func readReportList[T any](ctx context.Context, kubeconfig, namespace, resource string, extra ...string) ([]T, error) {
 	args := []string{"get", resource, "-o", "json"}
@@ -179,6 +218,7 @@ func (r *reportReads) readPersonas(ctx context.Context, kubeconfig, namespace st
 
 	out, cerr := kubectlCmd(ctx, kubeconfig, "get", "clusterpersona", "-o", "json").CombinedOutput()
 	if cerr != nil {
+		r.sources.ClusterPersonas = reportSource{Error: kubectlErrText(out)}
 		return
 	}
 	var list struct {
@@ -192,9 +232,11 @@ func (r *reportReads) readPersonas(ctx context.Context, kubeconfig, namespace st
 			} `json:"spec"`
 		} `json:"items"`
 	}
-	if json.Unmarshal(out, &list) != nil {
+	if err := json.Unmarshal(out, &list); err != nil {
+		r.sources.ClusterPersonas = reportSource{Error: "could not parse clusterpersona: " + err.Error()}
 		return
 	}
+	r.sources.ClusterPersonas = reportSource{OK: true, Count: len(list.Items)}
 	for _, item := range list.Items {
 		mode := item.Spec.Policies.SelfHealing.Mode
 		if mode == "" {

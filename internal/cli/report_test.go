@@ -25,6 +25,7 @@ func fixtureReport(t *testing.T) reportDoc {
 		RemediationActions: reportSource{OK: true, Count: 13},
 		Incidents:          reportSource{OK: true, Count: 10},
 		Personas:           reportSource{OK: true, Count: 3},
+		ClusterPersonas:    reportSource{OK: true, Count: 1},
 		Events:             reportSource{OK: true, Count: 7},
 	}
 	return doc
@@ -44,8 +45,8 @@ func TestReportCleanHealAccountingFollowsKPIs(t *testing.T) {
 	h := doc(t).HealAccounting
 
 	assert.Equal(t, 4, h.Completed)
-	assert.Equal(t, 1, h.Clean, "only ra-clean is HealCredited=True with incident outcome resolved")
-	assert.Equal(t, 1, h.SafeHeals)
+	assert.Equal(t, 1, *h.Clean, "only ra-clean is HealCredited=True with incident outcome resolved")
+	assert.Equal(t, 1, *h.SafeHeals)
 	assert.Equal(t, map[string]int{
 		excludedPartial:         1,
 		excludedSelfResolved:    2,
@@ -62,7 +63,7 @@ func TestReportCleanHealAccountingFollowsKPIs(t *testing.T) {
 	}, h.Excluded)
 	assert.Equal(t, map[string]int{"NothingPatched": 1, "ResourcesNotTicket": 1}, h.HealNotCredited)
 
-	total := h.Clean
+	total := *h.Clean
 	for _, n := range h.Excluded {
 		total += n
 	}
@@ -104,15 +105,15 @@ func TestReportHealClassification(t *testing.T) {
 			got := buildReport(reportInputs{Remediations: []reportRA{ra}, Incidents: incidents}, reportNow, reportFixtureWindow)
 			h := got.HealAccounting
 			if tc.want == "" {
-				assert.Equal(t, 1, h.Clean)
+				assert.Equal(t, 1, *h.Clean)
 				if tc.wantSafe {
-					assert.Equal(t, 1, h.SafeHeals)
+					assert.Equal(t, 1, *h.SafeHeals)
 				} else {
-					assert.Equal(t, 0, h.SafeHeals)
+					assert.Equal(t, 0, *h.SafeHeals)
 				}
 				return
 			}
-			assert.Equal(t, 0, h.Clean)
+			assert.Equal(t, 0, *h.Clean)
 			assert.Equal(t, 1, h.Excluded[tc.want], "%+v", h.Excluded)
 		})
 	}
@@ -121,7 +122,7 @@ func TestReportHealClassification(t *testing.T) {
 		ra := mustRA(t, raOpts{name: "x", phase: "Completed", created: time.Hour, incident: "gone", gate: approvalGatePass,
 			conds: []string{credited}})
 		got := buildReport(reportInputs{Remediations: []reportRA{ra}}, reportNow, reportFixtureWindow)
-		assert.Equal(t, 0, got.HealAccounting.Clean)
+		assert.Equal(t, 0, *got.HealAccounting.Clean)
 		assert.Equal(t, 1, got.HealAccounting.Excluded[excludedOutcomeUnknown])
 	})
 }
@@ -146,7 +147,7 @@ func TestReportApprovalAndPrecision(t *testing.T) {
 	require.NotNil(t, q2.Rate)
 	assert.InDelta(t, 1.0/11.0, *q2.Rate, 1e-9)
 	assert.Equal(t, map[string]int{
-		"wrong-diagnosis": 1, "wrong-action": 0, "too-risky": 1, "duplicate": 0,
+		"wrong-diagnosis": 1, "not-now": 0, "too-risky": 1, "duplicate": 0,
 		"not-needed": 0, "other": 0, reportNoReasonGiven: 1,
 	}, q2.RejectionsByReason)
 }
@@ -154,7 +155,7 @@ func TestReportApprovalAndPrecision(t *testing.T) {
 func TestReportTimeToHeal(t *testing.T) {
 	q1 := doc(t).TierQ.Q1TimeToHeal
 
-	assert.Equal(t, 6, q1.DetectToProposal.N)
+	assert.Equal(t, 7, q1.DetectToProposal.N, "one per incident, from detection to its first proposal; inc-pending adds the seventh")
 	assert.Equal(t, 11, q1.ProposalToDecision.N, "approved and rejected both count; a rejection is dated by its Rejected condition")
 	assert.Equal(t, 5, q1.DecisionToApplied.N)
 	require.NotNil(t, q1.DecisionToApplied.P50Seconds)
@@ -212,7 +213,7 @@ func TestReportCountsCLIDeclinesFromEventsInTheWindow(t *testing.T) {
 
 	assert.False(t, d.NoData)
 	assert.Equal(t, map[string]int{
-		"DorguCLIDeclined": 2, "DorguCLIProtectedContext": 1, "DorguCLINoTicket": 3, "DorguCLITicketExpired": 1,
+		"DorguCLIDeclined": 2, "DorguCLITicketMismatch": 1, "DorguCLINoTicket": 3, "DorguCLITicketExpired": 1,
 	}, d.ByReason, "events outside the window and the operator's own events are not CLI declines")
 	assert.NotEmpty(t, d.Note)
 }

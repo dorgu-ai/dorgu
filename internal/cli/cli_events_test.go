@@ -81,7 +81,9 @@ func TestGateRefusalAtApprovalExitingFourWritesAnEvent(t *testing.T) {
 	assert.Contains(t, ev["message"], "BlastRadius", "the enum the operator persisted")
 }
 
-func TestProtectedContextRefusalWritesAnEvent(t *testing.T) {
+// F-5: the guard exists so the CLI writes nothing to a cluster the user marked as
+// production. An Event is a write, so the protected-context decline is local only.
+func TestProtectedContextRefusalWritesNothingToTheProtectedCluster(t *testing.T) {
 	r := declineBase(t)
 	r.context = "acme-prod-cluster"
 
@@ -89,10 +91,11 @@ func TestProtectedContextRefusalWritesAnEvent(t *testing.T) {
 
 	require.Error(t, res.err)
 	assert.NotContains(t, res.patchLog, "--subresource status", "still refuses before approving")
-	assertDeclineEvent(t, onlyEvent(t, res.logPath), "DorguCLIProtectedContext")
+	assert.Empty(t, readEventLog(t, res.logPath), "no Event may be created on the protected cluster")
+	assert.Contains(t, res.out, "nothing was changed", "and the sentence is now true")
 }
 
-func TestProtectedContextRefusalOfHealWritesAnEvent(t *testing.T) {
+func TestProtectedContextRefusalOfHealWritesNothingEither(t *testing.T) {
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:    "acme-prod-cluster",
 		rem:        strings.Replace(operatorRemediationFixture, `"phase": "Pending"`, `"phase": "Approved"`, 1),
@@ -105,7 +108,7 @@ func TestProtectedContextRefusalOfHealWritesAnEvent(t *testing.T) {
 	captureStdout(t, func() { captureStderr(t, func() { err = cmd.Execute() }) })
 
 	require.Error(t, err)
-	assertDeclineEvent(t, onlyEvent(t, patchLog), "DorguCLIProtectedContext")
+	assert.Empty(t, readEventLog(t, patchLog), "a heal refused for its context writes no Event")
 }
 
 func TestNoTicketRefusalWritesAnEvent(t *testing.T) {
@@ -138,7 +141,7 @@ func TestEveryDeclineErrorMapsToItsEventReason(t *testing.T) {
 		want string
 	}{
 		{&ownedWorkloadError{ref: &workloadRef{Name: "api", ManagedBy: "helm"}}, reasonCLIDeclined},
-		{&protectedContextError{context: "prod", message: "refusing to heal"}, reasonCLIProtectedContext},
+		{mismatch("the apply ticket carries no resource change"), reasonCLITicketMismatch},
 		{&noTicketError{why: "none"}, reasonCLINoTicket},
 		{&ticketExpiredError{expiresAt: "2026-11-08T00:00:00Z"}, reasonCLITicketExpired},
 		{&gateRefusedError{reason: "BlastRadius"}, reasonCLIDeclined},
@@ -151,6 +154,8 @@ func TestEveryDeclineErrorMapsToItsEventReason(t *testing.T) {
 	}
 	_, _, ok := declineFor(errors.New("a plain failure is not a decline"))
 	assert.False(t, ok)
+	_, _, ok = declineFor(&protectedContextError{context: "prod", message: "refusing to heal"})
+	assert.False(t, ok, "a protected context is declined locally and never written as an Event")
 }
 
 func TestDeclineEventFailureNeverChangesTheOutcome(t *testing.T) {
@@ -188,7 +193,7 @@ func TestSuccessfulApproveWritesNoDeclineEvent(t *testing.T) {
 }
 
 func TestBuildDeclineEvent(t *testing.T) {
-	ev := buildDeclineEvent("production", "fix-oom", "uid-1", reasonCLIProtectedContext, "refusing to heal", time.Date(2026, 11, 8, 1, 2, 3, 0, time.UTC))
+	ev := buildDeclineEvent("production", "fix-oom", "uid-1", reasonCLITicketMismatch, "the ticket names another workload", time.Date(2026, 11, 8, 1, 2, 3, 0, time.UTC))
 
 	assert.Equal(t, "fix-oom.", ev.Metadata.GenerateName)
 	assert.Equal(t, "uid-1", ev.InvolvedObject.UID)

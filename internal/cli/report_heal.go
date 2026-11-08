@@ -21,15 +21,29 @@ const (
 // RemediationAction Completed, HealCredited is True and the incident's outcome is
 // resolved. Partial outcomes, self-resolved recoveries and HealCredited=False are
 // never counted, however healthy the workload looks afterwards.
-func accountForHeals(ras []*reportRA, incidents map[string]*reportIncident) reportHealAccounting {
+//
+// unavailable, when not empty, says why the accounting cannot be done at all (the
+// incidents were unreadable, or the operator predates the records it needs): the
+// RemediationActions are still counted, but how they ended is no data, never zero.
+func accountForHeals(ras []*reportRA, incidents map[string]*reportIncident, unavailable string) reportHealAccounting {
 	h := reportHealAccounting{
 		Total:           len(ras),
 		Excluded:        map[string]int{},
 		HealNotCredited: map[string]int{},
 	}
+	if unavailable != "" {
+		for _, ra := range ras {
+			if ra.Status.Phase == "Completed" {
+				h.Completed++
+			}
+		}
+		h.NoData, h.Reason = true, unavailable
+		return h
+	}
 	for _, name := range allExclusions {
 		h.Excluded[name] = 0
 	}
+	clean, safe := 0, 0
 
 	for _, ra := range ras {
 		if ra.Status.Phase == "Completed" {
@@ -43,11 +57,12 @@ func accountForHeals(ras []*reportRA, incidents map[string]*reportIncident) repo
 			h.Excluded[category]++
 			continue
 		}
-		h.Clean++
+		clean++
 		if approvalGatePassed(ra) {
-			h.SafeHeals++
+			safe++
 		}
 	}
+	h.Clean, h.SafeHeals = &clean, &safe
 	return h
 }
 

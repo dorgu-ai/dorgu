@@ -186,6 +186,9 @@ func reportFixture(t *testing.T) reportInputs {
 		// Proposal-time refusals that created no RemediationAction.
 		incidentJSON("inc-mode", 5*h, 5*h, "", cond("ProposalRefused", "True", "ModePolicy_SelfHealingMode", 4*h)),
 		incidentJSON("inc-gone", 3*h, 3*h, "", cond("ProposalRefused", "True", "Ground_WorkloadGone", 2*h)),
+		// An outstanding proposal, as an operator before the fix recorded it: not a
+		// refusal, and it must not be counted as one or as a second proposal.
+		incidentJSON("inc-pending", 3*h, 3*h, "", cond("ProposalRefused", "True", "DedupCooldown_ActiveRemediation", 2*h)),
 		// A refusal a later proposal cleared is not counted.
 		incidentJSON("inc-cleared", 4*h, 4*h, "", cond("ProposalRefused", "False", "Proposed", 3*h)),
 	}
@@ -193,7 +196,7 @@ func reportFixture(t *testing.T) reportInputs {
 	events := []string{
 		eventJSON("DorguCLIDeclined", 2*h, 1),
 		eventJSON("DorguCLIDeclined", 3*h, 1),
-		eventJSON("DorguCLIProtectedContext", 4*h, 1),
+		eventJSON("DorguCLITicketMismatch", 4*h, 1),
 		eventJSON("DorguCLINoTicket", 5*h, 3),
 		eventJSON("DorguCLITicketExpired", 6*h, 1),
 		eventJSON("DorguCLIDeclined", 9*24*h, 1), // outside the window

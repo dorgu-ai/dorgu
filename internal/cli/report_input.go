@@ -120,6 +120,23 @@ type reportInputs struct {
 	// EventsRead is true when the Events were listed. An empty list that was read
 	// is a measured zero; one that was not read is no data.
 	EventsRead bool
+
+	// Errors are the cluster reads that failed. A section computed from one of them
+	// is no data (see buildReport), never zero.
+	Errors []reportInputError
+
+	// OperatorVersion is the operator's image tag, nil when it could not be read.
+	OperatorVersion *string
+}
+
+// unreadable reports whether the named input failed to read.
+func (in reportInputs) unreadable(input string) bool {
+	for _, e := range in.Errors {
+		if e.Input == input {
+			return true
+		}
+	}
+	return false
 }
 
 // parseReportTime reads an RFC3339 timestamp. The empty string and anything

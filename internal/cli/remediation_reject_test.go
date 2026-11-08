@@ -92,7 +92,7 @@ func TestRejectKeepsEveryOtherCondition(t *testing.T) {
 
 func TestRejectReasonEnum(t *testing.T) {
 	want := map[string]string{
-		"wrong-diagnosis": "WrongDiagnosis", "wrong-action": "WrongAction", "too-risky": "TooRisky",
+		"wrong-diagnosis": "WrongDiagnosis", "too-risky": "TooRisky", "not-now": "NotNow",
 		"duplicate": "Duplicate", "not-needed": "NotNeeded",
 	}
 	for flag, reason := range want {
@@ -107,6 +107,15 @@ func TestRejectReasonEnum(t *testing.T) {
 		require.NoError(t, res.err)
 		assert.Equal(t, "Other", firstCond(t, res.patchLog)["reason"])
 	})
+}
+
+// wrong-action was dropped from the enum before release (F-7): it is no longer a
+// value --reason accepts.
+func TestRejectNoLongerAcceptsWrongAction(t *testing.T) {
+	res := runReject(t, operatorRemediationFixture, "--reason", "wrong-action")
+
+	require.Error(t, res.err)
+	assert.Empty(t, res.patchLog, "nothing is written")
 }
 
 func TestRejectOtherNeedsANote(t *testing.T) {
@@ -124,7 +133,7 @@ func TestRejectRefusesAReasonOutsideTheEnum(t *testing.T) {
 
 	require.Error(t, res.err)
 	assert.Empty(t, res.patchLog, "nothing is written")
-	for _, valid := range []string{"wrong-diagnosis", "wrong-action", "too-risky", "duplicate", "not-needed", "other"} {
+	for _, valid := range []string{"wrong-diagnosis", "too-risky", "not-now", "duplicate", "not-needed", "other"} {
 		assert.Contains(t, res.err.Error(), valid, "the error lists the valid values")
 	}
 }

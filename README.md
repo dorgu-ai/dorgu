@@ -365,7 +365,7 @@ dorgu remediation reject ra-default-api-oom-b71c -n default --reason wrong-diagn
 dorgu remediation reject ra-default-api-oom-b71c -n default --reason too-risky --note "peak traffic until Friday"
 ```
 
-`--reason` is one of `wrong-diagnosis`, `wrong-action`, `too-risky`, `duplicate`, `not-needed`, `other`. It is recorded on the RemediationAction (a `RejectionReason` condition) so `dorgu report` can count rejections by reason; `--reason other` needs a `--note`. Free text goes in `--note`; `--reason` no longer takes it. Leaving `--reason` out still rejects the proposal and is counted as "no reason given".
+`--reason` is one of `wrong-diagnosis`, `too-risky`, `not-now`, `duplicate`, `not-needed`, `other`. It is recorded on the RemediationAction (a `RejectionReason` condition) so `dorgu report` can count rejections by reason; only `wrong-diagnosis` counts against proposal precision (KPI Q2), the others are a breakdown; `--reason other` needs a `--note`. Free text goes in `--note`; `--reason` no longer takes it. Leaving `--reason` out still rejects the proposal and is counted as "no reason given".
 
 ### Report
 

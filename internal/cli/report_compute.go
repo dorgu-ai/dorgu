@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -25,17 +27,35 @@ func buildReport(in reportInputs, now time.Time, since time.Duration) reportDoc 
 		GeneratedAt: now.UTC().Format(time.RFC3339),
 		Window:      w,
 	}
-	doc.HealAccounting = accountForHeals(ras, incidents)
+	doc.InputErrors = append([]reportInputError{}, in.Errors...)
+
+	// What cannot be known is no data, with the reason, and never a zero. The
+	// incidents carry the resolution outcome and the proposal-time refusals; the
+	// operator before v0.13.0 writes neither tickets nor HealCredited.
+	incidentsGone := ""
+	if in.unreadable("incidents") {
+		incidentsGone = "the IncidentMemories could not be read, and the resolution outcome and proposal-time refusals live on them"
+	}
+	healGone := incidentsGone
+	if healGone == "" && operatorPredatesTickets(in.OperatorVersion) {
+		healGone = fmt.Sprintf("the operator (%s) predates %s, which writes the apply ticket and the HealCredited record a clean heal is judged on",
+			*in.OperatorVersion, reportTicketOperator)
+	}
+	doc.HealAccounting = accountForHeals(ras, incidents, healGone)
 
 	decisions := countDecisions(ras)
 	refusals := collectRefusals(ras, in.Incidents, start)
 
 	doc.TierA = buildTierA(doc.HealAccounting, decisions, since)
+	q6 := refusalMix(len(ras)+refusals.proposalTime, refusals.rows, refusals.deferred)
+	if incidentsGone != "" {
+		q6 = reportRefusals{NoData: true, Reason: incidentsGone, Rows: []reportRefusal{}}
+	}
 	doc.TierQ = reportTierQ{
-		Q1TimeToHeal: timeToHeal(ras, incidents),
+		Q1TimeToHeal: timeToHeal(ras, in.Remediations, incidents, incidentsGone),
 		Q2Precision:  precision(decisions),
 		Q3LLM:        llmEfficiency(ras),
-		Q6Refusals:   refusalMix(len(ras)+refusals.proposalTime, refusals.rows),
+		Q6Refusals:   q6,
 	}
 	doc.FirstRunClamps = firstRunClamps(ras)
 	doc.CLIDeclines = cliDeclines(in, start)
@@ -119,13 +139,19 @@ func rejectionReasonOf(ra *reportRA) string {
 	if flag := rejectionFlagFor(c.Reason); flag != "" {
 		return flag
 	}
+	if c.Reason == "WrongAction" {
+		// Written by a build before the enum was final. A wrong fix for a right
+		// diagnosis is not a wrong diagnosis, so it falls in the "other" bucket.
+		return "other"
+	}
 	return "unrecognised:" + c.Reason
 }
 
-// wrongRejection is a rejection that says the proposal itself was wrong: the
-// numerator of Q2.
+// wrongRejections is the numerator of Q2: rejections whose reason says Dorgu
+// misread the problem. The other reasons (too risky, not now, duplicate, not
+// needed, other) are shown as a breakdown but do not call the diagnosis wrong.
 func wrongRejections(d decisions) int {
-	return d.rejections["wrong-diagnosis"] + d.rejections["wrong-action"]
+	return d.rejections["wrong-diagnosis"]
 }
 
 func buildTierA(h reportHealAccounting, d decisions, since time.Duration) reportTierA {
@@ -133,7 +159,7 @@ func buildTierA(h reportHealAccounting, d decisions, since time.Duration) report
 	weeks := since.Hours() / (24 * 7)
 
 	a := reportTierA{
-		NorthStar:  reportNorthStar{SafeHeals: h.SafeHeals, CleanHeal: h.Clean},
+		NorthStar:  reportNorthStar{SafeHeals: h.SafeHeals, CleanHeal: h.Clean, NoData: h.NoData, Reason: h.Reason},
 		A2Active:   reportActive{Active: decided > 0, ProposalsDecided: decided},
 		A5Depth:    reportDepth{ProposalsDecided: decided, WindowDays: since.Hours() / 24, NoData: decided == 0},
 		A6Approval: reportApproval{Approved: d.approved, Rejected: d.rejected, Rate: ratio(d.approved, decided), NoData: decided == 0},
@@ -148,6 +174,10 @@ func buildTierA(h reportHealAccounting, d decisions, since time.Duration) report
 	if decided > 0 {
 		perWeek := float64(decided) / weeks
 		a.A5Depth.PerWeek = &perWeek
+	}
+	if decided > 0 && decided < reportMinDecisions {
+		// The counts are real; a rate and a band over so few would not be.
+		a.A6Approval.Rate, a.A6Approval.TooFewDecisions = nil, true
 	}
 	if a.A6Approval.Rate != nil {
 		switch rate := *a.A6Approval.Rate; {
@@ -165,10 +195,14 @@ func buildTierA(h reportHealAccounting, d decisions, since time.Duration) report
 func precision(d decisions) reportPrecision {
 	decided := d.approved + d.rejected
 	wrong := wrongRejections(d)
-	return reportPrecision{
+	p := reportPrecision{
 		Decided: decided, Wrong: wrong, Rate: ratio(wrong, decided), NoData: decided == 0,
 		RejectionsByReason: d.rejections,
 	}
+	if decided > 0 && decided < reportMinDecisions {
+		p.Rate, p.TooFewDecisions = nil, true
+	}
+	return p
 }
 
 func llmEfficiency(ras []*reportRA) reportLLM {
@@ -225,10 +259,13 @@ func cliDeclines(in reportInputs, start time.Time) reportCLIDeclines {
 	out := reportCLIDeclines{
 		ByReason: map[string]int{},
 		Note: "The CLI records a decline only as a Kubernetes Event, and Kubernetes keeps Events for about an hour " +
-			"unless the cluster is configured otherwise, so declines older than that are not counted here.",
+			"unless the cluster is configured otherwise, so declines older than that are not counted here. " +
+			"A refusal because the kube context is protected (DORGU_PROTECTED_CONTEXTS) is local only: the CLI writes " +
+			"nothing to a cluster it was told not to touch, so those are never counted.",
 	}
 	if !in.EventsRead {
 		out.NoData = true
+		out.Reason = "the Events could not be read"
 		return out
 	}
 	for _, e := range in.Events {
@@ -238,7 +275,13 @@ func cliDeclines(in reportInputs, start time.Time) reportCLIDeclines {
 		if at, ok := e.at(); !ok || at.Before(start) {
 			continue
 		}
-		out.ByReason[e.Reason] += e.occurrences()
+		n := e.occurrences()
+		if first, ok := parseReportTime(e.FirstTimestamp); ok && first.Before(start) {
+			// A folded Event whose series began before the window: only the occurrence
+			// at its last timestamp is known to be inside it.
+			n = 1
+		}
+		out.ByReason[e.Reason] += n
 	}
 	return out
 }
@@ -264,4 +307,45 @@ func sortedMapKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// operatorPredatesTickets reports whether the operator's image tag is a release
+// before v0.13.0. A tag that is not a version (a dev build, a digest, nothing) is
+// unknown, and unknown is never marked: the report only says what it can show.
+func operatorPredatesTickets(tag *string) bool {
+	if tag == nil {
+		return false
+	}
+	have, ok := parseVersion(*tag)
+	if !ok {
+		return false
+	}
+	want, _ := parseVersion(reportTicketOperator)
+	for i := range have {
+		if have[i] != want[i] {
+			return have[i] < want[i]
+		}
+	}
+	return false
+}
+
+// parseVersion reads vMAJOR.MINOR.PATCH, ignoring a pre-release or build suffix.
+func parseVersion(tag string) ([3]int, bool) {
+	var v [3]int
+	tag = strings.TrimPrefix(strings.TrimSpace(tag), "v")
+	if i := strings.IndexAny(tag, "-+"); i >= 0 {
+		tag = tag[:i]
+	}
+	parts := strings.Split(tag, ".")
+	if len(parts) != 3 {
+		return v, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return v, false
+		}
+		v[i] = n
+	}
+	return v, true
 }

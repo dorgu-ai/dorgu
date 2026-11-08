@@ -30,11 +30,19 @@ func renderReportText(w io.Writer, d reportDoc) {
 	p("  Cluster:   %s, namespace scope: %s", orUnknown(d.Cluster.Context), d.Cluster.Namespace)
 	p("  Operator:  %s", orUnknownPtr(d.Cluster.OperatorVersion))
 	p("  Read:      %s", sourcesLine(d.Sources))
+	p("  Basis:     RemediationActions and IncidentMemories count by when they were created, a proposal-time refusal by when it")
+	p("             was recorded, Events by their last timestamp. A proposal made before the window and decided inside it is not in it.")
+	for _, e := range d.InputErrors {
+		p("  Unreadable: %s (%s): every section computed from it says no data below, never zero", e.Input, e.Error)
+	}
 	p("")
 
 	p("North star")
-	p("  Safe heals: %d  (clean heals whose approval-time gate run passed; clean heals in all: %d)",
-		d.TierA.NorthStar.SafeHeals, d.TierA.NorthStar.CleanHeal)
+	if ns := d.TierA.NorthStar; ns.NoData {
+		p("  Safe heals: no data (%s)", ns.Reason)
+	} else {
+		p("  Safe heals: %d  (clean heals whose approval-time gate run passed; clean heals in all: %d)", *ns.SafeHeals, *ns.CleanHeal)
+	}
 	p("")
 
 	renderHealAccounting(w, d.HealAccounting)
@@ -72,7 +80,7 @@ func sourcesLine(s reportSources) string {
 	}
 	return strings.Join([]string{
 		part("RemediationActions", s.RemediationActions), part("IncidentMemories", s.Incidents),
-		part("personas", s.Personas), part("Events", s.Events),
+		part("personas", s.Personas), part("ClusterPersonas", s.ClusterPersonas), part("Events", s.Events),
 	}, ", ")
 }
 
@@ -84,7 +92,11 @@ func renderHealAccounting(w io.Writer, h reportHealAccounting) {
 		return
 	}
 	fmt.Fprintf(w, "  completed: %d\n", h.Completed)
-	fmt.Fprintf(w, "  clean heals: %d (HealCredited=True and the incident outcome is resolved)\n", h.Clean)
+	if h.NoData {
+		fmt.Fprintf(w, "  clean heals: no data (%s)\n\n", h.Reason)
+		return
+	}
+	fmt.Fprintf(w, "  clean heals: %d (HealCredited=True and the incident outcome is resolved)\n", *h.Clean)
 	fmt.Fprintln(w, "  everything else, by why it is not a clean heal:")
 	for _, k := range allExclusions {
 		if n := h.Excluded[k]; n > 0 {
@@ -103,16 +115,20 @@ func renderHealAccounting(w io.Writer, h reportHealAccounting) {
 
 func renderTierA(w io.Writer, a reportTierA) {
 	fmt.Fprintln(w, "Tier A: value and adoption")
-	fmt.Fprintf(w, "  A2 active cluster:    %s (%d proposals decided)\n", yesNo(a.A2Active.Active), a.A2Active.ProposalsDecided)
+	fmt.Fprintf(w, "  A2 active cluster:    %s (%d proposals decided in the window)\n", yesNo(a.A2Active.Active), a.A2Active.ProposalsDecided)
 	if a.A5Depth.NoData {
 		fmt.Fprintln(w, "  A5 review depth:      no data (no proposal was decided)")
 	} else {
 		fmt.Fprintf(w, "  A5 review depth:      %.1f decisions per week (%d over %.0f days)\n",
 			*a.A5Depth.PerWeek, a.A5Depth.ProposalsDecided, a.A5Depth.WindowDays)
 	}
-	if a.A6Approval.NoData {
+	switch {
+	case a.A6Approval.NoData:
 		fmt.Fprintln(w, "  A6 approval rate:     no data (no proposal was approved or rejected)")
-	} else {
+	case a.A6Approval.TooFewDecisions:
+		fmt.Fprintf(w, "  A6 approval rate:     %d approved, %d rejected; too few decisions (n=%d) to judge\n",
+			a.A6Approval.Approved, a.A6Approval.Rejected, a.A6Approval.Approved+a.A6Approval.Rejected)
+	default:
 		fmt.Fprintf(w, "  A6 approval rate:     %s (%d approved, %d rejected; %s)\n",
 			percent(a.A6Approval.Rate), a.A6Approval.Approved, a.A6Approval.Rejected, bandSentence(a.A6Approval.Band))
 	}
@@ -151,10 +167,14 @@ func renderTierQ(w io.Writer, q reportTierQ) {
 	}
 
 	p := q.Q2Precision
-	if p.NoData {
+	switch {
+	case p.NoData:
 		fmt.Fprintln(w, "  Q2 proposal precision: no data (no proposal was decided)")
-	} else {
-		fmt.Fprintf(w, "  Q2 proposal precision: %s of decided proposals were called wrong (%d of %d)\n",
+	case p.TooFewDecisions:
+		fmt.Fprintf(w, "  Q2 proposal precision: %d of %d decided proposals called wrong-diagnosis; too few decisions (n=%d) to judge\n",
+			p.Wrong, p.Decided, p.Decided)
+	default:
+		fmt.Fprintf(w, "  Q2 proposal precision: %s of decided proposals were called wrong-diagnosis (%d of %d)\n",
 			percent(p.Rate), p.Wrong, p.Decided)
 	}
 	if rejected := sumValues(p.RejectionsByReason); rejected > 0 {
@@ -178,6 +198,8 @@ func renderTierQ(w io.Writer, q reportTierQ) {
 
 	r := q.Q6Refusals
 	switch {
+	case r.NoData && r.Reason != "":
+		fmt.Fprintf(w, "  Q6 refusal mix:        no data (%s)\n", r.Reason)
 	case r.NoData:
 		fmt.Fprintln(w, "  Q6 refusal mix:        no data (no proposals in the window)")
 	case len(r.Rows) == 0:
@@ -192,6 +214,9 @@ func renderTierQ(w io.Writer, q reportTierQ) {
 			fmt.Fprintf(w, "    %-9s %-14s %-24s %3d  (%s)%s\n",
 				row.Phase, row.Stage, row.Reason, row.Count, percent(row.ShareOfProposals), flag)
 		}
+	}
+	if r.Deferred > 0 {
+		fmt.Fprintf(w, "    not refusals: %d incident(s) with a proposal waiting for a decision (counted neither as refusals nor as proposals)\n", r.Deferred)
 	}
 	fmt.Fprintln(w)
 }
@@ -231,7 +256,7 @@ func renderClamps(w io.Writer, c reportClamps) {
 func renderDeclines(w io.Writer, d reportCLIDeclines) {
 	fmt.Fprintln(w, "CLI declines (Events on RemediationActions)")
 	if d.NoData {
-		fmt.Fprintln(w, "  no data: the Events could not be read")
+		fmt.Fprintf(w, "  no data: %s\n", d.Reason)
 	} else if len(d.ByReason) == 0 {
 		fmt.Fprintln(w, "  none recorded in the window")
 	} else {
@@ -243,6 +268,9 @@ func renderDeclines(w io.Writer, d reportCLIDeclines) {
 }
 
 func distributionText(d reportDistribution) string {
+	if d.NoData && d.Reason != "" {
+		return "no data (" + d.Reason + ")"
+	}
 	if d.NoData {
 		return "no data (n=0)"
 	}

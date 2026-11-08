@@ -841,6 +841,10 @@ func healWithTicket(
 		if errors.As(err, &refused) {
 			return withExitCode(ExitDeclined, errSilent)
 		}
+		var noTicket *noTicketError
+		if errors.As(err, &noTicket) {
+			warnIfOperatorPredatesTickets(ctx, opts.kubeconfig, w)
+		}
 		return errSilent
 	}
 
@@ -855,6 +859,7 @@ func healWithTicket(
 		var noTicket *noTicketError
 		if errors.As(err, &noTicket) {
 			printTicketRefusal(w, err)
+			warnIfOperatorPredatesTickets(ctx, opts.kubeconfig, w)
 			return errSilent
 		}
 		output.Error(fmt.Sprintf("Refusing to apply the ticket: %v", err))

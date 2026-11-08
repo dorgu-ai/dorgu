@@ -19,7 +19,7 @@ func TestReportClassifiesEveryTerminalPhase(t *testing.T) {
 		ra := mustRA(t, raOpts{name: "x", phase: phase, created: time.Hour})
 		got := buildReport(reportInputs{Remediations: []reportRA{ra}}, reportNow, reportFixtureWindow)
 		assert.Equal(t, 1, got.HealAccounting.Excluded[want], "phase %q", phase)
-		assert.Equal(t, 0, got.HealAccounting.Clean)
+		assert.Equal(t, 0, *got.HealAccounting.Clean)
 	}
 }
 
@@ -77,7 +77,9 @@ func TestReportCountsARejectionAfterApprovalOnce(t *testing.T) {
 
 	assert.Equal(t, 0, got.Approved)
 	assert.Equal(t, 1, got.Rejected)
-	assert.Equal(t, "below", got.Band)
+	assert.True(t, got.TooFewDecisions, "one decision is a count, not a band")
+	assert.Empty(t, got.Band)
+	assert.Nil(t, got.Rate)
 }
 
 func TestReportApprovalBands(t *testing.T) {
@@ -95,6 +97,23 @@ func TestReportApprovalBands(t *testing.T) {
 	assert.Equal(t, "in", mk(5, 5))
 	assert.Equal(t, "above", mk(9, 1))
 	assert.Equal(t, "in", mk(8, 2), "80% is the edge of the band, not over it")
+	assert.Equal(t, "", mk(4, 0), "four decisions are too few to call a band")
+	assert.Equal(t, "above", mk(5, 0), "five is the floor")
+}
+
+// F-12: below five decisions the report prints the counts and says it cannot judge,
+// instead of "100.0% ... rubber-stamping" or "0.0% called wrong".
+func TestReportTooFewDecisionsPrintsCountsNotVerdicts(t *testing.T) {
+	ra := mustRA(t, raOpts{name: "a", phase: "Pending", created: time.Hour, approvedAt: time.Minute})
+	var buf bytes.Buffer
+	renderReportText(&buf, buildReport(reportInputs{Remediations: []reportRA{ra}}, reportNow, reportFixtureWindow))
+	out := buf.String()
+
+	assert.Contains(t, out, "1 approved, 0 rejected; too few decisions (n=1) to judge")
+	assert.Contains(t, out, "0 of 1 decided proposals called wrong-diagnosis; too few decisions (n=1) to judge")
+	assert.NotContains(t, out, "check for rubber-stamping")
+	assert.NotContains(t, out, "100.0%")
+	assert.NotContains(t, out, "0.0% of decided")
 }
 
 func TestReportEventOccurrencesAndTimes(t *testing.T) {
@@ -112,9 +131,9 @@ func TestReportEventOccurrencesAndTimes(t *testing.T) {
 
 func TestReportFlagsRefusalsOnlyWithEnoughProposals(t *testing.T) {
 	rows := map[refusalKey]int{{reportPhaseProposal, "ModePolicy", "SelfHealingMode"}: 4}
-	assert.False(t, refusalMix(9, rows).Rows[0].Flagged, "9 proposals is under the sample floor")
-	assert.True(t, refusalMix(10, rows).Rows[0].Flagged, "4 of 10 is over 30%")
-	assert.False(t, refusalMix(20, rows).Rows[0].Flagged, "4 of 20 is 20%")
+	assert.False(t, refusalMix(9, rows, 0).Rows[0].Flagged, "9 proposals is under the sample floor")
+	assert.True(t, refusalMix(10, rows, 0).Rows[0].Flagged, "4 of 10 is over 30%")
+	assert.False(t, refusalMix(20, rows, 0).Rows[0].Flagged, "4 of 20 is 20%")
 }
 
 func TestReportGateClampsAreReadFromStatusGate(t *testing.T) {

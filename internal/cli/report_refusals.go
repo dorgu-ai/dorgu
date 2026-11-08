@@ -14,6 +14,19 @@ type refusalKey struct{ phase, stage, reason string }
 type collected struct {
 	rows         map[refusalKey]int
 	proposalTime int
+
+	// deferred counts incidents whose proposal is outstanding: not refusals.
+	deferred int
+}
+
+// isDeferredProposal reports whether a ProposalRefused reason is really an
+// outstanding proposal. The operator no longer writes it, but an operator before
+// the fix wrote DedupCooldown_ActiveRemediation on every open incident one cycle
+// after proposing, and those conditions stand until the incident goes. An incident
+// waiting for a human to decide is the normal state, not a refusal, and it already
+// has the RemediationAction that is waiting.
+func isDeferredProposal(stage, guardrail string) bool {
+	return stage == "DedupCooldown" && guardrail == "ActiveRemediation"
 }
 
 // collectRefusals gathers the refusals the operator persisted, from CRD state
@@ -54,6 +67,10 @@ func collectRefusals(ras []*reportRA, incidents []reportIncident, start time.Tim
 			continue
 		}
 		stage, reason := splitProposalRefusal(cond.Reason)
+		if isDeferredProposal(stage, reason) {
+			c.deferred++
+			continue
+		}
 		c.rows[refusalKey{reportPhaseProposal, stage, reason}]++
 		c.proposalTime++
 	}
@@ -91,8 +108,8 @@ func splitProposalRefusal(reason string) (stage, guardrail string) {
 
 // refusalMix turns the collected refusals into Q6's rows, largest first, and flags
 // any reason that is a large share of proposals.
-func refusalMix(proposals int, rows map[refusalKey]int) reportRefusals {
-	out := reportRefusals{Proposals: proposals, NoData: proposals == 0, Rows: []reportRefusal{}}
+func refusalMix(proposals int, rows map[refusalKey]int, deferred int) reportRefusals {
+	out := reportRefusals{Proposals: proposals, NoData: proposals == 0, Rows: []reportRefusal{}, Deferred: deferred}
 	for k, n := range rows {
 		share := ratio(n, proposals)
 		out.Rows = append(out.Rows, reportRefusal{

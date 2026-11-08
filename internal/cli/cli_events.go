@@ -35,8 +35,12 @@ const (
 	// operator's gate refused the approval.
 	reasonCLIDeclined = "DorguCLIDeclined"
 
-	// reasonCLIProtectedContext: the kube context matches DORGU_PROTECTED_CONTEXTS.
-	reasonCLIProtectedContext = "DorguCLIProtectedContext"
+	// reasonCLITicketMismatch: the ticket is not one the CLI may apply to what it
+	// finds on the cluster: another workload (UID), a spec that moved, a ticket not
+	// bound to a workload, a container the Deployment lacks, an empty or unreadable
+	// patch, an unusable expiry, a remediation that moved on, or a policy that could
+	// not be read. The message carries which; the reason is the one bounded value.
+	reasonCLITicketMismatch = "DorguCLITicketMismatch"
 
 	// reasonCLINoTicket: the operator issued no apply ticket the CLI could use.
 	reasonCLINoTicket = "DorguCLINoTicket"
@@ -67,6 +71,20 @@ type protectedContextError struct {
 
 func (e *protectedContextError) Error() string { return e.message }
 
+// ticketMismatchError is a ticket the CLI refuses to apply because it does not
+// match the cluster as it is now, or is not well formed. It is a decline: the CLI
+// understood the request and chose not to write. It wraps the cause so errors.Is
+// and errors.As keep working through it.
+type ticketMismatchError struct{ err error }
+
+func (e *ticketMismatchError) Error() string { return e.err.Error() }
+func (e *ticketMismatchError) Unwrap() error { return e.err }
+
+// mismatch builds a ticketMismatchError from a format.
+func mismatch(format string, args ...any) error {
+	return &ticketMismatchError{err: fmt.Errorf(format, args...)}
+}
+
 // ticketExpiredError is an apply ticket that ran out before the CLI used it.
 type ticketExpiredError struct {
 	expiresAt    string
@@ -82,17 +100,19 @@ func (e *ticketExpiredError) Error() string {
 
 // declineFor classifies an error as one of the CLI's declines. It branches on the
 // error's type and never on its text.
+//
+// A protected kube context is deliberately not here: the guard exists so the CLI
+// writes nothing to a cluster the user marked as production, and an Event is a
+// write. That decline is local only (stderr) and the report does not count it.
 func declineFor(err error) (reason, message string, ok bool) {
 	var (
-		protected *protectedContextError
-		expired   *ticketExpiredError
-		noTicket  *noTicketError
-		owned     *ownedWorkloadError
-		refused   *gateRefusedError
+		expired  *ticketExpiredError
+		noTicket *noTicketError
+		owned    *ownedWorkloadError
+		refused  *gateRefusedError
+		mism     *ticketMismatchError
 	)
 	switch {
-	case errors.As(err, &protected):
-		return reasonCLIProtectedContext, protected.message, true
 	case errors.As(err, &expired):
 		return reasonCLITicketExpired, expired.Error(), true
 	case errors.As(err, &noTicket):
@@ -105,6 +125,8 @@ func declineFor(err error) (reason, message string, ok bool) {
 		return reasonCLIDeclined, fmt.Sprintf(
 			"dorgu CLI exited %d: the operator's gate refused this approval (%s); nothing was applied",
 			ExitDeclined, refused.reason), true
+	case errors.As(err, &mism):
+		return reasonCLITicketMismatch, "dorgu CLI declined to apply the ticket: " + mism.Error(), true
 	}
 	return "", "", false
 }
@@ -179,6 +201,10 @@ func truncateRunes(s string, n int) string {
 func recordDecline(ctx context.Context, kubeconfig string, rem *remediationFull, err error) {
 	if rem == nil || err == nil {
 		return
+	}
+	var protected *protectedContextError
+	if errors.As(err, &protected) {
+		return // local only: nothing is written to the protected cluster
 	}
 	reason, message, ok := declineFor(err)
 	if !ok {

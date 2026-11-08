@@ -40,9 +40,9 @@ type rejectionReason struct {
 
 // rejectionReasons is the enum, in the order the help lists it.
 var rejectionReasons = []rejectionReason{
-	{"wrong-diagnosis", "WrongDiagnosis", "Dorgu misread what is wrong"},
-	{"wrong-action", "WrongAction", "the diagnosis is right but the proposed fix is not"},
+	{"wrong-diagnosis", "WrongDiagnosis", "Dorgu misread what is wrong (the only reason that counts against precision)"},
 	{"too-risky", "TooRisky", "the change is right but not safe to make here"},
+	{"not-now", "NotNow", "the fix is right but this is the wrong time (a peak, a freeze, a deploy in flight)"},
 	{"duplicate", "Duplicate", "the same fix is already proposed or applied"},
 	{"not-needed", "NotNeeded", "there is nothing to fix, or it fixed itself"},
 	{"other", "Other", "none of the above (requires --note)"},
@@ -98,8 +98,9 @@ func newRemediationRejectCmd() *cobra.Command {
 Can reject remediations in Pending or Approved phase.
 
 --reason says why, from a fixed list, and is recorded on the RemediationAction as a
-RejectionReason condition. ` + "`dorgu report`" + ` counts rejections by it (KPI Q2: the share
-of decided proposals that were wrong). Add a sentence with --note; --reason other
+RejectionReason condition. ` + "`dorgu report`" + ` counts rejections by it. Only
+wrong-diagnosis counts against proposal precision (KPI Q2); the others (too-risky,
+not-now, duplicate, not-needed, other) are shown as a breakdown. Add a sentence with --note; --reason other
 requires one. Without --reason the proposal is still rejected, and the report counts it
 as "no reason given".
 
@@ -180,7 +181,7 @@ func runRemediationReject(cmd *cobra.Command, args []string) error {
 	output.Success(msg)
 	if reason == nil {
 		output.Info("No reason was recorded. Next time, --reason " + rejectionReasonFlags() +
-			" lets `dorgu report` tell a wrong proposal from a mistimed one.")
+			" lets `dorgu report` count the rejections that called the diagnosis wrong apart from the rest.")
 	}
 	return nil
 }
