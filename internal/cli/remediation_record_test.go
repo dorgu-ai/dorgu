@@ -30,11 +30,12 @@ func statusPatches(t *testing.T, patchLog string) string {
 	return strings.Join(kept, "\n")
 }
 
-// A Pending remediation healed directly is an implicit approval, and the command
-// has always said so. Now it records it: without this the CRD said nobody had
-// approved anything and nothing had happened, while the cluster carried the new
-// limits.
-func TestRunRemediationHealOnPendingRecordsApproval(t *testing.T) {
+// Healing used to double as an approval: a Pending remediation healed directly
+// patched the workload and recorded the approval afterwards. With apply tickets
+// that cannot work, because the ticket is the operator's clearance and only an
+// approval asks the operator for one. So heal on a Pending remediation refuses and
+// changes nothing, on the workload or on the record (CLI-03).
+func TestRunRemediationHealOnPendingRefusesAndWritesNothing(t *testing.T) {
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:    "kind-dorgu-spike",
 		rem:        operatorRemediationFixture, // status.phase: Pending
@@ -47,25 +48,9 @@ func TestRunRemediationHealOnPendingRecordsApproval(t *testing.T) {
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 
-	require.NoError(t, cmd.Execute())
+	require.Error(t, cmd.Execute(), "a remediation nobody approved has no ticket and is not healed")
 
-	log := readPatchLog(t, patchLog)
-	assert.Contains(t, log, "patch deployment api-server", "the workload must still be patched")
-
-	status := statusPatches(t, patchLog)
-	require.NotEmpty(t, status, "a heal that changed the cluster must write the record")
-	assert.Contains(t, status, `"phase":"Approved"`,
-		"healing a Pending remediation records the implicit approval")
-	assert.Contains(t, status, "WorkloadPatched", "the applied marker names what the CLI did")
-	assert.Contains(t, status, "api-server", "the marker names the workload")
-
-	// The record is written after the cluster changed, never before: a record
-	// claiming a patch that then failed is the same divergence in the other
-	// direction.
-	assert.Less(t,
-		strings.Index(log, "patch deployment api-server"),
-		strings.Index(log, "--subresource status"),
-		"the workload patch must land before the record claims it did")
+	assert.Empty(t, readPatchLog(t, patchLog), "nothing is written: not the workload, not the record")
 }
 
 // A re-heal of an already-approved remediation must not rewind or re-stamp the
@@ -97,7 +82,7 @@ func TestRunRemediationHealOnApprovedRecordsMarkerNotPhase(t *testing.T) {
 func TestRunRemediationHealDeclinedRecordsNothing(t *testing.T) {
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:    "kind-dorgu-spike",
-		rem:        operatorRemediationFixture,
+		rem:        approvedRemediation(),
 		persona:    personaFixture,
 		deployment: deploymentListFixture,
 	})
@@ -120,7 +105,7 @@ func TestRunRemediationHealDeclinedRecordsNothing(t *testing.T) {
 func TestRunRemediationHealFailedPatchRecordsNothing(t *testing.T) {
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:             "kind-dorgu-spike",
-		rem:                 operatorRemediationFixture,
+		rem:                 approvedRemediation(),
 		persona:             personaFixture,
 		deployment:          deploymentListFixture,
 		failDeploymentPatch: true,
@@ -338,7 +323,7 @@ func TestHealRecordMessage(t *testing.T) {
 func TestRunRemediationHealReportsAnUnrecordableHeal(t *testing.T) {
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:    "kind-dorgu-spike",
-		rem:        operatorRemediationFixture,
+		rem:        approvedRemediation(),
 		persona:    personaFixture,
 		deployment: deploymentListFixture,
 		statusPatchError: "Error from server (Forbidden): " +

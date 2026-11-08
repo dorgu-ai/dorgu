@@ -47,7 +47,7 @@ func TestParseDeploymentFootprint(t *testing.T) {
 	require.Len(t, got.Entries, 3)
 	assert.Equal(t, "kubectl-client-side-apply", got.Entries[0].Manager)
 	assert.True(t, got.has("dorgu"))
-	assert.True(t, got.has("DORGU"), "manager matching is case-insensitive")
+	assert.False(t, got.has("DORGU"), "manager matching is exact, case included (F5)")
 	assert.False(t, got.has("helm"))
 }
 
@@ -182,7 +182,7 @@ var deploymentAfterStrip = deploymentWithManagers("4472",
 func TestHealPatchesUnderDorgusOwnFieldManager(t *testing.T) {
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:              "kind-dorgu-spike",
-		rem:                  operatorRemediationFixture,
+		rem:                  approvedRemediation(),
 		persona:              personaFixture,
 		deployment:           deploymentListFixture,
 		deploymentAfterPatch: deploymentAfterDorguPatch,
@@ -210,7 +210,7 @@ func TestHealPatchesUnderDorgusOwnFieldManager(t *testing.T) {
 func TestHealLeavesNoDorguManagedFieldsEntry(t *testing.T) {
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:              "kind-dorgu-spike",
-		rem:                  operatorRemediationFixture,
+		rem:                  approvedRemediation(),
 		persona:              personaFixture,
 		deployment:           deploymentListFixture,
 		deploymentAfterPatch: deploymentAfterDorguPatch,
@@ -250,7 +250,7 @@ func TestHealLeavesNoDorguManagedFieldsEntry(t *testing.T) {
 func TestHealWarnsWhenTheFootprintSurvives(t *testing.T) {
 	writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:              "kind-dorgu-spike",
-		rem:                  operatorRemediationFixture,
+		rem:                  approvedRemediation(),
 		persona:              personaFixture,
 		deployment:           deploymentListFixture,
 		deploymentAfterPatch: deploymentAfterDorguPatch,
@@ -280,7 +280,7 @@ func TestHealWarnsWhenTheFootprintSurvives(t *testing.T) {
 func TestHealWarnsWhenTheRemovalKeepsConflicting(t *testing.T) {
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:              "kind-dorgu-spike",
-		rem:                  operatorRemediationFixture,
+		rem:                  approvedRemediation(),
 		persona:              personaFixture,
 		deployment:           deploymentListFixture,
 		deploymentAfterPatch: deploymentAfterDorguPatch,
@@ -306,7 +306,7 @@ func TestHealWarnsWhenTheRemovalKeepsConflicting(t *testing.T) {
 func TestHealSkipsTheStripWhenThereIsNoFootprint(t *testing.T) {
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:    "kind-dorgu-spike",
-		rem:        operatorRemediationFixture,
+		rem:        approvedRemediation(),
 		persona:    personaFixture,
 		deployment: deploymentListFixture,
 		deploymentAfterPatch: deploymentWithManagers("4471",
@@ -331,7 +331,7 @@ func TestHealSkipsTheStripWhenThereIsNoFootprint(t *testing.T) {
 func TestHealStatesTheLimitOfTheUnmanagedClassification(t *testing.T) {
 	writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:              "kind-dorgu-spike",
-		rem:                  operatorRemediationFixture,
+		rem:                  approvedRemediation(),
 		persona:              personaFixture,
 		deployment:           deploymentListFixture,
 		deploymentAfterPatch: deploymentAfterDorguPatch,

@@ -26,13 +26,7 @@ import (
 
 // openScenarios maps a scenario ID to why it is still open and when it is
 // expected to be green.
-var openScenarios = map[string]string{
-	"CLI-01": "expected green by CP3 (stopgap P1): heal trusts spec.workloadRef.managedBy instead of re-detecting ownership on the live Deployment",
-	"CLI-02": "expected green by CP3 (stopgap P1): an empty workloadRef.name with managedBy unmanaged counts as not owned, so the fallback chain picks a Deployment nobody checked",
-	"CLI-03": "expected green by CP3: heal treats an empty phase as an implicit approval; there is no apply ticket to require",
-	"CLI-04": "expected green by CP3: the only context check is a name match, so a renamed context passes; no ticket or identity binds the write",
-	"CLI-06": "expected green by CP3: ownership is read from the proposal, so a workload adopted by Argo CD after it was written is still patched",
-}
+var openScenarios = map[string]string{}
 
 // cliScenarioIDs is the CLI catalogue; every ID has exactly one test below.
 var cliScenarioIDs = []string{"CLI-01", "CLI-02", "CLI-03", "CLI-04", "CLI-05", "CLI-06"}
@@ -168,6 +162,7 @@ func TestAdversarialCLI03HealOnEmptyPhase(t *testing.T) {
 		rem:        withPhase(operatorRemediationFixture, `"phase": ""`),
 		persona:    personaFixture,
 		deployment: deploymentListFixture,
+		noTicket:   true,
 	})
 	expectBlocked(t, "CLI-03", !res.deployPatch, "status.phase empty; heal patched the Deployment")
 }
@@ -190,6 +185,7 @@ func TestAdversarialCLI04RenamedContext(t *testing.T) {
 		rem:        approvedRemediation(),
 		persona:    personaFixture,
 		deployment: deploymentListFixture,
+		noTicket:   true, // the operator issued none: approved by a status write, never re-checked
 	})
 	expectBlocked(t, "CLI-04", !res.deployPatch,
 		"context acme-prod-cluster renamed to acme-cluster; heal proceeded with no ticket")

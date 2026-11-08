@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -210,10 +211,20 @@ func TestParseDeploymentList(t *testing.T) {
 
 // fakeKubectlResponses configures the dispatching fake kubectl.
 type fakeKubectlResponses struct {
-	context    string // `config current-context`
-	rem        string // get remediationaction
-	persona    string // get applicationpersona
-	deployment string // get deployment (list or object)
+	context string // `config current-context`
+	rem     string // get remediationaction
+	// noTicket turns off the cooperative operator the fixtures otherwise simulate:
+	// by default a Pending remediation is ticketed once approved, an already
+	// approved one carries its ticket, and the Deployments carry a UID and a
+	// resourceVersion. Tests of what happens WITHOUT a ticket set it.
+	noTicket bool
+
+	// remAfterApprove, when set, is served by `get remediationaction` once the
+	// approval status patch has landed: the operator's answer (a ticket, or a
+	// refusal) to the approval.
+	remAfterApprove string
+	persona         string // get applicationpersona
+	deployment      string // get deployment (list or object)
 
 	// failDeploymentPatch makes `kubectl patch deployment` exit non-zero, the
 	// way an RBAC denial or an admission webhook rejection would.
@@ -236,6 +247,18 @@ type fakeKubectlResponses struct {
 	// changed and the record could not be written (CR-02), and distinguishes a
 	// flat refusal from a Conflict, which is retried.
 	statusPatchError string
+
+	// remSequence, when set, serves successive `get remediationaction` calls in
+	// order (the last one repeats), instead of rem / remAfterApprove. It drives the
+	// "the RemediationAction changed between the ticket and the patch" cases. The
+	// reads are: 1 the preflight fetch, 2 the first poll after the approval write,
+	// then one more per poll; the last read before the patch is the re-read the CLI
+	// makes immediately before it writes.
+	remSequence []string
+
+	// clusterPersona is what `get clusterpersona` returns; the default is a list
+	// with none, which is the cluster with no policy object (propose).
+	clusterPersona string
 }
 
 // writeFakeKubectlDispatch installs a fake kubectl on PATH that dispatches by
@@ -243,6 +266,27 @@ type fakeKubectlResponses struct {
 // Cannot be used with t.Parallel.
 func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog string) {
 	t.Helper()
+	if !r.noTicket {
+		r.deployment = withIdentity(t, r.deployment)
+		r.deploymentAfterPatch = withIdentity(t, r.deploymentAfterPatch)
+		r.deploymentAfterStrip = withIdentity(t, r.deploymentAfterStrip)
+		switch phase := statusPhase(r.rem); phase {
+		case "Pending":
+			if r.remAfterApprove == "" {
+				r.remAfterApprove = withTicket(t, r.rem, "Applying")
+			}
+		case "Approved", "Ticketed", "Applying", "Verifying", "Completed":
+			if !hasTicket(r.rem) {
+				// The cooperative operator ticketed an approval it has processed: an
+				// Approved action it has not yet answered holds no ticket.
+				ticketPhase := phase
+				if phase == "Approved" {
+					ticketPhase = "Ticketed"
+				}
+				r.rem = withTicket(t, r.rem, ticketPhase)
+			}
+		}
+	}
 	dir := t.TempDir()
 
 	write := func(base, content string) string {
@@ -252,7 +296,19 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 	}
 	ctxFile := write("context.txt", r.context)
 	remFile := write("rem.json", r.rem)
+	remApprovedFile := write("rem-approved.json", r.remAfterApprove)
 	personaFile := write("persona.json", r.persona)
+	clusterPersonaDoc := r.clusterPersona
+	if clusterPersonaDoc == "" {
+		clusterPersonaDoc = `{"items":[]}`
+	}
+	clusterPersonaFile := write("clusterpersona.json", clusterPersonaDoc)
+	seqDir := filepath.Join(dir, "seq")
+	require.NoError(t, os.MkdirAll(seqDir, 0o700))
+	for i, doc := range r.remSequence {
+		write(filepath.Join("seq", fmt.Sprintf("%d.json", i+1)), doc)
+	}
+	seqCount := len(r.remSequence)
 	deployFile := write("deploy.json", r.deployment)
 	afterPatchFile := write("deploy-after-patch.json", r.deploymentAfterPatch)
 	afterStripFile := write("deploy-after-strip.json", r.deploymentAfterStrip)
@@ -284,6 +340,7 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"    remediationaction|remediationactions) [ -z \"$kind\" ] && kind=rem ;;\n" +
 		"    applicationpersona|applicationpersonas) [ -z \"$kind\" ] && kind=persona ;;\n" +
 		"    deployment|deployments|deploy) [ -z \"$kind\" ] && kind=deploy ;;\n" +
+		"    clusterpersona|clusterpersonas) [ -z \"$kind\" ] && kind=cp ;;\n" +
 		"  esac\n" +
 		"done\n" +
 		"if [ \"$mode\" = patch ]; then echo \"$@\" >> " + patchLog + "\n" +
@@ -294,6 +351,7 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"      echo patched; exit 0 ;;\n" +
 		"    *--subresource\\ status*)\n" +
 		"      if [ " + statusFails + " = 1 ]; then cat " + statusErrFile + " >&2; exit 1; fi\n" +
+		"      touch " + filepath.Join(dir, "approved") + "\n" +
 		"      echo patched; exit 0 ;;\n" +
 		"    *) touch " + filepath.Join(dir, "patched") + " ;;\n" +
 		"  esac\n" +
@@ -301,7 +359,15 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"  echo patched; exit 0; fi\n" +
 		"if [ \"$mode\" = get ]; then\n" +
 		"  case \"$kind\" in\n" +
-		"    rem) cat " + remFile + " ;;\n" +
+		"    cp) cat " + clusterPersonaFile + " ;;\n" +
+		"    rem)\n" +
+		"      if [ " + fmt.Sprint(seqCount) + " -gt 0 ]; then\n" +
+		"        n=0; [ -f " + filepath.Join(dir, "seq.n") + " ] && n=$(cat " + filepath.Join(dir, "seq.n") + ")\n" +
+		"        n=$((n+1)); echo $n > " + filepath.Join(dir, "seq.n") + "\n" +
+		"        [ $n -gt " + fmt.Sprint(seqCount) + " ] && n=" + fmt.Sprint(seqCount) + "\n" +
+		"        cat " + seqDir + "/$n.json\n" +
+		"      elif [ -f " + filepath.Join(dir, "approved") + " ] && [ -s " + remApprovedFile + " ]; then cat " + remApprovedFile + "\n" +
+		"      else cat " + remFile + "; fi ;;\n" +
 		"    persona) cat " + personaFile + " ;;\n" +
 		"    deploy)\n" +
 		"      if [ -f " + filepath.Join(dir, "stripped") + " ] && [ -s " + afterStripFile + " ]; then cat " + afterStripFile + "\n" +
@@ -483,7 +549,7 @@ const deploymentObjectFixture = `{"metadata":{"name":"custom-api"},"spec":{"temp
 // refused (see remediation_ownership_test.go).
 func TestRunRemediationHealExplicitWorkloadAndContainer(t *testing.T) {
 	approved := strings.Replace(
-		withObservedWorkload(t, operatorRemediationFixture, "custom-api", "main"),
+		withObservedWorkload(t, operatorRemediationFixture, "custom-api", "sidecar"),
 		`"phase":"Pending"`, `"phase":"Approved"`, 1)
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:    "kind-dorgu-spike",
@@ -541,7 +607,7 @@ func TestHealWorkloadDeclinedConfirmation(t *testing.T) {
 
 	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
 		context:    "kind-dorgu-spike",
-		rem:        operatorRemediationFixture,
+		rem:        approvedRemediation(),
 		persona:    personaFixture,
 		deployment: deploymentListFixture,
 	})
