@@ -1,0 +1,248 @@
+{
+  "schema": "dorgu.report/v1",
+  "generated_at": "2026-11-08T12:00:00Z",
+  "window": {
+    "since": "7d",
+    "start": "2026-11-01T12:00:00Z",
+    "end": "2026-11-08T12:00:00Z"
+  },
+  "cluster": {
+    "context": "kind-demo",
+    "namespace": "all",
+    "operator_version": "v0.13.0",
+    "application_personas": 3,
+    "self_healing_modes": [
+      "propose"
+    ]
+  },
+  "sources": {
+    "remediation_actions": {
+      "ok": true,
+      "count": 13
+    },
+    "incidents": {
+      "ok": true,
+      "count": 10
+    },
+    "personas": {
+      "ok": true,
+      "count": 3
+    },
+    "events": {
+      "ok": true,
+      "count": 7
+    }
+  },
+  "heal_accounting": {
+    "total": 12,
+    "completed": 4,
+    "clean": 1,
+    "safe_heals": 1,
+    "excluded": {
+      "acknowledged": 0,
+      "expired": 0,
+      "failed": 1,
+      "heal_not_credited": 0,
+      "in_flight": 1,
+      "no_credit_record": 0,
+      "outcome_unconfirmed": 0,
+      "partial": 1,
+      "refused_by_gate": 2,
+      "rejected": 3,
+      "rolled_back": 1,
+      "self_resolved": 2
+    },
+    "heal_not_credited_by_reason": {
+      "NothingPatched": 1,
+      "ResourcesNotTicket": 1
+    }
+  },
+  "tier_a": {
+    "ns_safe_heals": {
+      "safe_heals": 1,
+      "clean_heals": 1
+    },
+    "a2_active_cluster": {
+      "active": true,
+      "proposals_decided": 11
+    },
+    "a5_review_depth": {
+      "proposals_decided": 11,
+      "window_days": 7,
+      "per_week": 11,
+      "no_data": false
+    },
+    "a6_approval_rate": {
+      "approved": 8,
+      "rejected": 3,
+      "rate": 0.7272727272727273,
+      "no_data": false,
+      "band": "in"
+    },
+    "a7_external_agent_share": {
+      "no_data": true,
+      "reason": "a RemediationAction records how its plan was written (planSource), not who proposed it; there is no source field to count until external proposers exist (P2/P3)"
+    },
+    "decisions": {
+      "approved": 8,
+      "rejected": 3
+    },
+    "notes": [
+      "A2 and A5 count decisions (approved or rejected). Reading a proposal with `dorgu remediation diff` leaves no record, so a decision is the measurable proxy for a review.",
+      "A6 is a band, not a target: under 30% means noisy proposals, over 80% means rubber-stamping."
+    ]
+  },
+  "tier_q": {
+    "q1_time_to_heal": {
+      "detect_to_proposal": {
+        "n": 6,
+        "p50_seconds": 3600,
+        "p90_seconds": 3600,
+        "no_data": false
+      },
+      "proposal_to_decision": {
+        "n": 11,
+        "p50_seconds": 3600,
+        "p90_seconds": 3600,
+        "no_data": false
+      },
+      "decision_to_applied": {
+        "n": 5,
+        "p50_seconds": 60,
+        "p90_seconds": 60,
+        "no_data": false
+      },
+      "applied_to_verified": {
+        "n": 4,
+        "p50_seconds": 3540,
+        "p90_seconds": 3540,
+        "no_data": false
+      }
+    },
+    "q2_proposal_precision": {
+      "decided": 11,
+      "wrong": 1,
+      "rate": 0.09090909090909091,
+      "no_data": false,
+      "rejections_by_reason": {
+        "duplicate": 0,
+        "no-reason-given": 1,
+        "not-needed": 0,
+        "other": 0,
+        "too-risky": 1,
+        "wrong-action": 0,
+        "wrong-diagnosis": 1
+      }
+    },
+    "q3_llm_efficiency": {
+      "no_data": true,
+      "reason": "LLM calls and cost per incident are operator metrics (dorgu_llm_requests_total, dorgu_llm_tokens_total), not stored on any CRD",
+      "plan_sources": {
+        "ai-anthropic": 1,
+        "rule-based": 11
+      }
+    },
+    "q6_refusal_mix": {
+      "proposals": 14,
+      "no_data": false,
+      "rows": [
+        {
+          "phase": "apply",
+          "stage": "Ticket",
+          "reason": "TicketExpired",
+          "count": 1,
+          "share_of_proposals": 0.07142857142857142,
+          "flagged": false
+        },
+        {
+          "phase": "approval",
+          "stage": "Guardrails",
+          "reason": "BlastRadius",
+          "count": 1,
+          "share_of_proposals": 0.07142857142857142,
+          "flagged": false
+        },
+        {
+          "phase": "proposal",
+          "stage": "Ground",
+          "reason": "WorkloadGone",
+          "count": 1,
+          "share_of_proposals": 0.07142857142857142,
+          "flagged": false
+        },
+        {
+          "phase": "proposal",
+          "stage": "ModePolicy",
+          "reason": "SelfHealingMode",
+          "count": 1,
+          "share_of_proposals": 0.07142857142857142,
+          "flagged": false
+        }
+      ]
+    }
+  },
+  "first_run_clamps": {
+    "proposals_with_clamp": 1,
+    "step_verdicts": {
+      "clamped": 1,
+      "rejected": 1
+    },
+    "clamps_by_rule": {
+      "blast-radius": 1
+    },
+    "gate_clamps_by_guardrail": {},
+    "no_data": false
+  },
+  "cli_declines": {
+    "no_data": false,
+    "by_reason": {
+      "DorguCLIDeclined": 2,
+      "DorguCLINoTicket": 3,
+      "DorguCLIProtectedContext": 1,
+      "DorguCLITicketExpired": 1
+    },
+    "note": "The CLI records a decline only as a Kubernetes Event, and Kubernetes keeps Events for about an hour unless the cluster is configured otherwise, so declines older than that are not counted here."
+  },
+  "not_measurable": [
+    {
+      "id": "A1",
+      "name": "External installs",
+      "reason": "a cluster cannot tell whether it is ours; read from partner reports"
+    },
+    {
+      "id": "A3",
+      "name": "Design partners",
+      "reason": "comes from the conversation log"
+    },
+    {
+      "id": "A4",
+      "name": "Time to first value",
+      "reason": "measured on a clean-room or screen-shared install, not from CRDs"
+    },
+    {
+      "id": "A8",
+      "name": "4-week retention",
+      "reason": "needs reports from earlier weeks; one cluster's report cannot show it"
+    },
+    {
+      "id": "A9",
+      "name": "Would-pay signals",
+      "reason": "comes from the conversation log"
+    },
+    {
+      "id": "A10",
+      "name": "Inbound",
+      "reason": "comes from GitHub"
+    },
+    {
+      "id": "Q4",
+      "name": "Operator footprint",
+      "reason": "CPU and memory come from /eks-qa and the operator's metrics"
+    },
+    {
+      "id": "Q5",
+      "name": "Clean-room",
+      "reason": "comes from clean-room runs"
+    }
+  ]
+}

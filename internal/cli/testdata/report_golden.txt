@@ -1,0 +1,67 @@
+Dorgu report (dorgu.report/v1)
+  Window:    2026-11-01T12:00:00Z to 2026-11-08T12:00:00Z (last 7d)
+  Cluster:   kind-demo, namespace scope: all
+  Operator:  v0.13.0
+  Read:      RemediationActions 13, IncidentMemories 10, personas 3, Events 7
+
+North star
+  Safe heals: 1  (clean heals whose approval-time gate run passed; clean heals in all: 1)
+
+Heal accounting (12 RemediationActions created in the window)
+  completed: 4
+  clean heals: 1 (HealCredited=True and the incident outcome is resolved)
+  everything else, by why it is not a clean heal:
+    partial              1
+    self_resolved        2
+    rolled_back          1
+    failed               1
+    rejected             3
+    refused_by_gate      2
+    in_flight            1
+  HealCredited=False by reason: NothingPatched 1, ResourcesNotTicket 1
+
+Tier A: value and adoption
+  A2 active cluster:    yes (11 proposals decided)
+  A5 review depth:      11.0 decisions per week (11 over 7 days)
+  A6 approval rate:     72.7% (8 approved, 3 rejected; inside the 30-80% band)
+  A7 external agents:   no data (a RemediationAction records how its plan was written (planSource), not who proposed it; there is no source field to count until external proposers exist (P2/P3))
+  note: A2 and A5 count decisions (approved or rejected). Reading a proposal with `dorgu remediation diff` leaves no record, so a decision is the measurable proxy for a review.
+  note: A6 is a band, not a target: under 30% means noisy proposals, over 80% means rubber-stamping.
+
+Tier Q: operational quality
+  Q1 time to heal (p50 / p90, n):
+    detect -> proposal             1h00m / 1h00m (n=6)
+    proposal -> decision (human)   1h00m / 1h00m (n=11)
+    decision -> applied            1m00s / 1m00s (n=5)
+    applied -> verified            59m00s / 59m00s (n=4)
+  Q2 proposal precision: 9.1% of decided proposals were called wrong (1 of 11)
+    rejections by reason: no-reason-given 1, too-risky 1, wrong-diagnosis 1
+  Q3 LLM efficiency:     no data (LLM calls and cost per incident are operator metrics (dorgu_llm_requests_total, dorgu_llm_tokens_total), not stored on any CRD)
+    plan sources: ai-anthropic 1, rule-based 11
+  Q6 refusal mix (14 proposals; phase / stage / reason):
+    apply     Ticket         TicketExpired              1  (7.1%)
+    approval  Guardrails     BlastRadius                1  (7.1%)
+    proposal  Ground         WorkloadGone               1  (7.1%)
+    proposal  ModePolicy     SelfHealingMode            1  (7.1%)
+
+First-run clamps (spec.steps[].safety and status.gate)
+  proposals with a clamped value: 1
+  clamps by guardrail: blast-radius 1
+  step verdicts: clamped 1, rejected 1
+
+CLI declines (Events on RemediationActions)
+  DorguCLIDeclined           2
+  DorguCLINoTicket           3
+  DorguCLIProtectedContext   1
+  DorguCLITicketExpired      1
+  note: The CLI records a decline only as a Kubernetes Event, and Kubernetes keeps Events for about an hour unless the cluster is configured otherwise, so declines older than that are not counted here.
+
+Not measurable from a cluster
+  A1   External installs: a cluster cannot tell whether it is ours; read from partner reports
+  A3   Design partners: comes from the conversation log
+  A4   Time to first value: measured on a clean-room or screen-shared install, not from CRDs
+  A8   4-week retention: needs reports from earlier weeks; one cluster's report cannot show it
+  A9   Would-pay signals: comes from the conversation log
+  A10  Inbound: comes from GitHub
+  Q4   Operator footprint: CPU and memory come from /eks-qa and the operator's metrics
+  Q5   Clean-room: comes from clean-room runs
