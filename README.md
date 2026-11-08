@@ -110,7 +110,7 @@ dorgu remediation diff <remediation-name> -n <namespace>
 dorgu remediation approve <remediation-name> -n <namespace>
 ```
 
-Healing is **on by default**. Approving patches the Persona spec *and* applies the equivalent change to the running workload, then the operator verifies health and rolls back if the workload regresses. Use `--no-heal` to approve the proposal without touching the workload.
+Healing is **on by default**. Approving patches the Persona spec *and* applies the equivalent change to the running workload, then the operator verifies health and rolls back if the workload regresses. Use `--no-heal` to approve the proposal without touching the workload (you can still `heal` it within the verification window, see [Heal separately](#heal-separately)).
 
 ---
 
@@ -365,11 +365,13 @@ dorgu remediation reject ra-default-api-oom-b71c -n default --reason "handled by
 
 ### Heal separately
 
-If you approved with `--no-heal` and later want the workload change:
+If you approved with `--no-heal` and then want the workload change, run `heal` soon after: it works only while the operator still has the remediation in `Applying`, which is the verification window (10 minutes by default), the same ten minutes the apply ticket lives for.
 
 ```bash
 dorgu remediation heal ra-default-api-oom-b71c -n default
 ```
+
+Once the operator has moved the remediation to `Verifying` or `Completed`, `heal` refuses: the verdict would be about a workload nobody changed, so patching it afterwards would make that verdict wrong. In that case apply the change yourself (or in your own source of truth) and let the next proposal start from there.
 
 Flags: `-n, --namespace`, `--workload`, `--container`, `--yes`, `--kubeconfig`.
 

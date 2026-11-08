@@ -762,6 +762,11 @@ this command shows the refusal and its reason.
 
 Use --next to approve the oldest pending remediation without naming it.
 
+With --no-heal the approval is recorded and the operator still updates the
+persona, but nothing is written to the workload. You can still run
+'dorgu remediation heal' while the remediation is Applying (the verification
+window, 10 minutes by default); after that it is refused.
+
 After approval the CLI waits up to 30 seconds for that ticket, then heals the
 running workload with exactly the ticket: it translates the ticketed
 persona-update resource change (memory/CPU limits/requests) into an equivalent
@@ -933,7 +938,8 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 	// Heal the workload (default on). The operator only patches the persona spec;
 	// the CLI applies the equivalent workload change so the pod actually recovers.
 	if !heal {
-		output.Info("Skipping workload heal (--no-heal). Apply the resource change yourself to recover the pod.")
+		output.Info("Skipping workload heal (--no-heal). Apply the resource change yourself to recover the pod, " +
+			"or run `dorgu remediation heal` while the remediation is still Applying (before it moves to Verifying).")
 		output.Warn("Until you do, the persona and the running workload disagree.")
 		return nil
 	}
@@ -965,7 +971,8 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		output.Warn(fmt.Sprintf(
 			"The remediation is Approved but %s/%s was NOT patched; the persona and the workload now disagree.",
 			exec.Namespace, exec.Deployment))
-		output.Info("Re-run the heal with: dorgu remediation heal " + name + " -n " + namespace)
+		output.Info("Re-run the heal with: dorgu remediation heal " + name + " -n " + namespace +
+			" (it is refused once the operator has moved the remediation to Verifying)")
 		return errSilent
 	}
 	return nil
@@ -1096,7 +1103,11 @@ func newRemediationHealCmd() *cobra.Command {
 matching Deployment and apply it with your credentials, so the pod recovers.
 
 This is run automatically by 'approve' (unless --no-heal); use it to re-run the
-workload sync on its own (e.g. after --no-heal, or if a previous heal failed).
+workload sync on its own (e.g. after --no-heal, or if a previous heal failed),
+but only while the operator still has the remediation in Applying, which is its
+verification window (10 minutes by default). Once it is Verifying or Completed
+the heal is refused, because the operator's verdict would be about a workload
+nobody changed; apply the change yourself instead.
 It needs an approved remediation and applies the operator's apply ticket, not the
 plan: a Pending remediation is refused (approve it first), and so is one whose
 ticket is missing or expired, or was issued before the approval on record.

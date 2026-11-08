@@ -130,10 +130,11 @@ func TestF2_ATicketIssuedInTheFutureOrWithALongLifeIsRefused(t *testing.T) {
 	}
 }
 
-func TestF2_TheApprovalTimeIsTheServersNotTheLocalClock(t *testing.T) {
-	// The ticket is issued after the approvedAt the server holds. Nothing about the
-	// local clock may matter, so an approvedAt far from local time still works when
-	// the ticket follows it.
+func TestF2_ATicketIsComparedToTheRecordedApprovalTimeNotToNow(t *testing.T) {
+	// approvedAt is the CLI's own clock, written into status when it approved, and
+	// the CLI compares the ticket's issuedAt to that recorded value, not to the
+	// time it happens to be now. So an approval recorded 90s ago still accepts a
+	// ticket issued one second after it, however long the CLI has been waiting.
 	r := baseResponses()
 	approved := time.Now().Add(-90 * time.Second).UTC().Truncate(time.Second)
 	r.remAfterApprove = remWith(t, withTicket(t, operatorRemediationFixture, "Applying", ticketAt(approved.Add(time.Second))),

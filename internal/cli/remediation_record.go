@@ -286,7 +286,7 @@ func printRecordWarning(w io.Writer, namespace, name string, e *healExecution, e
 
 	fmt.Fprintf(w, "  The cluster has %s and remediationaction %s/%s does not say so.\n",
 		strings.Join(resourceChangeSummary(e.Change), ", "), namespace, name)
-	fmt.Fprintln(w, "  Close the gap by re-running the heal, which will record it on the way through:")
+	fmt.Fprintln(w, "  Close the gap by re-running the heal while the remediation is still Applying, which will record it on the way through:")
 	fmt.Fprintf(w, "    dorgu remediation heal %s -n %s\n", name, namespace)
 	fmt.Fprintln(w, output.Dim(
 		"  Until then, treat the remediation record as incomplete rather than as evidence."))

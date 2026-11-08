@@ -108,10 +108,13 @@ func (e *noTicketError) Error() string { return e.why + " " + upgradeHint }
 // neither means keep waiting.
 //
 // A ticket answers the approval only if it was issued at or after the approval
-// was recorded (compared on the RemediationAction's own status.approvedAt as the
-// server holds it, never on this machine's clock) and the action is still in the
-// phase the operator leaves a fresh ticket in: Ticketed, or the Applying it moves
-// to in the same pass. A ticket sitting on a Pending action, one issued before
+// was recorded. The comparison is between two clocks: issuedAt is the operator's,
+// and approvedAt is this CLI's own clock, written into status by `approve` (the
+// API server stores it, it does not stamp it). If this machine's clock runs ahead
+// of the operator's by more than the time the operator takes to answer, a fresh
+// ticket reads as issued before the approval and is ignored until the wait times
+// out. The action must also still be in the phase the operator leaves a fresh
+// ticket in: Ticketed, or the Applying it moves to in the same pass. A ticket sitting on a Pending action, one issued before
 // the approval, and one on an action that has moved on to Verifying or Completed
 // are not answers; they are ignored (F2).
 func ticketOutcome(rem *remediationFull) (ready bool, err error) {

@@ -35,7 +35,7 @@ dorgu remediation list
 dorgu remediation diff <remediation> -n <namespace>
 dorgu remediation approve <remediation> -n <namespace>   # approves and heals
 dorgu remediation reject <remediation> -n <namespace> --reason "..."
-dorgu remediation heal <remediation> -n <namespace>      # heal an approved proposal later
+dorgu remediation heal <remediation> -n <namespace>      # heal an approved proposal later (only while it is still Applying)
 ```
 
 Always show the user `dorgu remediation diff` before suggesting `approve`. Never approve on the user's behalf.

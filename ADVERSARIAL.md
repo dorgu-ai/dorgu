@@ -34,7 +34,7 @@ and change nothing the ticket would patch).
 
 Review fixes (B5 fix round): the CLI ignores any ticket that was on the action before its own approval write, and
 accepts one only if it was issued (`status.applyTicket.issuedAt`, operator-set) at or after the `status.approvedAt` the
-server holds, with at most ten minutes of life, in phase `Ticketed` or the `Applying` the operator moves to in the same
+CLI recorded (its own clock), with at most ten minutes of life, in phase `Ticketed` or the `Applying` the operator moves to in the same
 pass. Immediately before it writes, it re-reads the RemediationAction (same ticket, unexpired, still `Ticketed` or
 `Applying`), the Deployment (same UID and generation) and the ClusterPersona (not `observe`; unreadable refuses). The
 footprint strip removes only the exact `dorgu` Update entry it created, never another manager's.
