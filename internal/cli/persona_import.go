@@ -65,7 +65,7 @@ Examples:
 	cmd.Flags().StringVarP(&flags.outputFile, "output", "o", "", "write the personas to a file instead of stdout")
 	cmd.Flags().Bool("dry-run", false, "print the personas without applying (the default)")
 	cmd.Flags().BoolVar(&flags.apply, "apply", false, "apply the personas to the cluster")
-	cmd.Flags().StringVar(&flags.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	cmd.Flags().StringVar(&flags.kubeconfig, "kubeconfig", "", kubeconfigFlagUsage)
 	cmd.MarkFlagsMutuallyExclusive("all", "name")
 	cmd.MarkFlagsMutuallyExclusive("apply", "dry-run")
 

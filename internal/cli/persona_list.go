@@ -32,7 +32,7 @@ Examples:
 
 func init() {
 	personaListCmd.Flags().StringVarP(&personaListFlags.namespace, "namespace", "n", "", "namespace (default: all namespaces)")
-	personaListCmd.Flags().StringVar(&personaListFlags.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	personaListCmd.Flags().StringVar(&personaListFlags.kubeconfig, "kubeconfig", "", kubeconfigFlagUsage)
 }
 
 // personaListItem represents a single ApplicationPersona in a list response.

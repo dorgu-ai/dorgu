@@ -146,8 +146,17 @@ func TestPrintRemediationDiffNoActionsWhenNotPending(t *testing.T) {
 	assert.NotContains(t, out, "dorgu remediation approve")
 }
 
+// withApplicablePatch gives a remediation a resource change the CLI can apply.
+// The rollback block is only printed for a plan that applies something (F-11).
+func withApplicablePatch(r remediationFull) remediationFull {
+	r.Spec.Action.Type = "persona-update"
+	r.Spec.Action.PrePatchState = json.RawMessage(`{"spec":{"resources":{"limits":{"memory":"256Mi"}}}}`)
+	r.Spec.Action.Patch = json.RawMessage(`{"spec":{"resources":{"limits":{"memory":"512Mi"}}}}`)
+	return r
+}
+
 func TestPrintRemediationDiffManualRollback(t *testing.T) {
-	r := makeTestRemediation("fix-manual", "default", "Pending", "resource", "70%", "api")
+	r := withApplicablePatch(makeTestRemediation("fix-manual", "default", "Pending", "resource", "70%", "api"))
 	r.Spec.Rollback = &struct {
 		Enabled          bool   `json:"enabled"`
 		HealthCheckAfter string `json:"healthCheckAfter"`
@@ -271,7 +280,7 @@ func TestActiveRemediationPhases(t *testing.T) {
 }
 
 func TestPrintRemediationDiffAutomaticRollbackNoHealthCheck(t *testing.T) {
-	r := makeTestRemediation("fix-auto", "default", "Pending", "resource", "70%", "api")
+	r := withApplicablePatch(makeTestRemediation("fix-auto", "default", "Pending", "resource", "70%", "api"))
 	r.Spec.Rollback = &struct {
 		Enabled          bool   `json:"enabled"`
 		HealthCheckAfter string `json:"healthCheckAfter"`

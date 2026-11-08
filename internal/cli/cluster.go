@@ -53,7 +53,7 @@ Examples:
 func init() {
 	// Status flags (name is optional, will list all if not provided)
 	clusterStatusCmd.Flags().StringVarP(&clusterFlags.name, "name", "n", "", "ClusterPersona name (optional)")
-	clusterStatusCmd.Flags().StringVar(&clusterFlags.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	clusterStatusCmd.Flags().StringVar(&clusterFlags.kubeconfig, "kubeconfig", "", kubeconfigFlagUsage)
 
 	// Register subcommands
 	clusterCmd.AddCommand(clusterStatusCmd)

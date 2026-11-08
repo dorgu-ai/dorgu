@@ -36,8 +36,11 @@ is what the scheduler has committed, used is what the containers are consuming
 (needs metrics-server). Pods no node has accepted hold no allocation, so they
 are excluded and counted separately.
 
-Also names the Deployments that no ApplicationPersona covers: those are not
-being watched, so nothing about them can appear as an incident. Without -n,
+Also names the Deployments that no ApplicationPersona covers. Those are not
+watched as applications, so Dorgu plans nothing for them. If one of their pods
+fails, the operator can still record an incident for it, marked unattributed:
+it is attached to the workload rather than to a persona, it gets a diagnosis
+and no remediation, and it shows as "<workload> (no persona)". Without -n,
 cluster add-on namespaces are left out.
 
 Exit codes:
@@ -61,7 +64,7 @@ Examples:
 	}
 
 	cmd.Flags().StringP("namespace", "n", "", "filter incidents by namespace")
-	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	cmd.Flags().String("kubeconfig", "", kubeconfigFlagUsage)
 	cmd.Flags().Bool("exit-code", false,
 		"exit 2 when critical incidents are active, 3 when health cannot be judged (for monitoring scripts)")
 
@@ -130,13 +133,16 @@ func (s *incidentsSummary) criticalCount() int {
 }
 
 type incidentBrief struct {
-	Severity  string `json:"severity"`
-	Category  string `json:"category"`
-	Signal    string `json:"signal"`
-	Persona   string `json:"persona"`
-	Namespace string `json:"namespace"`
-	Name      string `json:"name"`
-	Age       string `json:"age"`
+	Severity string `json:"severity"`
+	Category string `json:"category"`
+	Signal   string `json:"signal"`
+	Persona  string `json:"persona"`
+	// Attribution is "unattributed" when no ApplicationPersona claims the
+	// workload and Persona names the workload instead.
+	Attribution string `json:"attribution,omitempty"`
+	Namespace   string `json:"namespace"`
+	Name        string `json:"name"`
+	Age         string `json:"age"`
 }
 
 type remediationSummary struct {
@@ -345,7 +351,7 @@ func printHealthSummary(w io.Writer, s *healthSummary) {
 		if s.ActiveIncidents.Count > 0 {
 			itbl := output.NewTable(w, "SEVERITY", "CATEGORY", "SIGNAL", "PERSONA", "AGE")
 			for _, inc := range s.ActiveIncidents.Items {
-				persona := inc.Persona
+				persona := incidentSubjectLabel(inc.Attribution, inc.Persona)
 				if inc.Namespace != "" {
 					persona = inc.Namespace + "/" + persona
 				}
@@ -589,9 +595,10 @@ func fetchIncidentsBrief(ctx context.Context, kubeconfig, namespace string) *inc
 				CreationTimestamp string `json:"creationTimestamp"`
 			} `json:"metadata"`
 			Spec struct {
-				Category  string `json:"category"`
-				Severity  string `json:"severity"`
-				Detection struct {
+				Attribution string `json:"attribution"`
+				Category    string `json:"category"`
+				Severity    string `json:"severity"`
+				Detection   struct {
 					Signal string `json:"signal"`
 				} `json:"detection"`
 				PersonaRef struct {
@@ -618,13 +625,14 @@ func fetchIncidentsBrief(ctx context.Context, kubeconfig, namespace string) *inc
 			continue
 		}
 		summary.Items = append(summary.Items, incidentBrief{
-			Name:      item.Metadata.Name,
-			Namespace: item.Metadata.Namespace,
-			Severity:  item.Spec.Severity,
-			Category:  item.Spec.Category,
-			Signal:    item.Spec.Detection.Signal,
-			Persona:   item.Spec.PersonaRef.Name,
-			Age:       formatAge(item.Metadata.CreationTimestamp),
+			Name:        item.Metadata.Name,
+			Namespace:   item.Metadata.Namespace,
+			Severity:    item.Spec.Severity,
+			Category:    item.Spec.Category,
+			Signal:      item.Spec.Detection.Signal,
+			Persona:     item.Spec.PersonaRef.Name,
+			Attribution: item.Spec.Attribution,
+			Age:         formatAge(item.Metadata.CreationTimestamp),
 		})
 	}
 	summary.Count = len(summary.Items)

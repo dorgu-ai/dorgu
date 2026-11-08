@@ -59,7 +59,7 @@ Examples:
 func init() {
 	// Status flags
 	personaStatusCmd.Flags().StringVarP(&personaFlags.namespace, "namespace", "n", "default", "Kubernetes namespace")
-	personaStatusCmd.Flags().StringVar(&personaFlags.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	personaStatusCmd.Flags().StringVar(&personaFlags.kubeconfig, "kubeconfig", "", kubeconfigFlagUsage)
 
 	// Register subcommands
 	personaCmd.AddCommand(personaStatusCmd)
