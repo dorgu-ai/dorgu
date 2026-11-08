@@ -653,7 +653,7 @@ func printHealPreamble(w io.Writer, e *healExecution) {
 	}
 	fmt.Fprintln(w, "\nManual steps (not applied automatically):")
 	for _, a := range e.Advisory {
-		fmt.Fprintf(w, "  [%d] %s: %s\n", a.Order, a.Type, a.Description)
+		fmt.Fprintf(w, "  [%d] %s: %s\n", a.Order, a.Type, plainInline(a.Description))
 		if a.Reason != "" {
 			fmt.Fprintf(w, "      %s\n", output.Dim(a.Reason))
 		}

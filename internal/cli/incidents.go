@@ -48,6 +48,11 @@ func newIncidentsListCmd() *cobra.Command {
 		Long: `List IncidentMemory resources from the cluster. By default shows only
 active incidents (not Resolved). Use --all to include resolved incidents.
 
+An incident on a workload that has no ApplicationPersona is still recorded: the
+PERSONA column shows the workload with "(no persona)", and the incident is
+unattributed. Dorgu diagnoses it but proposes no remediation. Onboard the
+workload with "dorgu persona import -n <namespace>" to get one.
+
 Examples:
   dorgu incidents list
   dorgu incidents list --severity critical
@@ -62,7 +67,7 @@ Examples:
 	cmd.Flags().String("phase", "", "filter by phase (Detected, Investigating, Resolved, Recurring)")
 	cmd.Flags().Bool("all", false, "include resolved incidents (default: active only)")
 	cmd.Flags().Int("limit", 50, "maximum number of incidents to show")
-	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	cmd.Flags().String("kubeconfig", "", kubeconfigFlagUsage)
 
 	return cmd
 }
@@ -83,7 +88,7 @@ Examples:
 
 	cmd.Flags().StringP("namespace", "n", "", "namespace of the incident (required)")
 	_ = cmd.MarkFlagRequired("namespace")
-	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	cmd.Flags().String("kubeconfig", "", kubeconfigFlagUsage)
 
 	return cmd
 }
@@ -96,9 +101,12 @@ type incidentFull struct {
 		CreationTimestamp string `json:"creationTimestamp"`
 	} `json:"metadata"`
 	Spec struct {
-		Category   string `json:"category"`
-		Severity   string `json:"severity"`
-		PersonaRef struct {
+		// Attribution is "unattributed" when no single ApplicationPersona
+		// claimed the signals; personaRef then names the workload, not a persona.
+		Attribution string `json:"attribution"`
+		Category    string `json:"category"`
+		Severity    string `json:"severity"`
+		PersonaRef  struct {
 			Kind      string `json:"kind"`
 			Name      string `json:"name"`
 			Namespace string `json:"namespace"`
@@ -297,7 +305,7 @@ func printIncidentsList(w io.Writer, incidents []incidentFull, showAll bool) {
 			output.SeverityColor(inc.Spec.Severity),
 			inc.Spec.Category,
 			inc.Spec.Detection.Signal,
-			inc.Spec.PersonaRef.Name,
+			incidentSubjectLabel(inc.Spec.Attribution, inc.Spec.PersonaRef.Name),
 			output.PhaseColor(inc.Status.Phase),
 			formatAge(inc.Metadata.CreationTimestamp),
 		)
@@ -320,13 +328,17 @@ func printIncidentDescribe(w io.Writer, inc *incidentFull) {
 	fmt.Fprintln(w)
 
 	// Persona reference
-	fmt.Fprintln(w, "Persona:")
-	fmt.Fprintf(w, "  Kind:      %s\n", inc.Spec.PersonaRef.Kind)
-	fmt.Fprintf(w, "  Name:      %s\n", inc.Spec.PersonaRef.Name)
-	if inc.Spec.PersonaRef.Namespace != "" {
-		fmt.Fprintf(w, "  Namespace: %s\n", inc.Spec.PersonaRef.Namespace)
+	if isUnattributed(inc.Spec.Attribution) {
+		printUnattributedSubject(w, inc)
+	} else {
+		fmt.Fprintln(w, "Persona:")
+		fmt.Fprintf(w, "  Kind:      %s\n", inc.Spec.PersonaRef.Kind)
+		fmt.Fprintf(w, "  Name:      %s\n", inc.Spec.PersonaRef.Name)
+		if inc.Spec.PersonaRef.Namespace != "" {
+			fmt.Fprintf(w, "  Namespace: %s\n", inc.Spec.PersonaRef.Namespace)
+		}
+		fmt.Fprintln(w)
 	}
-	fmt.Fprintln(w)
 
 	// Detection
 	fmt.Fprintln(w, "Detection:")
@@ -352,7 +364,7 @@ func printIncidentDescribe(w io.Writer, inc *incidentFull) {
 	if inc.Spec.RootCause != nil {
 		rc := inc.Spec.RootCause
 		fmt.Fprintln(w, "Root Cause:")
-		fmt.Fprintf(w, "  Summary:    %s\n", rc.Summary)
+		writeLabelled(w, "  Summary:    ", withoutLeadingTitle(plainText(rc.Summary), "Root Cause"))
 
 		// Format confidence as percentage.
 		if conf, err := strconv.ParseFloat(rc.Confidence, 64); err == nil {
@@ -365,7 +377,7 @@ func printIncidentDescribe(w io.Writer, inc *incidentFull) {
 		if len(rc.Contributing) > 0 {
 			fmt.Fprintln(w, "  Contributing Signals:")
 			for _, cs := range rc.Contributing {
-				fmt.Fprintf(w, "    - %s: %s\n", cs.Signal, cs.Detail)
+				writeIndented(w, fmt.Sprintf("    - %s: ", cs.Signal), "      ", plainText(cs.Detail))
 			}
 		}
 		fmt.Fprintln(w)
@@ -387,6 +399,43 @@ func printIncidentDescribe(w io.Writer, inc *incidentFull) {
 
 	// Occurrences
 	fmt.Fprintf(w, "Occurrences: %d\n", inc.Status.OccurrenceCount)
+	fmt.Fprintln(w)
+}
+
+// attributionUnattributed is the operator's spec.attribution value for an
+// incident no single ApplicationPersona claimed.
+const attributionUnattributed = "unattributed"
+
+func isUnattributed(attribution string) bool {
+	return attribution == attributionUnattributed
+}
+
+// incidentSubjectLabel names what an incident is attached to for a PERSONA
+// column. For an unattributed incident personaRef.name is the workload, and no
+// persona of that name exists, so the label says so rather than letting a
+// workload pass for a persona (F-12).
+func incidentSubjectLabel(attribution, personaRefName string) string {
+	if isUnattributed(attribution) {
+		return personaRefName + " (no persona)"
+	}
+	return personaRefName
+}
+
+// printUnattributedSubject replaces the Persona block for an incident the
+// operator recorded against a workload because no ApplicationPersona claims it.
+func printUnattributedSubject(w io.Writer, inc *incidentFull) {
+	ref := inc.Spec.PersonaRef
+	fmt.Fprintln(w, "Subject:")
+	fmt.Fprintf(w, "  Attribution: %s\n", attributionUnattributed)
+	fmt.Fprintf(w, "  Workload:    %s\n", ref.Name)
+	if ref.Namespace != "" {
+		fmt.Fprintf(w, "  Namespace:   %s\n", ref.Namespace)
+	}
+	fmt.Fprintf(w, "  There is no ApplicationPersona for this workload, so this incident is recorded against the\n")
+	fmt.Fprintf(w, "  workload itself. Dorgu diagnoses it but proposes no remediation.\n")
+	if ref.Namespace != "" {
+		fmt.Fprintf(w, "  To onboard it: dorgu persona import -n %s\n", ref.Namespace)
+	}
 	fmt.Fprintln(w)
 }
 

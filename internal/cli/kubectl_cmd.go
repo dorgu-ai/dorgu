@@ -33,3 +33,8 @@ func kubectlArgs(kubeconfig, kubeContext string, args []string) []string {
 	}
 	return append(prefix, args...)
 }
+
+// kubeconfigFlagUsage is the help text of every --kubeconfig flag. The flag has
+// no default of its own: when it is empty the CLI passes nothing to kubectl, and
+// kubectl resolves the config itself, $KUBECONFIG first.
+const kubeconfigFlagUsage = "path to kubeconfig (default: kubectl's own resolution: $KUBECONFIG, then ~/.kube/config)"

@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--kubeconfig` help is accurate (F-6).** Every `--kubeconfig` flag said `(default: ~/.kube/config)`. The CLI passes nothing to kubectl when the flag is empty, so kubectl resolves the config itself and `$KUBECONFIG` wins. The help (and the README flag tables) now say that.
+- **AI-written text is readable in a terminal (F-7).** `incidents describe` and `remediation diff` printed the model's markdown raw (`## Root Cause`, `**bold**`, `> **Note**`, numbered lists) with continuation lines falling back to column 0. Headings, emphasis, code spans, links and quotes are now rendered as plain text and every line stays indented under its label. `--json` output is unchanged and keeps the original text.
+- **A protected-context refusal names the command you ran (F-8).** `approve --no-heal` used to be told "refusing to heal". It now reads `refusing to approve`, a plain `approve` says `refusing to approve and heal`, and `heal` keeps `refusing to heal`.
+- **Advisory-only plans no longer claim Dorgu will act (F-11).** `remediation diff` on a plan with no auto-executable step no longer prints the automatic-rollback block or `Owner: unmanaged (nothing reconciles it, so Dorgu may patch it)`. An owner that is someone else is still named, because it says where the manual fix goes.
+- **Incidents on workloads with no ApplicationPersona say so (F-12).** The operator records an incident for a crashing workload that no persona claims (`spec.attribution: unattributed`, `personaRef` naming the workload). The CLI showed that workload name in the PERSONA column as if a persona existed. `incidents list` and `health` now show `<workload> (no persona)`, `incidents describe` replaces the Persona block with a Subject block that says what the incident is attached to and how to onboard it, and `health --json` gains `attribution` on each incident. The `health` help no longer claims that nothing about an unmonitored Deployment can appear as an incident.
+
 ## [0.13.0] - 2026-11-06
 
 ### Upgrade notes

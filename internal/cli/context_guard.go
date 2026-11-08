@@ -32,6 +32,21 @@ func protectedContextPatterns(raw string) []string {
 	return patterns
 }
 
+// protectedAction is the verb a protected-context refusal opens with. It names
+// what the user asked for, because the guard is shared by three command paths
+// and "refusing to heal" is false for one of them (F-8).
+type protectedAction string
+
+const (
+	// actionHeal is `remediation heal`.
+	actionHeal protectedAction = "heal"
+	// actionApprove is `remediation approve --no-heal`: a cluster write (the
+	// operator patches the persona) but no workload change.
+	actionApprove protectedAction = "approve"
+	// actionApproveAndHeal is `remediation approve`, which heals by default.
+	actionApproveAndHeal protectedAction = "approve and heal"
+)
+
 // guardKubeContext refuses to heal against a context whose name matches one of
 // the protected patterns from DORGU_PROTECTED_CONTEXTS (default: "prod").
 //
@@ -39,11 +54,17 @@ func protectedContextPatterns(raw string) []string {
 // defeats it (adversarial scenario CLI-04). It stays as a seatbelt until the
 // harness binds the write to an apply ticket and the approver's identity.
 func guardKubeContext(ctxName string) error {
-	return guardKubeContextWith(ctxName, protectedContextPatterns(os.Getenv(protectedContextsEnv)))
+	return guardKubeContextFor(ctxName, actionHeal)
 }
 
-// guardKubeContextWith is guardKubeContext with the patterns made explicit.
-func guardKubeContextWith(ctxName string, patterns []string) error {
+// guardKubeContextFor is guardKubeContext for the command being run, so the
+// refusal says "approve" to a user who only asked to approve.
+func guardKubeContextFor(ctxName string, action protectedAction) error {
+	return guardKubeContextWith(ctxName, action, protectedContextPatterns(os.Getenv(protectedContextsEnv)))
+}
+
+// guardKubeContextWith is guardKubeContextFor with the patterns made explicit.
+func guardKubeContextWith(ctxName string, action protectedAction, patterns []string) error {
 	name := strings.TrimSpace(ctxName)
 	if name == "" {
 		return fmt.Errorf("no active kube-context; point kubectl at your cluster first")
@@ -52,8 +73,8 @@ func guardKubeContextWith(ctxName string, patterns []string) error {
 	for _, pattern := range patterns {
 		if strings.Contains(lower, pattern) {
 			return fmt.Errorf(
-				"refusing to heal: kube-context %q matches protected pattern %q (%s); switch to a non-production context",
-				name, pattern, protectedContextsEnv)
+				"refusing to %s: kube-context %q matches protected pattern %q (%s); switch to a non-production context",
+				action, name, pattern, protectedContextsEnv)
 		}
 	}
 	return nil

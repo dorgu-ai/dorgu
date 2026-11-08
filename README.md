@@ -253,7 +253,7 @@ dorgu health --exit-code          # non-zero exit on critical incidents (monitor
 |------|-------------|---------|
 | `-n, --namespace` | Filter incidents by namespace | all |
 | `--exit-code` | Exit 2 on active critical incidents, 3 when health cannot be judged | `false` |
-| `--kubeconfig` | Path to kubeconfig | `~/.kube/config` |
+| `--kubeconfig` | Path to kubeconfig | kubectl's own resolution (`$KUBECONFIG`, then `~/.kube/config`) |
 
 ### Incidents
 
@@ -316,7 +316,7 @@ dorgu remediation list --json
 | `--phase` | `Pending`, `Approved`, `Applying`, `Verifying`, `Completed`, … | all active |
 | `--all` | Include completed, rejected, and expired | `false` |
 | `--limit` | Max remediations to show | `50` |
-| `--kubeconfig` | Path to kubeconfig | `~/.kube/config` |
+| `--kubeconfig` | Path to kubeconfig | kubectl's own resolution (`$KUBECONFIG`, then `~/.kube/config`) |
 
 ### Review the diff
 
@@ -353,7 +353,7 @@ dorgu remediation approve ra-default-api-oom-b71c -n default --yes --json
 | `--workload` | Explicit Deployment name (overrides label discovery) | auto |
 | `--container` | Explicit container name to patch | auto |
 | `--yes` | Skip the heal confirmation prompt | `false` |
-| `--kubeconfig` | Path to kubeconfig | `~/.kube/config` |
+| `--kubeconfig` | Path to kubeconfig | kubectl's own resolution (`$KUBECONFIG`, then `~/.kube/config`) |
 
 **Why heal is a CLI step.** The operator patches `ApplicationPersona.spec` — the desired state — and never writes workloads. Without the heal step the persona would say 128Mi while the running pod still had 64Mi and kept OOMing. So the CLI translates the approved `persona-update` into the equivalent Deployment change and applies it with your credentials. v0.8.0 auto-applies the resource limits/requests case (memory and CPU — the OOM and saturation paths). Any other step in the plan is printed as an ordered manual instruction.
 

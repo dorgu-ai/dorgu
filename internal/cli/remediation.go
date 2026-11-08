@@ -176,7 +176,7 @@ Examples:
 	cmd.Flags().String("phase", "", "filter by phase (Pending, Approved, Applying, Verifying, Completed, etc.)")
 	cmd.Flags().Bool("all", false, "include completed/rejected/expired remediations")
 	cmd.Flags().Int("limit", 50, "maximum number of remediations to show")
-	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	cmd.Flags().String("kubeconfig", "", kubeconfigFlagUsage)
 
 	return cmd
 }
@@ -350,7 +350,7 @@ Examples:
 
 	cmd.Flags().StringP("namespace", "n", "", "namespace of the remediation (required)")
 	_ = cmd.MarkFlagRequired("namespace")
-	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	cmd.Flags().String("kubeconfig", "", kubeconfigFlagUsage)
 
 	return cmd
 }
@@ -414,6 +414,10 @@ func fetchRemediation(ctx context.Context, kubeconfig, name, namespace string) (
 func printRemediationDiff(w io.Writer, r *remediationFull) {
 	fmt.Fprintln(w)
 
+	// An advisory plan has no step Dorgu can apply, so there is nothing to
+	// patch, nothing to verify and nothing to roll back.
+	advisory := !hasAutoApplicableChange(r)
+
 	// Header box
 	personaDisplay := r.Spec.PersonaRef.Name
 	if r.Spec.PersonaRef.Kind != "" {
@@ -432,7 +436,12 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 	// owns the one that matters.
 	if ref := r.Spec.WorkloadRef; ref.observed() {
 		fmt.Fprintf(w, "Workload:   %s\n", ref.describe())
-		fmt.Fprintf(w, "Owner:      %s\n", ownerDisplay(ref))
+		// "Dorgu may patch it" is a statement about what Dorgu will do, and an
+		// advisory plan has nothing it could apply (F-11). An owner that is
+		// someone else is still worth naming: it says where the manual fix goes.
+		if !advisory || ref.isOwned() {
+			fmt.Fprintf(w, "Owner:      %s\n", ownerDisplay(ref))
+		}
 	}
 	fmt.Fprintf(w, "Type:       %s\n", r.Spec.Action.Type)
 	fmt.Fprintf(w, "Confidence: %s\n", r.Spec.Confidence)
@@ -450,9 +459,7 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 	// skips the explanation when the two say the same thing (F-15).
 	if explanation := nonRedundantExplanation(r); explanation != "" {
 		fmt.Fprintln(w, "Explanation:")
-		for _, line := range strings.Split(explanation, "\n") {
-			fmt.Fprintf(w, "  %s\n", line)
-		}
+		writeIndented(w, "  ", "  ", plainText(explanation))
 		fmt.Fprintln(w)
 	}
 
@@ -464,7 +471,7 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 	printRemediationWorkloadChange(w, r)
 
 	// Rollback info
-	if r.Spec.Rollback != nil {
+	if r.Spec.Rollback != nil && !advisory {
 		rb := r.Spec.Rollback
 		fmt.Fprintln(w, "Rollback:")
 		if rb.Enabled {
@@ -599,9 +606,7 @@ func printRemediationPlan(w io.Writer, r *remediationFull) {
 
 	if planSummaryIsPrinted(r) {
 		fmt.Fprintln(w, "Plan summary:")
-		for _, line := range strings.Split(r.Spec.PlanSummary, "\n") {
-			fmt.Fprintf(w, "  %s\n", line)
-		}
+		writeIndented(w, "  ", "  ", plainText(r.Spec.PlanSummary))
 		fmt.Fprintln(w)
 	}
 
@@ -620,12 +625,10 @@ func printRemediationPlan(w io.Writer, r *remediationFull) {
 		// The operator appends every guardrail message to the description of a
 		// step it ruled on. printStepSafety prints those below, with the numbers
 		// behind them, so they come off here rather than being said twice.
-		description := descriptionWithoutSafetyMessages(s.Description, s.Safety)
+		description := plainInline(descriptionWithoutSafetyMessages(s.Description, s.Safety))
 		fmt.Fprintf(w, "  [%d] %s (%s; %s): %s\n", s.Order, s.Type, risk, mode, description)
 		if s.Rationale != "" {
-			for _, line := range strings.Split(s.Rationale, "\n") {
-				fmt.Fprintf(w, "      %s\n", line)
-			}
+			writeIndented(w, "      ", "      ", plainText(s.Rationale))
 		}
 		if cmd := runnableStepCommand(s.Command, r.Spec.WorkloadRef); cmd != "" {
 			fmt.Fprintf(w, "      Run: %s\n", cmd)
@@ -774,7 +777,7 @@ Examples:
 	cmd.Flags().String("workload", "", "explicit Deployment name; must be the workload Dorgu observed")
 	cmd.Flags().String("container", "", "explicit container name to patch")
 	cmd.Flags().Bool("yes", false, "skip the heal confirmation prompt")
-	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	cmd.Flags().String("kubeconfig", "", kubeconfigFlagUsage)
 	cmd.MarkFlagsMutuallyExclusive("heal", "no-heal")
 
 	return cmd
@@ -838,13 +841,17 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := guardKubeContext(ctxName); err != nil {
+	heal := healFlag && !noHealFlag
+	action := actionApproveAndHeal
+	if !heal {
+		action = actionApprove
+	}
+	if err := guardKubeContextFor(ctxName, action); err != nil {
 		output.Error(err.Error())
 		output.Info("Nothing was approved and nothing was changed.")
 		return errSilent
 	}
 
-	heal := healFlag && !noHealFlag
 	opts := healOptions{
 		kubeconfig: kubeconfig,
 		workload:   workloadFlag,
@@ -999,7 +1006,7 @@ Examples:
 	cmd.Flags().StringP("namespace", "n", "", "namespace of the remediation (required)")
 	_ = cmd.MarkFlagRequired("namespace")
 	cmd.Flags().String("reason", "", "rejection reason (optional but recommended)")
-	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	cmd.Flags().String("kubeconfig", "", kubeconfigFlagUsage)
 
 	return cmd
 }
@@ -1089,7 +1096,7 @@ Examples:
 	cmd.Flags().String("workload", "", "explicit Deployment name; must be the workload Dorgu observed")
 	cmd.Flags().String("container", "", "explicit container name to patch")
 	cmd.Flags().Bool("yes", false, "skip the heal confirmation prompt")
-	cmd.Flags().String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
+	cmd.Flags().String("kubeconfig", "", kubeconfigFlagUsage)
 
 	return cmd
 }

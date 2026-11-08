@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"io"
+	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestProtectedContextPatterns(t *testing.T) {
@@ -67,5 +71,67 @@ func TestGuardKubeContextNamesTheMatchAndTheVariable(t *testing.T) {
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), `"prod"`)
 		assert.Contains(t, err.Error(), protectedContextsEnv)
+	}
+}
+
+// F-8: the refusal said "refusing to heal" whichever command the user ran, so
+// `approve --no-heal` was told Dorgu would not heal when it had never been asked
+// to. The first line has to name the verb the user actually typed.
+func TestProtectedContextRefusalNamesTheCommandThatWasRun(t *testing.T) {
+	t.Setenv(protectedContextsEnv, "")
+	healed := strings.Replace(operatorRemediationFixture, `"phase": "Pending"`, `"phase": "Approved"`, 1)
+
+	tests := []struct {
+		name       string
+		rem        string
+		newCmd     func() *cobra.Command
+		args       []string
+		wantPrefix string
+	}{
+		{
+			name:       "approve --no-heal only approves",
+			rem:        operatorRemediationFixture,
+			newCmd:     newRemediationApproveCmd,
+			args:       []string{"fix-oom-api-server", "-n", "production", "--no-heal", "--yes"},
+			wantPrefix: "refusing to approve: ",
+		},
+		{
+			name:       "approve heals by default",
+			rem:        operatorRemediationFixture,
+			newCmd:     newRemediationApproveCmd,
+			args:       []string{"fix-oom-api-server", "-n", "production", "--yes"},
+			wantPrefix: "refusing to approve and heal: ",
+		},
+		{
+			name:       "heal heals",
+			rem:        healed,
+			newCmd:     newRemediationHealCmd,
+			args:       []string{"fix-oom-api-server", "-n", "production", "--yes"},
+			wantPrefix: "refusing to heal: ",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writeFakeKubectlDispatch(t, fakeKubectlResponses{
+				context:    "acme-prod-cluster",
+				rem:        tt.rem,
+				persona:    personaFixture,
+				deployment: deploymentListFixture,
+			})
+			cmd := tt.newCmd()
+			cmd.SetArgs(tt.args)
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+
+			var err error
+			stderr := captureStderr(t, func() { err = cmd.Execute() })
+
+			require.Error(t, err)
+			assert.Contains(t, stderr+err.Error(), tt.wantPrefix+`kube-context "acme-prod-cluster"`)
+			if !strings.Contains(tt.wantPrefix, "heal") {
+				assert.NotContains(t, stderr+err.Error(), "heal",
+					"a refusal of a plain approval must not talk about healing")
+			}
+		})
 	}
 }
