@@ -72,9 +72,9 @@ func guardKubeContextWith(ctxName string, action protectedAction, patterns []str
 	lower := strings.ToLower(name)
 	for _, pattern := range patterns {
 		if strings.Contains(lower, pattern) {
-			return fmt.Errorf(
+			return &protectedContextError{context: name, message: fmt.Sprintf(
 				"refusing to %s: kube-context %q matches protected pattern %q (%s); switch to a non-production context",
-				action, name, pattern, protectedContextsEnv)
+				action, name, pattern, protectedContextsEnv)}
 		}
 	}
 	return nil

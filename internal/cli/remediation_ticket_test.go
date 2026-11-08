@@ -19,6 +19,7 @@ type approveRun struct {
 	err      error
 	out      string
 	patchLog string
+	logPath  string // the patch log's path, for readEventLog
 }
 
 func runApprove(t *testing.T, r fakeKubectlResponses, extraArgs ...string) approveRun {
@@ -34,7 +35,7 @@ func runApprove(t *testing.T, r fakeKubectlResponses, extraArgs ...string) appro
 	stdout := captureStdout(t, func() {
 		stderr = captureStderr(t, func() { err = cmd.Execute() })
 	})
-	return approveRun{err: err, out: out.String() + stdout + stderr, patchLog: readPatchLog(t, patchLog)}
+	return approveRun{err: err, out: out.String() + stdout + stderr, patchLog: readPatchLog(t, patchLog), logPath: patchLog}
 }
 
 func baseResponses() fakeKubectlResponses {

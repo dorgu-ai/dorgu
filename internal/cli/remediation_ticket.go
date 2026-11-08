@@ -360,8 +360,7 @@ func bindTicket(ctx context.Context, kubeconfig string, ticket *applyTicket, exe
 		return nil, fmt.Errorf("the apply ticket has no valid expiry (%q); refusing it", ticket.ExpiresAt)
 	}
 	if !now.Before(expires) {
-		return nil, fmt.Errorf("the apply ticket expired at %s; approve a fresh remediation, nothing was applied",
-			expires.UTC().Format(time.RFC3339))
+		return nil, &ticketExpiredError{expiresAt: expires.UTC().Format(time.RFC3339)}
 	}
 	if ticket.WorkloadUID == "" || ticket.Container == "" || ticket.ObservedGeneration <= 0 {
 		return nil, errors.New("the apply ticket is not bound to a workload (UID, container and observed generation are required); refusing it")
@@ -450,7 +449,7 @@ func reverifyBeforePatch(ctx context.Context, kubeconfig string, ticketed *remed
 	}
 	expires, err := time.Parse(time.RFC3339, now.ExpiresAt)
 	if err != nil || !time.Now().Before(expires) {
-		return fmt.Errorf("the apply ticket expired at %s while waiting; nothing was applied to the workload", now.ExpiresAt)
+		return &ticketExpiredError{expiresAt: now.ExpiresAt, whileWaiting: true}
 	}
 
 	live, err := getDeployment(ctx, kubeconfig, bound.Namespace, bound.Deployment)

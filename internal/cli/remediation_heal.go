@@ -782,6 +782,7 @@ func executeHeal(
 
 	if beforePatch != nil {
 		if err := beforePatch(ctx); err != nil {
+			recordDecline(ctx, opts.kubeconfig, r, err)
 			output.Error(fmt.Sprintf("Refusing to patch: %v", err))
 			output.Info("Nothing was applied to the workload.")
 			return errSilent
@@ -834,6 +835,7 @@ func healWithTicket(
 	// action, and is never applied (F2).
 	ticketed, err := waitForTicket(ctx, opts.kubeconfig, r.Metadata.Name, r.Metadata.Namespace, w)
 	if err != nil {
+		recordDecline(ctx, opts.kubeconfig, r, err)
 		printTicketRefusal(w, err)
 		var refused *gateRefusedError
 		if errors.As(err, &refused) {
@@ -844,6 +846,7 @@ func healWithTicket(
 
 	bound, err := bindTicket(ctx, opts.kubeconfig, ticketed.Status.ApplyTicket, exec, time.Now())
 	if err != nil {
+		recordDecline(ctx, opts.kubeconfig, r, err)
 		var declined *ownedWorkloadError
 		if errors.As(err, &declined) {
 			printOwnedWorkloadRefusal(w, ticketed, declined)
@@ -905,6 +908,7 @@ func equalStringMaps(a, b map[string]string) bool {
 func healWorkload(ctx context.Context, r *remediationFull, opts healOptions, in io.Reader, w io.Writer) error {
 	exec, err := planHeal(ctx, r, opts)
 	if err != nil {
+		recordDecline(ctx, opts.kubeconfig, r, err)
 		// An owned workload is a decision, not a breakage: print the owner and
 		// the steps that will actually work, and exit "declined".
 		var declined *ownedWorkloadError

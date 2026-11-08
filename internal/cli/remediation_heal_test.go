@@ -259,6 +259,10 @@ type fakeKubectlResponses struct {
 	// clusterPersona is what `get clusterpersona` returns; the default is a list
 	// with none, which is the cluster with no policy object (propose).
 	clusterPersona string
+
+	// failEventCreate makes `kubectl create` (how the CLI writes its decline
+	// Events) fail, the way a user without events/create would.
+	failEventCreate bool
 }
 
 // writeFakeKubectlDispatch installs a fake kubectl on PATH that dispatches by
@@ -325,6 +329,10 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 	if r.statusPatchError != "" {
 		statusFails = "1"
 	}
+	eventFails := "0"
+	if r.failEventCreate {
+		eventFails = "1"
+	}
 	statusErrFile := write("status-err.txt", r.statusPatchError)
 
 	callLog := filepath.Join(dir, "calls.log")
@@ -337,12 +345,16 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"  case \"$a\" in\n" +
 		"    get) mode=get ;;\n" +
 		"    patch) mode=patch ;;\n" +
+		"    create) mode=create ;;\n" +
 		"    remediationaction|remediationactions) [ -z \"$kind\" ] && kind=rem ;;\n" +
 		"    applicationpersona|applicationpersonas) [ -z \"$kind\" ] && kind=persona ;;\n" +
 		"    deployment|deployments|deploy) [ -z \"$kind\" ] && kind=deploy ;;\n" +
 		"    clusterpersona|clusterpersonas) [ -z \"$kind\" ] && kind=cp ;;\n" +
 		"  esac\n" +
 		"done\n" +
+		"if [ \"$mode\" = create ]; then\n" +
+		"  if [ " + eventFails + " = 1 ]; then echo 'Error from server (Forbidden): events is forbidden' >&2; exit 1; fi\n" +
+		"  cat >> " + filepath.Join(dir, "events.log") + "; echo >> " + filepath.Join(dir, "events.log") + "; echo created; exit 0; fi\n" +
 		"if [ \"$mode\" = patch ]; then echo \"$@\" >> " + patchLog + "\n" +
 		"  case \"$*\" in\n" +
 		"    *managedFields*)\n" +
@@ -391,6 +403,23 @@ const deploymentListFixture = `{"items":[{"metadata":{"name":"api-server"},"spec
 func readCallLog(t *testing.T, patchLog string) string {
 	t.Helper()
 	return readPatchLog(t, filepath.Join(filepath.Dir(patchLog), "calls.log"))
+}
+
+// readEventLog returns the Event manifests the CLI created, one JSON document per
+// line. It lives beside the patch log.
+func readEventLog(t *testing.T, patchLog string) []map[string]any {
+	t.Helper()
+	raw := readPatchLog(t, filepath.Join(filepath.Dir(patchLog), "events.log"))
+	var events []map[string]any
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var ev map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &ev), line)
+		events = append(events, ev)
+	}
+	return events
 }
 
 func readPatchLog(t *testing.T, path string) string {
