@@ -127,13 +127,13 @@ func ticketOutcome(rem *remediationFull) (ready bool, err error) {
 			refused.Status == "True" && refusedAtGate(rem) {
 			return false, &gateRefusedError{reason: refused.Reason, message: refused.Message}
 		}
-		return false, fmt.Errorf("the approval ended in phase %s without applying anything%s", phase, conditionDetail(rem))
+		return false, mismatch("the approval ended in phase %s without applying anything%s", phase, conditionDetail(rem))
 	case "Verifying", "Completed":
 		if ticket == nil {
 			return false, &noTicketError{why: fmt.Sprintf(
 				"The operator moved this remediation to %s without issuing an apply ticket, so it predates tickets.", phase)}
 		}
-		return false, fmt.Errorf("the remediation is already in phase %s: a ticket seen now belongs to an earlier apply, "+
+		return false, mismatch("the remediation is already in phase %s: a ticket seen now belongs to an earlier apply, "+
 			"not to this approval, so nothing was applied to the workload", phase)
 	case "Applying":
 		if ticket == nil {
@@ -168,12 +168,12 @@ func refusedAtGate(rem *remediationFull) bool {
 // caller keeps waiting. One that cannot have come from the operator is refused.
 func ticketAnswersApproval(rem *remediationFull, ticket *applyTicket, now time.Time) (bool, error) {
 	if strings.TrimSpace(rem.Status.ApprovedAt) == "" {
-		return false, errors.New("the remediation records no approval (status.approvedAt), so no ticket on it was issued " +
+		return false, mismatch("the remediation records no approval (status.approvedAt), so no ticket on it was issued " +
 			"for one; nothing was applied to the workload")
 	}
 	approved, err := time.Parse(time.RFC3339, rem.Status.ApprovedAt)
 	if err != nil {
-		return false, fmt.Errorf("the recorded approval time %q is unreadable; nothing was applied to the workload", rem.Status.ApprovedAt)
+		return false, mismatch("the recorded approval time %q is unreadable; nothing was applied to the workload", rem.Status.ApprovedAt)
 	}
 	issued, err := time.Parse(time.RFC3339, ticket.IssuedAt)
 	if err != nil || issued.IsZero() {
@@ -181,14 +181,14 @@ func ticketAnswersApproval(rem *remediationFull, ticket *applyTicket, now time.T
 	}
 	expires, err := time.Parse(time.RFC3339, ticket.ExpiresAt)
 	if err != nil || expires.IsZero() {
-		return false, fmt.Errorf("the apply ticket has no valid expiry (%q); refusing it", ticket.ExpiresAt)
+		return false, mismatch("the apply ticket has no valid expiry (%q); refusing it", ticket.ExpiresAt)
 	}
 	if issued.After(now.Add(ticketFutureSkew)) {
-		return false, fmt.Errorf("the apply ticket claims to be issued at %s, in the future; refusing it",
+		return false, mismatch("the apply ticket claims to be issued at %s, in the future; refusing it",
 			issued.UTC().Format(time.RFC3339))
 	}
 	if expires.Sub(issued) > maxTicketLifetime+ticketTimeSlack {
-		return false, fmt.Errorf("the apply ticket's lifetime (%s) is longer than the operator ever issues; refusing it",
+		return false, mismatch("the apply ticket's lifetime (%s) is longer than the operator ever issues; refusing it",
 			expires.Sub(issued).Round(time.Second))
 	}
 	if issued.Before(approved) {
@@ -313,7 +313,7 @@ func (s *spinner) wait(ctx context.Context, d time.Duration) bool {
 
 func (s *spinner) stop() {
 	if s.active {
-		fmt.Fprint(s.w, "\r"+strings.Repeat(" ", len(s.label)+4)+"\r")
+		_, _ = fmt.Fprint(s.w, "\r"+strings.Repeat(" ", len(s.label)+4)+"\r")
 	}
 }
 
@@ -352,26 +352,25 @@ func bindTicket(ctx context.Context, kubeconfig string, ticket *applyTicket, exe
 		return nil, &noTicketError{why: "This remediation has no apply ticket."}
 	}
 	if exec == nil || exec.Deployment == "" {
-		return nil, errors.New("no workload was resolved for this remediation, so no ticket can be bound to one")
+		return nil, mismatch("no workload was resolved for this remediation, so no ticket can be bound to one")
 	}
 
 	expires, err := time.Parse(time.RFC3339, ticket.ExpiresAt)
 	if err != nil || expires.IsZero() {
-		return nil, fmt.Errorf("the apply ticket has no valid expiry (%q); refusing it", ticket.ExpiresAt)
+		return nil, mismatch("the apply ticket has no valid expiry (%q); refusing it", ticket.ExpiresAt)
 	}
 	if !now.Before(expires) {
-		return nil, fmt.Errorf("the apply ticket expired at %s; approve a fresh remediation, nothing was applied",
-			expires.UTC().Format(time.RFC3339))
+		return nil, &ticketExpiredError{expiresAt: expires.UTC().Format(time.RFC3339)}
 	}
 	if ticket.WorkloadUID == "" || ticket.Container == "" || ticket.ObservedGeneration <= 0 {
-		return nil, errors.New("the apply ticket is not bound to a workload (UID, container and observed generation are required); refusing it")
+		return nil, mismatch("the apply ticket is not bound to a workload (UID, container and observed generation are required); refusing it")
 	}
 	change, err := extractResourceChange(ticket.Patch)
 	if err != nil {
-		return nil, fmt.Errorf("the apply ticket's patch is unreadable: %w", err)
+		return nil, &ticketMismatchError{err: fmt.Errorf("the apply ticket's patch is unreadable: %w", err)}
 	}
 	if change.isEmpty() {
-		return nil, errors.New("the apply ticket carries no resource change")
+		return nil, mismatch("the apply ticket carries no resource change")
 	}
 
 	live, err := getDeployment(ctx, kubeconfig, exec.Namespace, exec.Deployment)
@@ -388,11 +387,11 @@ func bindTicket(ctx context.Context, kubeconfig string, ticket *applyTicket, exe
 		return nil, err
 	}
 	if exec.Container != "" && exec.Container != ticket.Container {
-		return nil, fmt.Errorf("the preview chose container %q but the ticket names %q; the ticket is what is applied, "+
+		return nil, mismatch("the preview chose container %q but the ticket names %q; the ticket is what is applied, "+
 			"so --container must agree with it", exec.Container, ticket.Container)
 	}
 	if !contains(live.Containers, ticket.Container) {
-		return nil, fmt.Errorf("Deployment %s/%s has no container %q, which the ticket names", exec.Namespace, live.Name, ticket.Container)
+		return nil, mismatch("Deployment %s/%s has no container %q, which the ticket names", exec.Namespace, live.Name, ticket.Container)
 	}
 
 	patch, err := buildDeploymentResourcePatch(ticket.Container, change)
@@ -414,11 +413,11 @@ func bindTicket(ctx context.Context, kubeconfig string, ticket *applyTicket, exe
 // time and none of that changes what the ticket would patch (F6).
 func sameWorkloadAsTicket(live deploymentSummary, ticket *applyTicket, exec *healExecution) error {
 	if live.UID != ticket.WorkloadUID {
-		return fmt.Errorf("Deployment %s/%s is not the workload the ticket was issued for (UID %q, ticket %q); nothing was applied",
+		return mismatch("Deployment %s/%s is not the workload the ticket was issued for (UID %q, ticket %q); nothing was applied",
 			exec.Namespace, live.Name, live.UID, ticket.WorkloadUID)
 	}
 	if live.Generation != ticket.ObservedGeneration {
-		return fmt.Errorf("Deployment %s/%s spec changed since the ticket was issued (generation %d, ticket %d); nothing was applied",
+		return mismatch("Deployment %s/%s spec changed since the ticket was issued (generation %d, ticket %d); nothing was applied",
 			exec.Namespace, live.Name, live.Generation, ticket.ObservedGeneration)
 	}
 	return nil
@@ -441,16 +440,16 @@ func reverifyBeforePatch(ctx context.Context, kubeconfig string, ticketed *remed
 		return fmt.Errorf("could not re-read the remediation before patching: %w", err)
 	}
 	if fresh.Status.Phase != "Ticketed" && fresh.Status.Phase != "Applying" {
-		return fmt.Errorf("the remediation is now in phase %q, no longer Ticketed; nothing was applied to the workload", fresh.Status.Phase)
+		return mismatch("the remediation is now in phase %q, no longer Ticketed; nothing was applied to the workload", fresh.Status.Phase)
 	}
 	now := fresh.Status.ApplyTicket
 	was := ticketed.Status.ApplyTicket
 	if now == nil || !sameTicket(now, was) {
-		return errors.New("the apply ticket changed since it was read; nothing was applied to the workload")
+		return mismatch("the apply ticket changed since it was read; nothing was applied to the workload")
 	}
 	expires, err := time.Parse(time.RFC3339, now.ExpiresAt)
 	if err != nil || !time.Now().Before(expires) {
-		return fmt.Errorf("the apply ticket expired at %s while waiting; nothing was applied to the workload", now.ExpiresAt)
+		return &ticketExpiredError{expiresAt: now.ExpiresAt, whileWaiting: true}
 	}
 
 	live, err := getDeployment(ctx, kubeconfig, bound.Namespace, bound.Deployment)
@@ -484,7 +483,7 @@ func sameTicket(a, b *applyTicket) bool {
 func refuseObserveMode(ctx context.Context, kubeconfig string) error {
 	out, err := kubectlCmd(ctx, kubeconfig, "get", "clusterpersona", "-o", "json").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("could not read the ClusterPersona self-healing mode (%s); refusing to patch without knowing it",
+		return mismatch("could not read the ClusterPersona self-healing mode (%s); refusing to patch without knowing it",
 			kubectlErrText(out))
 	}
 	var list struct {
@@ -499,16 +498,16 @@ func refuseObserveMode(ctx context.Context, kubeconfig string) error {
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(out, &list); err != nil {
-		return fmt.Errorf("the ClusterPersona self-healing mode is unreadable (%v); refusing to patch without knowing it", err)
+		return mismatch("the ClusterPersona self-healing mode is unreadable (%v); refusing to patch without knowing it", err)
 	}
 	for _, item := range list.Items {
 		switch mode := item.Spec.Policies.SelfHealing.Mode; mode {
 		case "", "propose", "auto-approve":
 		case "observe":
-			return errors.New("the ClusterPersona self-healing mode is observe: Dorgu only observes on this cluster, " +
+			return mismatch("the ClusterPersona self-healing mode is observe: Dorgu only observes on this cluster, " +
 				"so a ticket does not license a patch; nothing was applied to the workload")
 		default:
-			return fmt.Errorf("the ClusterPersona self-healing mode %q is not one Dorgu recognises; nothing was applied to the workload", mode)
+			return mismatch("the ClusterPersona self-healing mode %q is not one Dorgu recognises; nothing was applied to the workload", mode)
 		}
 	}
 	return nil
@@ -521,4 +520,28 @@ func contains(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// operatorVersionReader reads the operator's image tag. A variable so a test can
+// stand in for a cluster that runs an old operator.
+var operatorVersionReader = readOperatorVersion
+
+// warnIfOperatorPredatesTickets tells the user, when the CLI found no apply
+// ticket, that the likely reason is the operator: one before v0.13.0 does not
+// issue them. It fails closed: a version that cannot be determined (an unreadable
+// Deployment, an image pinned by digest, a tag that is not a version) is said so,
+// never silently dropped, because this CLI cannot tell a slow operator from an old
+// one. Only a release at v0.13.0 or later says nothing extra.
+func warnIfOperatorPredatesTickets(ctx context.Context, kubeconfig string, w io.Writer) {
+	version := operatorVersionReader(ctx, kubeconfig)
+	switch {
+	case operatorPredatesTickets(version):
+		_, _ = fmt.Fprintf(w, "\nWarning: the operator on this cluster is %s, which is older than %s and does not issue apply tickets.\n"+
+			"This CLI cannot heal against it, and that is why no ticket arrived. Upgrade the operator to %s or newer; the CLI and the operator are a pair.\n",
+			*version, reportTicketOperator, reportTicketOperator)
+	case !operatorVersionKnown(version):
+		_, _ = fmt.Fprintf(w, "\nWarning: could not determine the operator version; an operator older than %s issues no tickets.\n"+
+			"If no ticket arrived, check the operator is %s or newer; the CLI and the operator are a pair.\n",
+			reportTicketOperator, reportTicketOperator)
+	}
 }

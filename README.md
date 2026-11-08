@@ -209,8 +209,9 @@ You should see five CRDs: `applicationpersonas`, `clusterpersonas`, `incidentmem
 | `dorgu remediation list` | List remediation proposals |
 | `dorgu remediation diff <name>` | Show a proposal's explanation, ordered plan, and the patch it would apply |
 | `dorgu remediation approve [name]` | Approve a proposal and (by default) heal the workload |
-| `dorgu remediation reject <name>` | Reject a proposal |
+| `dorgu remediation reject <name>` | Reject a proposal, with a `--reason` from a fixed list |
 | `dorgu remediation heal <name>` | Apply an already-approved proposal's change to the workload |
+| `dorgu report` | KPI summary for this cluster (safe heals, approval rate, time to heal, refusals), text or `--json` |
 
 `dorgu incidents` has **`list` and `describe`** only.
 
@@ -360,8 +361,29 @@ dorgu remediation approve ra-default-api-oom-b71c -n default --yes --json
 ### Reject
 
 ```bash
-dorgu remediation reject ra-default-api-oom-b71c -n default --reason "handled by the platform team"
+dorgu remediation reject ra-default-api-oom-b71c -n default --reason wrong-diagnosis
+dorgu remediation reject ra-default-api-oom-b71c -n default --reason too-risky --note "peak traffic until Friday"
 ```
+
+`--reason` is one of `wrong-diagnosis`, `too-risky`, `not-now`, `duplicate`, `not-needed`, `other`. It is recorded on the RemediationAction (a `RejectionReason` condition) so `dorgu report` can count rejections by reason; only `wrong-diagnosis` counts against proposal precision (KPI Q2), the others are a breakdown; `--reason other` needs a `--note`. Free text goes in `--note`; `--reason` no longer takes it. Leaving `--reason` out still rejects the proposal and is counted as "no reason given".
+
+### Report
+
+```bash
+dorgu report                     # last 7 days
+dorgu report --since 30d --json  # a longer window, machine-readable
+dorgu report -n production
+```
+
+A local KPI summary computed from the cluster's own RemediationActions, IncidentMemories, personas and Events. Nothing leaves the cluster. It prints:
+
+- **safe heals** (clean heals whose approval-time gate run passed) and the accounting behind them. A heal is clean only when the RemediationAction completed, `HealCredited` is True and the incident's outcome is `resolved`; partial outcomes, recoveries that did not need Dorgu's change (`self-resolved`) and `HealCredited=False` are listed separately and never counted;
+- approval rate, review depth and proposal precision, with rejections by `--reason`;
+- time to heal (detect to proposal, proposal to decision, decision to applied, applied to verified) as p50 and p90;
+- the refusal mix: what the gate refused at proposal, approval and apply, by stage and reason, plus what the CLI itself declined (those are Events, which Kubernetes keeps for about an hour by default, so older declines are not counted);
+- the clamps the guardrails applied before you saw a plan.
+
+Where there is nothing to measure it says `no data`, never `0`. KPIs a cluster cannot report (installs, partners, retention) are listed as not measurable. `--json` carries `"schema": "dorgu.report/v1"`. The `cluster` section is context only and nothing in the report is computed from it: `application_personas` is `null` (never `0`) when the personas could not be read, and `self_healing_modes` is `null` or empty when the ClusterPersonas could not be read or declare no mode.
 
 ### Heal separately
 

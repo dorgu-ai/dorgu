@@ -81,4 +81,5 @@ func init() {
 	rootCmd.AddCommand(newHealthCmd())
 	rootCmd.AddCommand(newIncidentsCmd())
 	rootCmd.AddCommand(newRemediationCmd())
+	rootCmd.AddCommand(newReportCmd())
 }

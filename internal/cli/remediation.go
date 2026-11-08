@@ -109,6 +109,7 @@ type remediationFull struct {
 	Metadata struct {
 		Name              string `json:"name"`
 		Namespace         string `json:"namespace"`
+		UID               string `json:"uid"`
 		CreationTimestamp string `json:"creationTimestamp"`
 	} `json:"metadata"`
 	Spec struct {
@@ -873,6 +874,7 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		action = actionApprove
 	}
 	if err := guardKubeContextFor(ctxName, action); err != nil {
+		recordDecline(ctx, kubeconfig, rem, err)
 		output.Error(err.Error())
 		output.Info("Nothing was approved and nothing was changed.")
 		return errSilent
@@ -900,6 +902,7 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		// is never coming, which is the F-01 divergence again.
 		var declined *ownedWorkloadError
 		if errors.As(err, &declined) {
+			recordDecline(ctx, kubeconfig, rem, declined)
 			printOwnedWorkloadRefusal(cmd.OutOrStdout(), rem, declined)
 			return withExitCode(ExitDeclined, errSilent)
 		}
@@ -1020,76 +1023,6 @@ func pendingOrderKey(r remediationFull) string {
 		created = t.UTC().Format(time.RFC3339)
 	}
 	return created + "/" + r.Metadata.Namespace + "/" + r.Metadata.Name
-}
-
-// --- reject ---
-
-func newRemediationRejectCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "reject <name>",
-		Short: "Reject a remediation proposal",
-		Long: `Reject a RemediationAction, transitioning it to Rejected phase.
-Can reject remediations in Pending or Approved phase.
-
-Examples:
-  dorgu remediation reject fix-oom-api-server -n production
-  dorgu remediation reject fix-oom-api-server -n production --reason "will handle manually"`,
-		Args: cobra.ExactArgs(1),
-		RunE: runRemediationReject,
-	}
-
-	cmd.Flags().StringP("namespace", "n", "", "namespace of the remediation (required)")
-	_ = cmd.MarkFlagRequired("namespace")
-	cmd.Flags().String("reason", "", "rejection reason (optional but recommended)")
-	cmd.Flags().String("kubeconfig", "", kubeconfigFlagUsage)
-
-	return cmd
-}
-
-func runRemediationReject(cmd *cobra.Command, args []string) error {
-	if _, err := exec.LookPath("kubectl"); err != nil {
-		return fmt.Errorf("kubectl not found in PATH; required for remediation reject")
-	}
-
-	name := args[0]
-	namespace, _ := cmd.Flags().GetString("namespace")
-	reason, _ := cmd.Flags().GetString("reason")
-	kubeconfigFlag, _ := cmd.Flags().GetString("kubeconfig")
-
-	kubeconfig, err := validateKubeconfig(kubeconfigFlag)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), remediationCmdTimeout)
-	defer cancel()
-
-	// Verify phase allows rejection.
-	rem, err := fetchRemediation(ctx, kubeconfig, name, namespace)
-	if err != nil {
-		return err
-	}
-	if rem.Status.Phase != "Pending" && rem.Status.Phase != "Approved" {
-		output.Error(fmt.Sprintf("Remediation is in %s phase, can only reject Pending or Approved remediations",
-			rem.Status.Phase))
-		return errSilent
-	}
-
-	// Patch status to Rejected.
-	patch := `{"status":{"phase":"Rejected"}}`
-	patchArgs := []string{"patch", "remediationaction", name, "-n", namespace,
-		"--type", "merge", "--subresource", "status", "-p", patch}
-	patchOut, err := kubectlCmd(ctx, kubeconfig, patchArgs...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to reject remediation: %s", kubectlErrText(patchOut))
-	}
-
-	msg := "Remediation rejected."
-	if reason != "" {
-		msg += fmt.Sprintf(" Reason: %s", reason)
-	}
-	output.Success(msg)
-	return nil
 }
 
 // --- heal ---
