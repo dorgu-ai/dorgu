@@ -7,7 +7,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Upgrade notes
+## [0.14.0] - 2026-11-09
+
+The CLI half of the Dorgu CP1 release. It is the pair of operator v0.13.0, and the two have to be installed in the right order.
+
+### Migration notes (read this first)
+
+1. **Upgrade this CLI before the operator.** Install CLI v0.14.0, then upgrade the operator to v0.13.0 (and apply its CRDs). An older CLI (v0.13.0 and earlier) ignores apply tickets: it reads `spec.steps[]` and patches the Deployment from the plan without waiting for the operator's clearance, and the operator cannot stop it, because it has no write verbs on Deployments. Between the two upgrades, do not `approve` or `heal` with the old CLI against the new operator. v0.14.0 against an older operator is safe: it approves, waits up to 30 seconds, refuses to patch anything and says why (and warns that the operator is older than v0.13.0); it never falls back to patching from the plan.
+2. **The ticket flow replaces "approve then patch".** `approve` records the approval, waits up to 30 seconds for the operator's apply ticket (`status.applyTicket`, phase `Ticketed`), and patches the Deployment with exactly the ticket's change, after re-checking the action, the Deployment (UID and generation) and the cluster's self-healing mode. A refusal by the operator's gate (`GateRefusedAtApproval`) is shown with its reason and exits 4. `heal` no longer doubles as an approval: approve first. If a script parsed the old output of `approve`, check it.
+3. **BREAKING: `remediation reject --reason` takes a fixed list.** `wrong-diagnosis`, `too-risky`, `not-now`, `duplicate`, `not-needed`, `other`. Free text is now an error that lists the values; put the sentence in `--note` (required with `--reason other`). Leaving `--reason` out still rejects.
+4. **`approve` now reports "approved" only if the approval stands.** See Fixed (R2-3). A script that checks the exit code of `approve` will now see a non-zero exit when the operator expired or superseded the action it had just been asked to approve.
+5. **New:** `dorgu report` (local KPI export, nothing leaves the cluster), `status.applyTicket`/`Ticketed` support, a decline Event for every refusal. Needs operator v0.13.0 for tickets, `HealCredited` and the full report.
+
+### Fixed (R2-3, from the B9 review)
+
+- **`remediation approve` no longer says "approved" before the operator has agreed.** It sent a merge patch with no precondition and printed success at once, so an action the operator then expired (its Pending time-to-live ran out) or superseded (a worse incident on the same workload replaced it) was reported as approved. The approval is now an optimistic-lock patch carrying the `resourceVersion` the CLI read; if anything wrote to the action in between, the CLI re-reads it, retries while it is still Pending, and otherwise says what it became (`Superseded`, `Expired`, ...) and exits non-zero. After a successful write it waits about a second and a half, re-reads, and prints "approved" (and starts a heal) only if the action is still in `Approved` or a later phase of the same approval (`Ticketed`, `Applying`, `Verifying`, `Completed`, `Acknowledged`). Otherwise it prints `<name> is NOT approved (phase Superseded): ...`, nothing is healed, and the exit code is 1 (4 when the operator's gate refused the approval). The window is short by design: an action superseded after the settle is caught by the ticket wait that follows in the default (heal) path.
+
+### Upgrade notes (harness P1 B5, B6)
 
 > **`dorgu report`, third review round (B6, fix round 3).** A standing `ProposalRefused=True/Guardrails_Concurrent` is read as the incident's own fix, and kept out of the refusal mix, only while the incident has an own RemediationAction that is pending or in flight (Pending, Approved, Ticketed, Applying, Verifying) or the incident is `Resolved`. A finished own action (Completed, Acknowledged, RolledBack, however old) or a resolution record that is not `Resolved` (a rollback leaves the incident open and re-proposable) no longer hides a real refusal, which is counted. The JSON `cluster` section is documented as context only: `application_personas` is `null` (never `0`) when unreadable and `self_healing_modes` is `null` or empty.
 >
