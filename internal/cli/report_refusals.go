@@ -19,6 +19,11 @@ type collected struct {
 	deferred int
 }
 
+// deferralsNotRecorded is what the report says about deferrals. The operator deliberately does
+// not write them on objects (B6: a deferral repeats every cycle and is not an event in the life of
+// an incident), so the report cannot count them and must not say 0.
+const deferralsNotRecorded = "not recorded on cluster objects (see the dorgu_gate_decisions_total metric, result=deferred)"
+
 // isDeferredProposal reports whether a ProposalRefused reason is really an
 // outstanding proposal. The operator no longer writes it, but an operator before
 // the fix wrote DedupCooldown_ActiveRemediation on every open incident one cycle
@@ -103,8 +108,8 @@ func collectRefusals(ras []*reportRA, incidents []reportIncident, allRAs []repor
 	}
 
 	for i := range incidents {
-		cond := incidents[i].condition(conditionProposalRefused)
-		if cond == nil || cond.Status != "True" {
+		cond, recorded := proposalRefusalOf(&incidents[i])
+		if cond == nil {
 			continue
 		}
 		at, ok := parseReportTime(cond.LastTransitionTime)
@@ -120,9 +125,31 @@ func collectRefusals(ras []*reportRA, incidents []reportIncident, allRAs []repor
 			continue
 		}
 		c.rows[refusalKey{reportPhaseProposal, stage, reason}]++
-		c.proposalTime++
+		// A refusal that was answered by a proposal (the operator proposes the rest of a plan
+		// it refused part of) has its proposal among the RemediationActions already.
+		if !recorded || len(ownActions[incidents[i].Metadata.Namespace+"/"+incidents[i].Metadata.Name]) == 0 {
+			c.proposalTime++
+		}
 	}
 	return c
+}
+
+// proposalRefusalOf returns the condition that says the gate refused a proposal for the
+// incident, and whether it is the operator's durable record.
+//
+// ProposalRefused is the live state: it is rewritten to False when the incident resolves or a
+// later proposal answers it, which erased 3 refusals in D1.1. From operator v0.13.1 the same
+// refusal is also kept as ProposalRefusalRecorded, which is never cleared; when present it is
+// the record. An older operator writes only the live condition, which is read as before (a
+// refusal it cleared is gone). Both present is one refusal.
+func proposalRefusalOf(inc *reportIncident) (cond *reportCondition, recorded bool) {
+	if rec := inc.condition(conditionProposalRefusalRecorded); rec != nil && rec.Status == "True" {
+		return rec, true
+	}
+	if live := inc.condition(conditionProposalRefused); live != nil && live.Status == "True" {
+		return live, false
+	}
+	return nil, false
 }
 
 func appliedReasonOf(ra *reportRA) string {
@@ -157,7 +184,11 @@ func splitProposalRefusal(reason string) (stage, guardrail string) {
 // refusalMix turns the collected refusals into Q6's rows, largest first, and flags
 // any reason that is a large share of proposals.
 func refusalMix(proposals int, rows map[refusalKey]int, deferred int) reportRefusals {
-	out := reportRefusals{Proposals: proposals, NoData: proposals == 0, Rows: []reportRefusal{}, Deferred: deferred}
+	out := reportRefusals{Proposals: proposals, NoData: proposals == 0, Rows: []reportRefusal{}, DeferredNote: deferralsNotRecorded}
+	if deferred > 0 {
+		// Only an operator before the fix wrote deferrals onto objects, so this is a floor.
+		out.Deferred = &deferred
+	}
 	for k, n := range rows {
 		share := ratio(n, proposals)
 		out.Rows = append(out.Rows, reportRefusal{

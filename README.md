@@ -165,6 +165,22 @@ dorgu version
 
 `curl -f` matters: without it a wrong URL writes the 404 body to disk and the install silently "succeeds". Windows builds (`dorgu_0.8.1_windows_amd64.zip`) and checksums are on the [releases page](https://github.com/dorgu-ai/dorgu/releases).
 
+### Verify a download (build provenance)
+
+Releases from **v0.14.1** carry a [build provenance attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) for every archive and for `checksums.txt`, signed by this repository's release workflow. Check the archive you downloaded with the [GitHub CLI](https://cli.github.com/), in addition to the checksum:
+
+```bash
+# the archive from the step above
+gh attestation verify dorgu.tar.gz --owner dorgu-ai
+
+# the checksums file, then the archive against it
+curl -fLO "https://github.com/dorgu-ai/dorgu/releases/download/v${VERSION}/checksums.txt"
+gh attestation verify checksums.txt --owner dorgu-ai
+sha256sum -c --ignore-missing checksums.txt   # run next to the archive, under its release name
+```
+
+A passing `gh attestation verify` says the file was built by `dorgu-ai/dorgu`'s release workflow from a tagged commit, and names the commit; a checksum alone only says the file matches the checksums beside it. Releases before v0.14.1 have no attestation (`gh attestation verify` answers 404 for them), so the checksum is the only check there.
+
 ### Operator
 
 The operator is required for `dorgu incidents`, `dorgu remediation`, `dorgu persona` and `dorgu cluster status`. `dorgu health` works without it but shows no incidents or proposals.

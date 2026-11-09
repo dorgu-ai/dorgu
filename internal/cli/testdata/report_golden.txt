@@ -45,7 +45,7 @@ Tier Q: operational quality
     approval  Guardrails     BlastRadius                1  (7.1%)
     proposal  Ground         WorkloadGone               1  (7.1%)
     proposal  ModePolicy     SelfHealingMode            1  (7.1%)
-    not refusals: 1 incident(s) with a proposal waiting for a decision (counted neither as refusals nor as proposals)
+    not refusals: 1 incident(s) with a proposal waiting for a decision, from conditions an older operator wrote (counted neither as refusals nor as proposals); otherwise deferred proposals are not recorded on cluster objects (see the dorgu_gate_decisions_total metric, result=deferred)
 
 First-run clamps (spec.steps[].safety and status.gate)
   proposals with a clamped value: 1

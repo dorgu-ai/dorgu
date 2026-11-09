@@ -31,7 +31,7 @@ func TestN1_AConcurrentRefusalWhileTheIncidentsOwnActionIsInFlightIsDeferred(t *
 			q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 			assert.Empty(t, q6.Rows, "the incident's own fix is being worked: nothing was refused")
-			assert.Equal(t, 1, q6.Deferred)
+			assert.Equal(t, 1, deferredCount(q6))
 			assert.Equal(t, 1, q6.Proposals, "the RemediationAction is counted once, the condition not again")
 		})
 	}
@@ -41,7 +41,7 @@ func TestN1_AConcurrentRefusalOnAResolvedIncidentIsDeferred(t *testing.T) {
 	q6 := buildReport(resolvedConcurrentIncident(t), reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 	assert.Empty(t, q6.Rows)
-	assert.Equal(t, 1, q6.Deferred)
+	assert.Equal(t, 1, deferredCount(q6))
 }
 
 func TestN1_AConcurrentRefusalWithNoActionOfItsOwnIsStillARefusal(t *testing.T) {
@@ -52,7 +52,7 @@ func TestN1_AConcurrentRefusalWithNoActionOfItsOwnIsStillARefusal(t *testing.T) 
 	require.Len(t, q6.Rows, 1)
 	assert.Equal(t, "Guardrails", q6.Rows[0].Stage)
 	assert.Equal(t, "Concurrent", q6.Rows[0].Reason)
-	assert.Equal(t, 0, q6.Deferred)
+	assert.Equal(t, 0, deferredCount(q6))
 }
 
 func TestN1_AFailedOrRejectedActionDoesNotExemptAConcurrentRefusal(t *testing.T) {

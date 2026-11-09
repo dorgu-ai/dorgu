@@ -7,6 +7,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.14.1] - Unreleased
+
+Patch release for the findings of the dogfood upgrade to operator 0.13.0 / CLI v0.14.0 (D1.1), paired with operator v0.13.1. No new command or flag. Upgrade the CLI first, as before.
+
+### Migration notes
+
+1. **`dorgu report --json`: `tier_q.q6_refusal_mix.deferred_proposals` is now `null` instead of `0` when no deferral was found, and a new `deferred_note` string is always present.** The operator deliberately does not record deferrals on cluster objects (B6: a deferral repeats every cycle), so the report could never know the number, and a `0` was a claim it could not make. The text report says the same: `deferred proposals: not recorded on cluster objects (see the dorgu_gate_decisions_total metric, result=deferred)`. When an operator from before v0.13.0 left deferrals on incidents, the number is still reported (a floor) beside the note. A script that read the field as an integer must accept `null`.
+2. **`dorgu health --json`: `pending_remediations.count` counts proposals in `Pending` only, as the v0.14.0 changelog said it did.** It also counted `Approved`, which are not awaiting approval. A new `approved` field (omitted when 0) carries the approved-and-not-yet-applied count; the text view prints it as `Approved, not yet applied: N` when there is one. A dashboard that summed the two should read both fields.
+3. **`dorgu report` reads the operator's new `ProposalRefusalRecorded` condition (operator v0.13.1).** With an older operator it reads the live `ProposalRefused` condition as before.
+
+### Fixed
+
+- **`dorgu report` missed refusals that happened (D1.1 finding 4).** Three `Validate/step-command` refusals were on the cluster for a while and never reached Q6. `ProposalRefused` is the live state and the operator rewrites it to `False` when the incident resolves or a later proposal answers it, which the report skipped; the refusal was gone from every object by the time anyone ran the report. The operator now also keeps `ProposalRefusalRecorded` (status `True`, the same `<Stage>_<Reason>` enum, never cleared), and the report counts a refusal from it, once, dated by when it was first made. A refusal that was answered by a proposal is counted as a refusal and its RemediationAction is the one proposal in the denominator. Clearing the live condition on resolve was right (an incident that resolved is not refused now); counting only the live condition was the defect. A refusal an older operator already cleared cannot be recovered.
+- **`dorgu health` "Awaiting approval" counts Pending only (D1.1, v0.14.0 carry-over).** See migration note 2.
+
+### Added
+
+- **Build provenance attestation (D1.1 finding 9).** The release workflow attests every release archive and `checksums.txt` with `actions/attest-build-provenance`. Verify with `gh attestation verify <file> --owner dorgu-ai` (README, "Verify a download"). Releases before this one have no attestation. The workflow change is exercised by the first tag that includes it.
+
 ## [0.14.0] - 2026-11-09
 
 The CLI half of the Dorgu CP1 release. It is the pair of operator v0.13.0, and the two have to be installed in the right order.

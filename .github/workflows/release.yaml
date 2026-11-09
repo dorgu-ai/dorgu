@@ -7,6 +7,10 @@ on:
 
 permissions:
   contents: write
+  # Build provenance (actions/attest-build-provenance): signed with the workflow's OIDC
+  # identity and stored in GitHub's attestation store.
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -41,3 +45,18 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Provenance for every release archive (the binaries are inside them): the digests are the
+      # ones GoReleaser wrote to checksums.txt, so `gh attestation verify <archive>` checks the file
+      # the install instructions download.
+      - name: Attest release archives build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: dist/checksums.txt
+
+      # And for the checksums file itself, so the file a person runs `sha256sum -c` against is
+      # known to come from this workflow too.
+      - name: Attest checksums build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/checksums.txt

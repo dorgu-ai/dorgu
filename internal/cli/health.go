@@ -146,7 +146,11 @@ type incidentBrief struct {
 }
 
 type remediationSummary struct {
+	// Count is the proposals awaiting approval: phase Pending, and only that.
 	Count int `json:"count"`
+	// Approved is the proposals a human approved that the operator has not applied yet
+	// (phase Approved). They are not awaiting approval, so they are not in Count.
+	Approved int `json:"approved,omitempty"`
 }
 
 func runHealth(cmd *cobra.Command, args []string) error {
@@ -378,6 +382,9 @@ func printHealthSummary(w io.Writer, s *healthSummary) {
 func printPendingRemediations(w io.Writer, r *remediationSummary) {
 	if r != nil {
 		fmt.Fprintf(w, "Awaiting approval: %d\n", r.Count)
+		if r.Approved > 0 {
+			fmt.Fprintf(w, "Approved, not yet applied: %d\n", r.Approved)
+		}
 		if r.Count > 0 {
 			output.DimPrint("  Run 'dorgu remediation list' to review pending fixes")
 		}
@@ -679,11 +686,14 @@ func fetchPendingRemediations(ctx context.Context, kubeconfig, namespace string)
 		return &remediationSummary{Count: 0}
 	}
 
-	count := 0
+	pending, approved := 0, 0
 	for _, item := range list.Items {
-		if item.Status.Phase == "Pending" || item.Status.Phase == "Approved" {
-			count++
+		switch item.Status.Phase {
+		case "Pending":
+			pending++
+		case "Approved":
+			approved++
 		}
 	}
-	return &remediationSummary{Count: count}
+	return &remediationSummary{Count: pending, Approved: approved}
 }
