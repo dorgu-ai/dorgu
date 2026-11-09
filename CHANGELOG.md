@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [0.14.1] - Unreleased
+## [0.14.1] - 2026-11-09
 
 Patch release for the findings of the dogfood upgrade to operator 0.13.0 / CLI v0.14.0 (D1.1), paired with operator v0.13.1. No new command or flag. Upgrade the CLI first, as before.
 
