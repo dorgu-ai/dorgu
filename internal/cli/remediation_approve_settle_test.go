@@ -47,6 +47,7 @@ func TestApproveIsNotReportedWhenTheOperatorMovedTheActionOnAfterwards(t *testin
 		"Superseded":       "superseded",
 		"ApprovalTimedOut": "time-to-live",
 		"PredatesGate":     "predates",
+		"IncidentResolved": "incident resolved",
 	} {
 		t.Run(reason, func(t *testing.T) {
 			r := baseResponses()

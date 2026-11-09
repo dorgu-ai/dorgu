@@ -38,7 +38,7 @@ func TestFix_AStandingActiveRemediationConditionIsNotARefusal(t *testing.T) {
 
 	assert.Equal(t, 1, q6.Proposals, "the proposal is counted once: the RemediationAction, not the incident condition too")
 	assert.Empty(t, q6.Rows, "an outstanding proposal is not a refusal")
-	assert.Equal(t, 1, q6.Deferred)
+	assert.Equal(t, 1, deferredCount(q6))
 	assert.Contains(t, renderText(t, in), "not refusals: 1 incident(s) with a proposal waiting for a decision")
 }
 
@@ -50,7 +50,7 @@ func TestFix_ARealProposalRefusalIsStillCounted(t *testing.T) {
 
 	require.Len(t, q6.Rows, 1)
 	assert.Equal(t, "ModePolicy", q6.Rows[0].Stage)
-	assert.Equal(t, 0, q6.Deferred)
+	assert.Equal(t, 0, deferredCount(q6))
 }
 
 // --- F-2: every mismatch decline is a bounded Event reason -----------------

@@ -231,8 +231,12 @@ func renderTierQ(w io.Writer, q reportTierQ) {
 				row.Phase, row.Stage, row.Reason, row.Count, percent(row.ShareOfProposals), flag)
 		}
 	}
-	if r.Deferred > 0 {
-		fmt.Fprintf(w, "    not refusals: %d incident(s) with a proposal waiting for a decision (counted neither as refusals nor as proposals)\n", r.Deferred)
+	// Deferrals are not stored on cluster objects, so there is no count to give: never a 0.
+	if r.Deferred != nil && *r.Deferred > 0 {
+		fmt.Fprintf(w, "    not refusals: %d incident(s) with a proposal waiting for a decision, from conditions an older operator wrote (counted neither as refusals nor as proposals); otherwise deferred proposals are %s\n",
+			*r.Deferred, r.DeferredNote)
+	} else if r.DeferredNote != "" {
+		fmt.Fprintf(w, "    deferred proposals: %s\n", r.DeferredNote)
 	}
 	fmt.Fprintln(w)
 }

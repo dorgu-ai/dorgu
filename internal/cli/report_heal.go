@@ -6,14 +6,17 @@ import (
 
 // Condition types and reasons the operator writes that the report reads.
 const (
-	conditionHealCredited      = "HealCredited"
-	conditionWorkloadDiverged  = "WorkloadDiverged"
-	conditionVerified          = "Verified"
-	conditionRejected          = "Rejected"
-	conditionProposalRefused   = "ProposalRefused"
-	incidentOutcomeResolved    = "resolved"
-	incidentOutcomePartial     = "partial"
-	incidentOutcomeSelfResolve = "self-resolved"
+	conditionHealCredited     = "HealCredited"
+	conditionWorkloadDiverged = "WorkloadDiverged"
+	conditionVerified         = "Verified"
+	conditionRejected         = "Rejected"
+	conditionProposalRefused  = "ProposalRefused"
+	// conditionProposalRefusalRecorded is the durable record of a proposal refusal: unlike
+	// ProposalRefused it is not cleared when the incident resolves or a proposal answers it.
+	conditionProposalRefusalRecorded = "ProposalRefusalRecorded"
+	incidentOutcomeResolved          = "resolved"
+	incidentOutcomePartial           = "partial"
+	incidentOutcomeSelfResolve       = "self-resolved"
 )
 
 // accountForHeals sorts every RemediationAction created in the window into a clean

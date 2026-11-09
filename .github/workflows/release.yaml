@@ -7,6 +7,10 @@ on:
 
 permissions:
   contents: write
+  # Build provenance (actions/attest-build-provenance): signed with the workflow's OIDC
+  # identity and stored in GitHub's attestation store.
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -41,3 +45,53 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Provenance for every release archive (the binaries are inside them): the digests are the
+      # ones GoReleaser wrote to checksums.txt, so `gh attestation verify <archive>` checks the file
+      # the install instructions download.
+      #
+      # Both attest steps are continue-on-error: they run after GoReleaser has published, and a
+      # failure of one must not stop the other or hide that the release itself went out. The last
+      # step turns a skipped attestation into a red run with an error annotation and a summary.
+      - name: Attest release archives build provenance
+        id: attest_archives
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: dist/checksums.txt
+
+      # And for the checksums file itself, so the file a person runs `sha256sum -c` against is
+      # known to come from this workflow too.
+      - name: Attest checksums build provenance
+        id: attest_checksums
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/checksums.txt
+
+      # Fails the run, loudly, if an attestation did not happen. The release is already published.
+      - name: Fail if any attestation was skipped
+        if: ${{ always() }}
+        env:
+          ARCHIVES: ${{ steps.attest_archives.outcome }}
+          CHECKSUMS: ${{ steps.attest_checksums.outcome }}
+        run: |
+          missing=0
+          details=""
+          for pair in "release archives:${ARCHIVES}" "checksums.txt:${CHECKSUMS}"; do
+            name="${pair%%:*}"
+            outcome="${pair#*:}"
+            if [ "${outcome}" != "success" ]; then
+              missing=1
+              echo "::error title=Attestation missing::${name} has NO build provenance attestation (outcome: ${outcome:-not run}). The release itself was published; re-run this step or file it as a release defect."
+              details="${details}- **${name}**: not attested (outcome: ${outcome:-not run})"$'\n'
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            {
+              echo "### Build provenance attestation was skipped"
+              printf '%s' "${details}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "All attestations were created." >> "$GITHUB_STEP_SUMMARY"

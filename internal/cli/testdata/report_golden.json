@@ -189,7 +189,8 @@
           "flagged": false
         }
       ],
-      "deferred_proposals": 1
+      "deferred_proposals": 1,
+      "deferred_note": "not recorded on cluster objects (see the dorgu_gate_decisions_total metric, result=deferred)"
     }
   },
   "first_run_clamps": {

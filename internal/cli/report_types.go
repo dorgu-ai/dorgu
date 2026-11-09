@@ -277,7 +277,9 @@ type reportRefusals struct {
 	// Deferred counts incidents whose proposal is outstanding (the gate answers the
 	// repeat attempt with active-remediation). It is waiting for a human, not a
 	// refusal, and is in neither Rows nor Proposals.
-	Deferred int `json:"deferred_proposals"`
+	Deferred *int `json:"deferred_proposals"`
+	// DeferredNote says where deferrals are actually recorded.
+	DeferredNote string `json:"deferred_note"`
 }
 
 type reportRefusal struct {
