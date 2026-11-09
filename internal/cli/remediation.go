@@ -110,6 +110,7 @@ type remediationFull struct {
 		Name              string `json:"name"`
 		Namespace         string `json:"namespace"`
 		UID               string `json:"uid"`
+		ResourceVersion   string `json:"resourceVersion"`
 		CreationTimestamp string `json:"creationTimestamp"`
 	} `json:"metadata"`
 	Spec struct {
@@ -915,15 +916,11 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Patch status to Approved.
-	now := time.Now().UTC().Format(time.RFC3339)
-	patch := fmt.Sprintf(`{"status":{"phase":"Approved","approvedBy":"cli-user","approvedAt":"%s"}}`, now)
-
-	patchArgs := []string{"patch", "remediationaction", name, "-n", namespace,
-		"--type", "merge", "--subresource", "status", "-p", patch}
-	patchOut, err := kubectlCmd(ctx, kubeconfig, patchArgs...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to approve remediation: %s", kubectlErrText(patchOut))
+	// Write the approval as an optimistic-lock patch, then confirm after a short
+	// settle that the operator still has it Approved (R2-3). "Approved" is printed
+	// only past this point.
+	if err := approveAndConfirm(ctx, kubeconfig, namespace, name, rem, cmd.OutOrStdout()); err != nil {
+		return err
 	}
 
 	// Say what approval actually does for this plan. An advisory plan changes
