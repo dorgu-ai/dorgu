@@ -114,25 +114,26 @@ type reportHealAccounting struct {
 // Exclusion categories. Each RemediationAction lands in exactly one of Clean or
 // these, so Total = Clean + the sum of Excluded.
 const (
-	excludedPartial         = "partial"
-	excludedSelfResolved    = "self_resolved"
-	excludedHealNotCredited = "heal_not_credited"
-	excludedNoCreditRecord  = "no_credit_record"
-	excludedOutcomeUnknown  = "outcome_unconfirmed"
-	excludedRolledBack      = "rolled_back"
-	excludedFailed          = "failed"
-	excludedRejected        = "rejected"
-	excludedExpired         = "expired"
-	excludedAcknowledged    = "acknowledged"
-	excludedRefusedAtGate   = "refused_by_gate"
-	excludedInFlight        = "in_flight"
+	excludedPartial           = "partial"
+	excludedSelfResolved      = "self_resolved"
+	excludedHealNotCredited   = "heal_not_credited"
+	excludedNoCreditRecord    = "no_credit_record"
+	excludedOutcomeUnknown    = "outcome_unconfirmed"
+	excludedRolledBack        = "rolled_back"
+	excludedApprovedNotHealed = "approved_not_healed"
+	excludedFailed            = "failed"
+	excludedRejected          = "rejected"
+	excludedExpired           = "expired"
+	excludedAcknowledged      = "acknowledged"
+	excludedRefusedAtGate     = "refused_by_gate"
+	excludedInFlight          = "in_flight"
 )
 
 // allExclusions is every category, so the report lists all of them with their
 // counts, zeros included: a zero here is a measurement.
 var allExclusions = []string{
 	excludedPartial, excludedSelfResolved, excludedHealNotCredited, excludedNoCreditRecord,
-	excludedOutcomeUnknown, excludedRolledBack, excludedFailed, excludedRejected,
+	excludedOutcomeUnknown, excludedRolledBack, excludedApprovedNotHealed, excludedFailed, excludedRejected,
 	excludedExpired, excludedAcknowledged, excludedRefusedAtGate, excludedInFlight,
 }
 

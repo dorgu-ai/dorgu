@@ -46,6 +46,7 @@
     "no_data": false,
     "excluded": {
       "acknowledged": 0,
+      "approved_not_healed": 0,
       "expired": 0,
       "failed": 1,
       "heal_not_credited": 0,

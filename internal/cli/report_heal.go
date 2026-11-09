@@ -73,7 +73,7 @@ func classifyOutcome(ra *reportRA, incident *reportIncident) string {
 	case "Completed":
 		return classifyCompleted(ra, incident)
 	case "RolledBack":
-		return excludedRolledBack
+		return classifyRolledBack(ra)
 	case "Failed":
 		if c := ra.condition(conditionGateRefused); c != nil && c.Status == "True" {
 			return excludedRefusedAtGate
@@ -88,6 +88,23 @@ func classifyOutcome(ra *reportRA, incident *reportIncident) string {
 	default:
 		return excludedInFlight
 	}
+}
+
+// classifyRolledBack tells a heal that was rolled back from an approval that never
+// became one. An action approved with --no-heal (or whose heal never happened) is
+// never patched, then verification fails because the workload still has the
+// problem, and the operator rolls the persona back: there was no heal to roll back.
+// The evidence is the operator's own record that nothing was left to undo
+// (WorkloadDiverged=False/WorkloadRestored) and the absence of the CLI's
+// WorkloadPatched record. An action with no such record (an older operator) stays a
+// rollback: the report does not claim what it cannot show.
+func classifyRolledBack(ra *reportRA) string {
+	diverged := ra.condition(conditionWorkloadDiverged)
+	if diverged != nil && diverged.Status == "False" && diverged.Reason == "WorkloadRestored" &&
+		ra.condition(conditionWorkloadPatched) == nil {
+		return excludedApprovedNotHealed
+	}
+	return excludedRolledBack
 }
 
 // classifyCompleted decides a Completed RemediationAction. The order matters: a

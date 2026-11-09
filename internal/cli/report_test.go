@@ -48,18 +48,19 @@ func TestReportCleanHealAccountingFollowsKPIs(t *testing.T) {
 	assert.Equal(t, 1, *h.Clean, "only ra-clean is HealCredited=True with incident outcome resolved")
 	assert.Equal(t, 1, *h.SafeHeals)
 	assert.Equal(t, map[string]int{
-		excludedPartial:         1,
-		excludedSelfResolved:    2,
-		excludedRolledBack:      1,
-		excludedFailed:          1,
-		excludedRefusedAtGate:   2,
-		excludedRejected:        3,
-		excludedInFlight:        1,
-		excludedHealNotCredited: 0,
-		excludedNoCreditRecord:  0,
-		excludedOutcomeUnknown:  0,
-		excludedExpired:         0,
-		excludedAcknowledged:    0,
+		excludedPartial:           1,
+		excludedSelfResolved:      2,
+		excludedRolledBack:        1,
+		excludedApprovedNotHealed: 0,
+		excludedFailed:            1,
+		excludedRefusedAtGate:     2,
+		excludedRejected:          3,
+		excludedInFlight:          1,
+		excludedHealNotCredited:   0,
+		excludedNoCreditRecord:    0,
+		excludedOutcomeUnknown:    0,
+		excludedExpired:           0,
+		excludedAcknowledged:      0,
 	}, h.Excluded)
 	assert.Equal(t, map[string]int{"NothingPatched": 1, "ResourcesNotTicket": 1}, h.HealNotCredited)
 
