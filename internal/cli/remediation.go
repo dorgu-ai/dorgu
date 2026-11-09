@@ -39,6 +39,7 @@ const (
 var activeRemediationPhases = map[string]bool{
 	"Pending":   true,
 	"Approved":  true,
+	"Ticketed":  true,
 	"Applying":  true,
 	"Verifying": true,
 	"Failed":    true,
@@ -54,7 +55,7 @@ Examples:
   dorgu remediation list
   dorgu remediation diff fix-oom-api-server -n production
   dorgu remediation approve fix-oom-api-server -n production
-  dorgu remediation reject fix-oom-api-server -n production --reason "not needed"`,
+  dorgu remediation reject fix-oom-api-server -n production --reason not-needed`,
 		Aliases: []string{"rem"},
 		// Reject a stray subcommand instead of printing help and exiting 0 (F-12).
 		Args: noUnknownSubcommand,
@@ -562,8 +563,7 @@ func printRemediationActions(w io.Writer, r *remediationFull) {
 		fmt.Fprintln(w, "Actions:")
 		fmt.Fprintf(w, "  dorgu remediation approve %s -n %s --no-heal   (record the decision, patch no workload)\n",
 			r.Metadata.Name, r.Metadata.Namespace)
-		fmt.Fprintf(w, "  dorgu remediation reject %s -n %s --reason \"...\"\n",
-			r.Metadata.Name, r.Metadata.Namespace)
+		fmt.Fprintf(w, "  %s\n", rejectCommandHint(r))
 		fmt.Fprintln(w)
 		return
 	}
@@ -573,8 +573,7 @@ func printRemediationActions(w io.Writer, r *remediationFull) {
 		fmt.Fprintln(w, "Carry out the steps above yourself. Nothing changes in the cluster until you do.")
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Actions:")
-		fmt.Fprintf(w, "  dorgu remediation reject %s -n %s --reason \"...\"\n",
-			r.Metadata.Name, r.Metadata.Namespace)
+		fmt.Fprintf(w, "  %s\n", rejectCommandHint(r))
 		fmt.Fprintln(w)
 		return
 	}
@@ -582,9 +581,15 @@ func printRemediationActions(w io.Writer, r *remediationFull) {
 	fmt.Fprintln(w, "Actions:")
 	fmt.Fprintf(w, "  dorgu remediation approve %s -n %s\n",
 		r.Metadata.Name, r.Metadata.Namespace)
-	fmt.Fprintf(w, "  dorgu remediation reject %s -n %s --reason \"...\"\n",
-		r.Metadata.Name, r.Metadata.Namespace)
+	fmt.Fprintf(w, "  %s\n", rejectCommandHint(r))
 	fmt.Fprintln(w)
+}
+
+// rejectCommandHint is the reject command the diff footer suggests, with the
+// reason in the form the CLI accepts (a fixed list; free text goes in --note).
+func rejectCommandHint(r *remediationFull) string {
+	return fmt.Sprintf("dorgu remediation reject %s -n %s --reason <%s> [--note \"...\"]",
+		r.Metadata.Name, r.Metadata.Namespace, strings.ReplaceAll(rejectionReasonFlags(), ", ", "|"))
 }
 
 // hasAutoApplicableChange reports whether this remediation carries a resource

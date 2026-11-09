@@ -163,7 +163,7 @@ func buildTierA(h reportHealAccounting, d decisions, since time.Duration) report
 		A5Depth:    reportDepth{ProposalsDecided: decided, WindowDays: since.Hours() / 24, NoData: decided == 0},
 		A6Approval: reportApproval{Approved: d.approved, Rejected: d.rejected, Rate: ratio(d.approved, decided), NoData: decided == 0},
 		A7External: reportNoData{NoData: true, Reason: "a RemediationAction records how its plan was written (planSource), " +
-			"not who proposed it; there is no source field to count until external proposers exist (P2/P3)"},
+			"not who proposed it; there is no source field to count until proposals can come from other tools, so this is not measured yet"},
 		Reviewed: reportDecisions{Approved: d.approved, Rejected: d.rejected},
 		ClusterNotes: []string{
 			"A2 and A5 count decisions (approved or rejected). Reading a proposal with `dorgu remediation diff` leaves no record, so a decision is the measurable proxy for a review.",
@@ -293,7 +293,7 @@ func notMeasurable() []reportNotMeasurable {
 		{"A8", "4-week retention", "needs reports from earlier weeks; one cluster's report cannot show it"},
 		{"A9", "Would-pay signals", "comes from the conversation log"},
 		{"A10", "Inbound", "comes from GitHub"},
-		{"Q4", "Operator footprint", "CPU and memory come from /eks-qa and the operator's metrics"},
+		{"Q4", "Operator footprint", "not measured by this report: read the operator's CPU and memory from its own metrics or your cluster's monitoring"},
 		{"Q5", "Clean-room", "comes from clean-room runs"},
 	}
 }

@@ -106,7 +106,8 @@ func TestRemediationDiffRendersAIMarkdownForATerminal(t *testing.T) {
 
 	var buf bytes.Buffer
 	printRemediationDiff(&buf, &r)
-	out := buf.String()
+	// The Actions footer is the CLI's own text (`--reason <a|b>`), not model text.
+	out, _, _ := strings.Cut(buf.String(), "Actions:")
 
 	for _, raw := range []string{"##", "**", "`", "> "} {
 		assert.NotContains(t, out, raw, "markdown syntax must not reach the terminal")

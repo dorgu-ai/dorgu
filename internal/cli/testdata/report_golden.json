@@ -89,7 +89,7 @@
     },
     "a7_external_agent_share": {
       "no_data": true,
-      "reason": "a RemediationAction records how its plan was written (planSource), not who proposed it; there is no source field to count until external proposers exist (P2/P3)"
+      "reason": "a RemediationAction records how its plan was written (planSource), not who proposed it; there is no source field to count until proposals can come from other tools, so this is not measured yet"
     },
     "decisions": {
       "approved": 8,
@@ -247,7 +247,7 @@
     {
       "id": "Q4",
       "name": "Operator footprint",
-      "reason": "CPU and memory come from /eks-qa and the operator's metrics"
+      "reason": "not measured by this report: read the operator's CPU and memory from its own metrics or your cluster's monitoring"
     },
     {
       "id": "Q5",
