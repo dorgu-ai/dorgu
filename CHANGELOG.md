@@ -20,11 +20,13 @@ Patch release for the findings of the dogfood upgrade to operator 0.13.0 / CLI v
 ### Fixed
 
 - **`dorgu report` missed refusals that happened (D1.1 finding 4).** Three `Validate/step-command` refusals were on the cluster for a while and never reached Q6. `ProposalRefused` is the live state and the operator rewrites it to `False` when the incident resolves or a later proposal answers it, which the report skipped; the refusal was gone from every object by the time anyone ran the report. The operator now also keeps `ProposalRefusalRecorded` (status `True`, the same `<Stage>_<Reason>` enum, never cleared), and the report counts a refusal from it, once, dated by when it was first made. A refusal that was answered by a proposal is counted as a refusal and its RemediationAction is the one proposal in the denominator. Clearing the live condition on resolve was right (an incident that resolved is not refused now); counting only the live condition was the defect. A refusal an older operator already cleared cannot be recovered.
+- **`approve` explains the operator's new `IncidentResolved` expiry (review L-1).** A person whose approval loses to the sweep that expires a Pending proposal whose incident resolved is told that the incident resolved, the advice is stale, and nothing is wrong with their approval, instead of the generic "the operator expired it".
+- **A refusal that came back is dated by its latest occurrence (review L-2).** When both the operator's record and the live `ProposalRefused` condition are present, the report dates the refusal by the later of the two (an operator before v0.13.1 does not move the record's time when the same refusal repeats), so a refusal standing now is inside the window.
 - **`dorgu health` "Awaiting approval" counts Pending only (D1.1, v0.14.0 carry-over).** See migration note 2.
 
 ### Added
 
-- **Build provenance attestation (D1.1 finding 9).** The release workflow attests every release archive and `checksums.txt` with `actions/attest-build-provenance`. Verify with `gh attestation verify <file> --owner dorgu-ai` (README, "Verify a download"). Releases before this one have no attestation. The workflow change is exercised by the first tag that includes it.
+- **Build provenance attestation (D1.1 finding 9).** The release workflow attests every release archive and `checksums.txt` with `actions/attest-build-provenance`. Verify with `gh attestation verify <file> --owner dorgu-ai` (README, "Verify a download"). Releases before this one have no attestation. The workflow change is exercised by the first tag that includes it. **Attestation never blocks a release:** both attest steps are `continue-on-error` (they run after the release is published), and a final step fails the run, with an error annotation and a summary, if either did not happen.
 
 ## [0.14.0] - 2026-11-09
 

@@ -172,7 +172,7 @@ func printApprovalWithdrawn(w io.Writer, name string, rem *remediationFull) {
 
 // withdrawnReason says why the action is not approved. A proposal the operator
 // superseded or expired is phase Expired; the reason is on the Expired condition,
-// and each of its three values gets its own sentence.
+// and each of its four values gets its own sentence.
 func withdrawnReason(rem *remediationFull) string {
 	switch rem.Status.Phase {
 	case "Expired":
@@ -188,6 +188,9 @@ func withdrawnReason(rem *remediationFull) string {
 		case "ApprovalTimedOut":
 			return "the operator expired it: it waited in Pending longer than its time-to-live. " +
 				"Run `dorgu remediation list`; the incident may have a fresh proposal."
+		case "IncidentResolved":
+			return "its incident resolved before you decided, so the advice is stale and the operator withdrew it. " +
+				"Nothing is wrong with your approval. If the fault comes back the operator proposes again; run `dorgu remediation list`."
 		case reasonPredatesGate:
 			return "it predates the operator's gate (it was made by an older operator), so it cannot be approved. " +
 				"The operator proposes again; run `dorgu remediation list`."

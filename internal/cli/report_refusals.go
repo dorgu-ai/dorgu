@@ -141,12 +141,28 @@ func collectRefusals(ras []*reportRA, incidents []reportIncident, allRAs []repor
 // later proposal answers it, which erased 3 refusals in D1.1. From operator v0.13.1 the same
 // refusal is also kept as ProposalRefusalRecorded, which is never cleared; when present it is
 // the record. An older operator writes only the live condition, which is read as before (a
-// refusal it cleared is gone). Both present is one refusal.
+// refusal it cleared is gone). Both present is one refusal, dated by the later of the two.
 func proposalRefusalOf(inc *reportIncident) (cond *reportCondition, recorded bool) {
+	live := inc.condition(conditionProposalRefused)
+	if live != nil && live.Status != "True" {
+		live = nil
+	}
 	if rec := inc.condition(conditionProposalRefusalRecorded); rec != nil && rec.Status == "True" {
+		// A refusal that comes back for the same reason does not move the record's time on an
+		// operator before v0.13.1, while the live condition is dated by it. The later of the
+		// two is when the incident was last refused.
+		if live != nil {
+			if recAt, ok := parseReportTime(rec.LastTransitionTime); ok {
+				if liveAt, ok := parseReportTime(live.LastTransitionTime); ok && liveAt.After(recAt) {
+					latest := *rec
+					latest.LastTransitionTime = live.LastTransitionTime
+					return &latest, true
+				}
+			}
+		}
 		return rec, true
 	}
-	if live := inc.condition(conditionProposalRefused); live != nil && live.Status == "True" {
+	if live != nil {
 		return live, false
 	}
 	return nil, false
