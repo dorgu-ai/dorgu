@@ -161,6 +161,7 @@ func TestApproveStillRefusesAProtectedContextBeforeAnything(t *testing.T) {
 
 func TestApproveNoHealDoesNotWaitForATicket(t *testing.T) {
 	r := baseResponses()
+	r.remAfterApprove = replacePhase(operatorRemediationFixture, "Approved")
 
 	res := runApprove(t, r, "--no-heal")
 

@@ -164,8 +164,9 @@ func TestF3_TheRemediationActionIsReReadImmediatelyBeforeThePatch(t *testing.T) 
 			r := baseResponses()
 			r.remSequence = []string{
 				operatorRemediationFixture,                            // 1: the preflight fetch (Pending)
-				withTicket(t, operatorRemediationFixture, "Applying"), // 2: the first poll after approval: a good ticket
-				last, // 3: the re-read right before the patch
+				withTicket(t, operatorRemediationFixture, "Applying"), // 2: the settle re-read after the approval write
+				withTicket(t, operatorRemediationFixture, "Applying"), // 3: the first poll after approval: a good ticket
+				last, // 4: the re-read right before the patch
 			}
 
 			res := approveWithDeployment(t, r)

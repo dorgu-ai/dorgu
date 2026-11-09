@@ -85,7 +85,7 @@ func TestPrintHealthSummary(t *testing.T) {
 	assert.Contains(t, out, "Active Incidents: 2")
 	assert.Contains(t, out, "OOMKilled")
 	assert.Contains(t, out, "CrashLoopBackOff")
-	assert.Contains(t, out, "Pending Remediations: 0")
+	assert.Contains(t, out, "Awaiting approval: 0")
 }
 
 func TestPrintHealthSummaryMinimal(t *testing.T) {
@@ -102,7 +102,7 @@ func TestPrintHealthSummaryMinimal(t *testing.T) {
 
 	assert.Contains(t, out, "Cluster Health Summary")
 	assert.Contains(t, out, "Active Incidents: 0")
-	assert.Contains(t, out, "Pending Remediations: 0")
+	assert.Contains(t, out, "Awaiting approval: 0")
 }
 
 func TestPrintHealthSummaryUnhealthyControlPlane(t *testing.T) {

@@ -39,6 +39,7 @@ const (
 var activeRemediationPhases = map[string]bool{
 	"Pending":   true,
 	"Approved":  true,
+	"Ticketed":  true,
 	"Applying":  true,
 	"Verifying": true,
 	"Failed":    true,
@@ -54,7 +55,7 @@ Examples:
   dorgu remediation list
   dorgu remediation diff fix-oom-api-server -n production
   dorgu remediation approve fix-oom-api-server -n production
-  dorgu remediation reject fix-oom-api-server -n production --reason "not needed"`,
+  dorgu remediation reject fix-oom-api-server -n production --reason not-needed`,
 		Aliases: []string{"rem"},
 		// Reject a stray subcommand instead of printing help and exiting 0 (F-12).
 		Args: noUnknownSubcommand,
@@ -110,6 +111,8 @@ type remediationFull struct {
 		Name              string `json:"name"`
 		Namespace         string `json:"namespace"`
 		UID               string `json:"uid"`
+		ResourceVersion   string `json:"resourceVersion"`
+		Generation        int64  `json:"generation"`
 		CreationTimestamp string `json:"creationTimestamp"`
 	} `json:"metadata"`
 	Spec struct {
@@ -561,8 +564,7 @@ func printRemediationActions(w io.Writer, r *remediationFull) {
 		fmt.Fprintln(w, "Actions:")
 		fmt.Fprintf(w, "  dorgu remediation approve %s -n %s --no-heal   (record the decision, patch no workload)\n",
 			r.Metadata.Name, r.Metadata.Namespace)
-		fmt.Fprintf(w, "  dorgu remediation reject %s -n %s --reason \"...\"\n",
-			r.Metadata.Name, r.Metadata.Namespace)
+		fmt.Fprintf(w, "  %s\n", rejectCommandHint(r))
 		fmt.Fprintln(w)
 		return
 	}
@@ -572,8 +574,7 @@ func printRemediationActions(w io.Writer, r *remediationFull) {
 		fmt.Fprintln(w, "Carry out the steps above yourself. Nothing changes in the cluster until you do.")
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Actions:")
-		fmt.Fprintf(w, "  dorgu remediation reject %s -n %s --reason \"...\"\n",
-			r.Metadata.Name, r.Metadata.Namespace)
+		fmt.Fprintf(w, "  %s\n", rejectCommandHint(r))
 		fmt.Fprintln(w)
 		return
 	}
@@ -581,9 +582,15 @@ func printRemediationActions(w io.Writer, r *remediationFull) {
 	fmt.Fprintln(w, "Actions:")
 	fmt.Fprintf(w, "  dorgu remediation approve %s -n %s\n",
 		r.Metadata.Name, r.Metadata.Namespace)
-	fmt.Fprintf(w, "  dorgu remediation reject %s -n %s --reason \"...\"\n",
-		r.Metadata.Name, r.Metadata.Namespace)
+	fmt.Fprintf(w, "  %s\n", rejectCommandHint(r))
 	fmt.Fprintln(w)
+}
+
+// rejectCommandHint is the reject command the diff footer suggests, with the
+// reason in the form the CLI accepts (a fixed list; free text goes in --note).
+func rejectCommandHint(r *remediationFull) string {
+	return fmt.Sprintf("dorgu remediation reject %s -n %s --reason <%s> [--note \"...\"]",
+		r.Metadata.Name, r.Metadata.Namespace, strings.ReplaceAll(rejectionReasonFlags(), ", ", "|"))
 }
 
 // hasAutoApplicableChange reports whether this remediation carries a resource
@@ -915,15 +922,20 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Patch status to Approved.
-	now := time.Now().UTC().Format(time.RFC3339)
-	patch := fmt.Sprintf(`{"status":{"phase":"Approved","approvedBy":"cli-user","approvedAt":"%s"}}`, now)
-
-	patchArgs := []string{"patch", "remediationaction", name, "-n", namespace,
-		"--type", "merge", "--subresource", "status", "-p", patch}
-	patchOut, err := kubectlCmd(ctx, kubeconfig, patchArgs...).CombinedOutput()
+	// Write the approval as an optimistic-lock patch, then confirm after a short
+	// settle that the operator still has it Approved (R2-3). "Approved" is printed
+	// only past this point.
+	byAnother, err := approveAndConfirm(ctx, kubeconfig, namespace, name, rem, cmd.OutOrStdout())
 	if err != nil {
-		return fmt.Errorf("failed to approve remediation: %s", kubectlErrText(patchOut))
+		return err
+	}
+	if byAnother {
+		// Someone else's approval stands. This command did not write it, so it says
+		// nothing was approved here, and does not heal on their approval.
+		if heal {
+			output.Info(fmt.Sprintf("To apply it, run: dorgu remediation heal %s -n %s", name, namespace))
+		}
+		return nil
 	}
 
 	// Say what approval actually does for this plan. An advisory plan changes

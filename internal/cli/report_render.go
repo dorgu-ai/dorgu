@@ -28,7 +28,7 @@ func renderReportText(w io.Writer, d reportDoc) {
 	p("Dorgu report (%s)", d.Schema)
 	p("  Window:    %s to %s (last %s)", d.Window.Start, d.Window.End, d.Window.Since)
 	p("  Cluster:   %s, namespace scope: %s", orUnknown(d.Cluster.Context), d.Cluster.Namespace)
-	p("  Operator:  %s", orUnknownPtr(d.Cluster.OperatorVersion))
+	p("  Operator:  %s", operatorLabel(d.Cluster.OperatorVersion))
 	p("  Read:      %s", sourcesLine(d.Sources))
 	p("  Basis:     RemediationActions and IncidentMemories count by when they were created, a proposal-time refusal by when it")
 	p("             was recorded, Events by their last timestamp. A proposal made before the window and decided inside it is not in it.")
@@ -62,6 +62,19 @@ func orUnknown(s string) string {
 		return "unknown"
 	}
 	return s
+}
+
+// operatorLabel is the operator version as the header shows it: a release tag as it
+// is, and anything else (a commit hash, "latest", "dev") as an unreleased build, so
+// the header never presents a build identifier as if it were a version.
+func operatorLabel(s *string) string {
+	if s == nil || *s == "" {
+		return orUnknownPtr(s)
+	}
+	if _, ok := parseVersion(*s); ok {
+		return *s
+	}
+	return "unreleased build " + *s
 }
 
 func orUnknownPtr(s *string) string {
@@ -102,6 +115,9 @@ func renderHealAccounting(w io.Writer, h reportHealAccounting) {
 		if n := h.Excluded[k]; n > 0 {
 			fmt.Fprintf(w, "    %-20s %d\n", k, n)
 		}
+	}
+	if h.Excluded[excludedApprovedNotHealed] > 0 {
+		_, _ = fmt.Fprintln(w, "    (approved_not_healed: approved but never patched, so there was no heal to roll back)")
 	}
 	if len(h.HealNotCredited) > 0 {
 		parts := make([]string, 0, len(h.HealNotCredited))

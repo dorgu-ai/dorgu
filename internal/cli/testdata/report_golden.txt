@@ -26,7 +26,7 @@ Tier A: value and adoption
   A2 active cluster:    yes (11 proposals decided in the window)
   A5 review depth:      11.0 decisions per week (11 over 7 days)
   A6 approval rate:     72.7% (8 approved, 3 rejected; inside the 30-80% band)
-  A7 external agents:   no data (a RemediationAction records how its plan was written (planSource), not who proposed it; there is no source field to count until external proposers exist (P2/P3))
+  A7 external agents:   no data (a RemediationAction records how its plan was written (planSource), not who proposed it; there is no source field to count until proposals can come from other tools, so this is not measured yet)
   note: A2 and A5 count decisions (approved or rejected). Reading a proposal with `dorgu remediation diff` leaves no record, so a decision is the measurable proxy for a review.
   note: A6 is a band, not a target: under 30% means noisy proposals, over 80% means rubber-stamping.
 
@@ -66,5 +66,5 @@ Not measurable from a cluster
   A8   4-week retention: needs reports from earlier weeks; one cluster's report cannot show it
   A9   Would-pay signals: comes from the conversation log
   A10  Inbound: comes from GitHub
-  Q4   Operator footprint: CPU and memory come from /eks-qa and the operator's metrics
+  Q4   Operator footprint: not measured by this report: read the operator's CPU and memory from its own metrics or your cluster's monitoring
   Q5   Clean-room: comes from clean-room runs

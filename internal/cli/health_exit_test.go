@@ -81,7 +81,7 @@ func TestHealthSummaryRendersUnknownIncidents(t *testing.T) {
 	assert.Contains(t, out, "Active Incidents: ")
 	assert.Contains(t, out, "unknown")
 	assert.NotContains(t, out, "Active Incidents: 0")
-	assert.Contains(t, out, "Pending Remediations: 0")
+	assert.Contains(t, out, "Awaiting approval: 0")
 }
 
 func TestUnreadableIncidents(t *testing.T) {

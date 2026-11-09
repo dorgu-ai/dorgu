@@ -377,7 +377,7 @@ func printHealthSummary(w io.Writer, s *healthSummary) {
 // printPendingRemediations renders the pending-remediation tail of the summary.
 func printPendingRemediations(w io.Writer, r *remediationSummary) {
 	if r != nil {
-		fmt.Fprintf(w, "Pending Remediations: %d\n", r.Count)
+		fmt.Fprintf(w, "Awaiting approval: %d\n", r.Count)
 		if r.Count > 0 {
 			output.DimPrint("  Run 'dorgu remediation list' to review pending fixes")
 		}

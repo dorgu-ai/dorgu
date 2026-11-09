@@ -91,6 +91,7 @@ const upgradeHint = "This CLI needs an operator that issues apply tickets (dorgu
 type gateRefusedError struct {
 	reason  string // the CamelCase guardrail enum on the GateRefused condition
 	message string
+	note    string // the operator's own account when it expired the proposal (PredatesGate)
 }
 
 func (e *gateRefusedError) Error() string {
@@ -125,7 +126,11 @@ func ticketOutcome(rem *remediationFull) (ready bool, err error) {
 	case "Failed", "Expired", "Rejected", "RolledBack":
 		if refused := findCondition(rem.Status.Conditions, conditionGateRefused); refused != nil &&
 			refused.Status == "True" && refusedAtGate(rem) {
-			return false, &gateRefusedError{reason: refused.Reason, message: refused.Message}
+			err := &gateRefusedError{reason: refused.Reason, message: refused.Message}
+			if c := findCondition(rem.Status.Conditions, "Expired"); c != nil && c.Status == "True" && c.Reason == reasonPredatesGate {
+				err.note = c.Message
+			}
+			return false, err
 		}
 		return false, mismatch("the approval ended in phase %s without applying anything%s", phase, conditionDetail(rem))
 	case "Verifying", "Completed":
@@ -159,8 +164,17 @@ func refusedAtGate(rem *remediationFull) bool {
 	case reasonGateRefusedAtApproval, reasonPreconditionRejected:
 		return true
 	}
+	// A proposal the gate has no record of (made by an operator from before the gate)
+	// ends Expired with the reason PredatesGate; it is the same refusal.
+	if c := findCondition(rem.Status.Conditions, "Expired"); c != nil && c.Status == "True" && c.Reason == reasonPredatesGate {
+		return true
+	}
 	return false
 }
+
+// reasonPredatesGate is the Expired condition's reason for an approval of a proposal
+// that predates the operator's gate.
+const reasonPredatesGate = "PredatesGate"
 
 // ticketAnswersApproval decides whether a ticket in a fresh-ticket phase is the
 // operator's answer to the approval on record. A ticket that predates the
@@ -328,6 +342,9 @@ func printTicketRefusal(w io.Writer, err error) {
 		fmt.Fprintf(w, "  Reason:  %s\n", refused.reason)
 		if refused.message != "" {
 			fmt.Fprintf(w, "  Detail:  %s\n", refused.message)
+		}
+		if refused.note != "" {
+			fmt.Fprintf(w, "  Note:    %s\n", refused.note)
 		}
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Nothing was applied to the persona or the workload.")

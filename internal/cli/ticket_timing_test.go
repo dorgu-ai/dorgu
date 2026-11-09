@@ -8,3 +8,7 @@ func init() {
 	ticketWaitTimeout = 300 * time.Millisecond
 	ticketPollInterval = 20 * time.Millisecond
 }
+
+func init() {
+	approveSettle = 10 * time.Millisecond
+}
