@@ -112,6 +112,7 @@ type remediationFull struct {
 		Namespace         string `json:"namespace"`
 		UID               string `json:"uid"`
 		ResourceVersion   string `json:"resourceVersion"`
+		Generation        int64  `json:"generation"`
 		CreationTimestamp string `json:"creationTimestamp"`
 	} `json:"metadata"`
 	Spec struct {
@@ -924,8 +925,17 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 	// Write the approval as an optimistic-lock patch, then confirm after a short
 	// settle that the operator still has it Approved (R2-3). "Approved" is printed
 	// only past this point.
-	if err := approveAndConfirm(ctx, kubeconfig, namespace, name, rem, cmd.OutOrStdout()); err != nil {
+	byAnother, err := approveAndConfirm(ctx, kubeconfig, namespace, name, rem, cmd.OutOrStdout())
+	if err != nil {
 		return err
+	}
+	if byAnother {
+		// Someone else's approval stands. This command did not write it, so it says
+		// nothing was approved here, and does not heal on their approval.
+		if heal {
+			output.Info(fmt.Sprintf("To apply it, run: dorgu remediation heal %s -n %s", name, namespace))
+		}
+		return nil
 	}
 
 	// Say what approval actually does for this plan. An advisory plan changes

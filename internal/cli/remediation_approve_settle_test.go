@@ -43,18 +43,23 @@ func TestApproveSendsTheResourceVersionAsAPrecondition(t *testing.T) {
 }
 
 func TestApproveIsNotReportedWhenTheOperatorMovedTheActionOnAfterwards(t *testing.T) {
-	for _, phase := range []string{"Superseded", "Expired"} {
-		t.Run(phase, func(t *testing.T) {
+	for reason, want := range map[string]string{
+		"Superseded":       "superseded",
+		"ApprovalTimedOut": "time-to-live",
+		"PredatesGate":     "predates",
+	} {
+		t.Run(reason, func(t *testing.T) {
 			r := baseResponses()
 			r.rem = withResourceVersion(operatorRemediationFixture, "4242")
-			r.remAfterApprove = withApprovePhase(r.rem, phase)
+			r.remAfterApprove = expiredFor(t, r.rem, reason)
 
 			res := approveNoHeal(t, r)
 
 			require.Error(t, res.err, "a withdrawn approval must exit non-zero")
 			assert.NotContains(t, res.out, "Remediation approved")
 			assert.NotContains(t, res.out, "Approval recorded")
-			assert.Contains(t, res.out, phase, "the output says what the operator did")
+			assert.Contains(t, res.out, "phase Expired", "the output says what the operator did")
+			assert.Contains(t, res.out, want, "and why, by the Expired reason the operator wrote")
 			assert.Contains(t, res.out, "NOT approved")
 		})
 	}
@@ -64,7 +69,7 @@ func TestApproveWithHealAlsoDoesNotClaimApprovalWhenSuperseded(t *testing.T) {
 	r := baseResponses()
 	r.deployment = withIdentity(t, r.deployment)
 	r.rem = withResourceVersion(operatorRemediationFixture, "4242")
-	r.remAfterApprove = withApprovePhase(r.rem, "Superseded")
+	r.remAfterApprove = expiredFor(t, r.rem, "Superseded")
 
 	res := runApprove(t, r)
 
@@ -78,13 +83,13 @@ func TestApproveLostRaceReportsWhatTheActionBecame(t *testing.T) {
 	r.rem = withResourceVersion(operatorRemediationFixture, "4242")
 	r.statusPatchError = `Error from server (Conflict): Operation cannot be fulfilled on remediationactions.dorgu.io "fix-oom-api-server": the object has been modified; please apply your changes to the latest version and try again`
 	// Reads: 1 the preflight fetch, 2 the re-read after the conflict.
-	r.remSequence = []string{r.rem, withResourceVersion(withApprovePhase(operatorRemediationFixture, "Superseded"), "4300")}
+	r.remSequence = []string{r.rem, withResourceVersion(expiredFor(t, operatorRemediationFixture, "Superseded"), "4300")}
 
 	res := approveNoHeal(t, r)
 
 	require.Error(t, res.err)
 	assert.NotContains(t, res.out, "Remediation approved")
-	assert.Contains(t, res.out, "Superseded")
+	assert.Contains(t, res.out, "superseded")
 	assert.Contains(t, res.out, "NOT approved")
 }
 
