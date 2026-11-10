@@ -19,8 +19,8 @@ github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dorgu-ai/dorgu-operator v0.13.1 h1:ve+y5/nEFZeURhU/MW8pS5s/V2/rgx1redBd08BGKQI=
 github.com/dorgu-ai/dorgu-operator v0.13.1/go.mod h1:8q5KIzus4XavWRfMJUnGrC3a8eRcxActE3l7T2dOdnw=
-github.com/dorgu-ai/dorgu-platform-v1 v0.0.0-20261110214642-93ff9da699c1 h1:jYkNaUgn1pDgzRosOZZyLC4KIu+Pa0eQSbN6WouTrOg=
-github.com/dorgu-ai/dorgu-platform-v1 v0.0.0-20261110214642-93ff9da699c1/go.mod h1:D0IUdu6PBXtWuZdka8wkJ17i+lv6mJ3AnGBMr1uLtwU=
+github.com/dorgu-ai/dorgu-platform-v1 v0.0.0-20261110215822-3e7537664c74 h1:Ugo2j5e8eT3wV2J+TUTEJWPG/31EOSBsK/L0Y1GajF8=
+github.com/dorgu-ai/dorgu-platform-v1 v0.0.0-20261110215822-3e7537664c74/go.mod h1:D0IUdu6PBXtWuZdka8wkJ17i+lv6mJ3AnGBMr1uLtwU=
 github.com/emicklei/go-restful/v3 v3.13.0 h1:C4Bl2xDndpU6nJ4bc1jXd+uTmYPVUwkD6bFY/oTyCes=
 github.com/emicklei/go-restful/v3 v3.13.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
 github.com/fxamacker/cbor/v2 v2.9.1 h1:2rWm8B193Ll4VdjsJY28jxs70IdDsHRWgQYAI80+rMQ=
