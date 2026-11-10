@@ -38,11 +38,14 @@ The self-healing loop:
   dorgu remediation diff <remediation> -n <namespace>
   dorgu remediation approve <remediation> -n <namespace>
 
+  # Or read it all in a local, read-only dashboard in your browser
+  dorgu dashboard
+
 Dorgu only watches workloads that have an ApplicationPersona. On a cluster that
 already has apps, create them from the running Deployments:
   dorgu persona import -n <namespace> --all
 
-Requires kubectl on your PATH for every cluster command. Set DORGU_DEBUG=1 to
+Requires kubectl on your PATH for every cluster command except dashboard. Set DORGU_DEBUG=1 to
 see kubectl's raw output in error messages.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Flag parsing and argument validation both happen before this hook, so
@@ -82,4 +85,5 @@ func init() {
 	rootCmd.AddCommand(newIncidentsCmd())
 	rootCmd.AddCommand(newRemediationCmd())
 	rootCmd.AddCommand(newReportCmd())
+	rootCmd.AddCommand(newDashboardCmd())
 }

@@ -92,7 +92,11 @@ func TestEveryHealCallCarriesTheGlobalContext(t *testing.T) {
 // command reads one cluster and writes another.
 func TestNoRawKubectlInvocations(t *testing.T) {
 	root := filepath.Join("..", "..")
-	allowed := filepath.Clean("internal/cli/kubectl_cmd.go")
+	// browser.go starts the system browser for `dorgu dashboard` and nothing else.
+	allowed := map[string]bool{
+		filepath.Clean("internal/cli/kubectl_cmd.go"): true,
+		filepath.Clean("internal/cli/browser.go"):     true,
+	}
 	var offenders []string
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -109,7 +113,7 @@ func TestNoRawKubectlInvocations(t *testing.T) {
 			return nil
 		}
 		rel, _ := filepath.Rel(root, path)
-		if rel == allowed {
+		if allowed[rel] {
 			return nil
 		}
 		for _, pos := range execCalls(t, path) {

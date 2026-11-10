@@ -399,85 +399,100 @@ dorgu watch personas   # Ctrl+C after verifying connection
 dorgu sync status
 ```
 
-## Phase 11 (optional): Platform dashboard
+## Phase 11 (optional): Dashboard
 
-This phase tests `dorgu platform serve`, the web dashboard for visualizing ClusterPersona resources. It requires Phases 4 (operator) and 7 (ClusterPersona) to have passed.
+This phase tests `dorgu dashboard`, the local, read-only dashboard. It replaces the old `dorgu platform serve`, which was removed in v0.13.0. It requires the operator (Phase 4) to be running.
 
-### 11a. Start platform
+The dashboard binds `127.0.0.1` on a **random free port** and requires a **random per-run session token**. The link it prints carries the token, so every API call below needs it. Never paste the token into a report.
+
+### 11a. Start the dashboard
 
 ```bash
-dorgu platform serve &
-sleep 3
+dorgu dashboard --no-browser > /tmp/dorgu-dashboard.out 2>&1 &
+DASH_PID=$!
+sleep 5
+URL=$(grep -o 'http://[^ ]*' /tmp/dorgu-dashboard.out | head -1)
+BASE=$(echo "$URL" | sed 's#/?token=.*##')
+TOKEN=${URL##*token=}
+echo "$BASE"
 ```
 
 Ask the user to verify:
-- Server starts on `http://localhost:8080`
-- Logs show API, WebSocket, and Frontend URLs
+- One link of the form `http://127.0.0.1:<port>/?token=...` is printed, on a port that is not fixed between runs
+- The output says the link carries a session token that should be kept private
+- No browser opened (`--no-browser`)
 
-### 11b. API endpoints
+### 11b. Authentication and API
 
 ```bash
-curl -s http://localhost:8080/api/clusters | jq .
-curl -s http://localhost:8080/api/clusters/qa-cluster | jq .
+curl -s -o /dev/null -w "no token -> %{http_code}\n" $BASE/api/v1/meta
+curl -s -m 3 -o /dev/null -w "stream, no token -> %{http_code}\n" $BASE/api/v1/stream
+curl -s -o /dev/null -w "bad Host -> %{http_code}\n" -H "Host: evil.example" -H "Authorization: Bearer $TOKEN" $BASE/api/v1/meta
+curl -s -o /dev/null -w "bad Origin -> %{http_code}\n" -H "Origin: https://evil.example" -H "Authorization: Bearer $TOKEN" $BASE/api/v1/meta
+curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/meta | jq '{synced, operatorInstalled, identity: .identity.available}'
+curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/incidents | jq '.summary'
+curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/remediations | jq '.summary'
 ```
 
 Ask the user to verify:
-- `/api/clusters` returns `{"clusters": [...]}` with ClusterPersona data
-- `/api/clusters/qa-cluster` returns the specific cluster with `name`, `spec`, `status`
-- Content-Type is `application/json`
+- Without a token the API and the stream return `401`; a foreign `Host` or `Origin` returns `403`
+- With the token, `meta` reports `synced: true`, `operatorInstalled: true` and who you are (`identity.available`)
+- `incidents` and `remediations` return their summaries
+- Content-Type is `application/json`, and there are no `Access-Control-*` headers
 
-### 11c. Frontend
+### 11c. Token exchange and the frontend
 
 ```bash
-curl -s http://localhost:8080/ | grep -i "dorgu"
+curl -s -D - -o /dev/null -c /tmp/dorgu-dashboard.jar "$BASE/?token=$TOKEN" | grep -i -E "^HTTP|^location|^set-cookie" | sed "s/$TOKEN/<REDACTED>/g"
+curl -s -b /tmp/dorgu-dashboard.jar $BASE/ | grep -i "dorgu"
 ```
 
 Ask the user to verify:
-- Page loads (either React dashboard or placeholder HTML)
-- If React app embedded: shows "Dorgu Platform" header, cluster table renders
-- If placeholder: shows "Backend is running" message
+- `303` to `/` with a `dorgu_session_<port>` cookie that is `HttpOnly` and `SameSite=Strict`
+- The page loads. If the UI is embedded it is the Dorgu dashboard; a build without the embedded UI says so at `/` while the API still works
 
-### 11d. WebSocket real-time
+### 11d. Browser and live updates
 
-If Phase 10 (WebSocket) was tested, verify the platform dashboard also receives real-time updates:
-- Create a new ClusterPersona while platform is running
-- Check server logs for `Broadcasting WebSocket event` messages
-- If browser is open, verify dashboard updates without manual refresh
+Run `dorgu dashboard` without `--no-browser`. Ask the user to verify:
+- The default browser opens and the address bar shows the URL **without** `?token=`
+- The header shows the cluster context and identity
+- Creating or resolving an incident updates the page with no manual refresh
 
-### 11e. Custom port
+### 11e. Custom port and a new token each run
 
 ```bash
-# Stop and restart on custom port
-kill %1 2>/dev/null
-dorgu platform serve --port 3000 &
-sleep 3
-curl -s http://localhost:3000/api/clusters | jq .
-kill %1 2>/dev/null
+OLD_TOKEN=$TOKEN
+kill $DASH_PID 2>/dev/null; wait $DASH_PID 2>/dev/null
+dorgu dashboard --no-browser --port 3000 > /tmp/dorgu-dashboard.out 2>&1 &
+DASH_PID=$!
+sleep 5
+URL=$(grep -o 'http://[^ ]*' /tmp/dorgu-dashboard.out | head -1)
+BASE=$(echo "$URL" | sed 's#/?token=.*##'); TOKEN=${URL##*token=}
+curl -s -o /dev/null -w "new token -> %{http_code}\n" -H "Authorization: Bearer $TOKEN" $BASE/api/v1/meta
+curl -s -o /dev/null -w "old token -> %{http_code}\n" -H "Authorization: Bearer $OLD_TOKEN" $BASE/api/v1/meta
 ```
 
 Ask the user to verify:
-- Server starts on port 3000
-- API returns data on custom port
+- Starts on port 3000, and the new token works while the previous run's token returns `401`
 
 ### 11f. Graceful shutdown
 
 ```bash
-# Ctrl+C the platform server (or kill %1)
-kill %1 2>/dev/null
+kill $DASH_PID 2>/dev/null
+wait $DASH_PID 2>/dev/null
+rm -f /tmp/dorgu-dashboard.out /tmp/dorgu-dashboard.jar
 ```
 
 Ask the user to verify:
-- Clean shutdown messages in logs
-- No error output
-- Terminal returns to normal
+- Clean shutdown, no error output, terminal returns to normal
 
 ## Cleanup
 
 ### If LOCAL (dev build):
 
 ```bash
-# Stop platform server if running (Phase 11)
-kill $(pgrep -f "dorgu platform serve") 2>/dev/null
+# Stop the dashboard if running (Phase 11)
+kill $(pgrep -f "dorgu dashboard") 2>/dev/null
 
 # Remove Blessed Stack components (if Phase 8 was run)
 helm uninstall cert-manager -n cert-manager 2>/dev/null
@@ -500,8 +515,8 @@ rm -rf ~/dorgu-qa-test
 ### If RELEASED version:
 
 ```bash
-# Stop platform server if running (Phase 11)
-kill $(pgrep -f "dorgu platform serve") 2>/dev/null
+# Stop the dashboard if running (Phase 11)
+kill $(pgrep -f "dorgu dashboard") 2>/dev/null
 
 # Remove Blessed Stack components (if Phase 8 was run)
 helm uninstall cert-manager -n cert-manager 2>/dev/null

@@ -38,6 +38,7 @@ Manifest generation, cluster setup, the WebSocket `watch`/`sync` commands and th
 - [Commands](#commands)
 - [Health & Incidents](#health--incidents)
 - [Remediation](#remediation)
+- [Dashboard](#dashboard)
 - [Guardrails](#guardrails)
 - [Persona Commands](#persona-commands)
 - [Cluster Commands](#cluster-commands)
@@ -228,6 +229,7 @@ You should see five CRDs: `applicationpersonas`, `clusterpersonas`, `incidentmem
 | `dorgu remediation reject <name>` | Reject a proposal, with a `--reason` from a fixed list |
 | `dorgu remediation heal <name>` | Apply an already-approved proposal's change to the workload |
 | `dorgu report` | KPI summary for this cluster (safe heals, approval rate, time to heal, refusals), text or `--json` |
+| `dorgu dashboard` | Local, read-only dashboard in your browser: apps, incidents, proposals and what the operator's gate decided. See [Dashboard](#dashboard) |
 
 `dorgu incidents` has **`list` and `describe`** only.
 
@@ -249,7 +251,7 @@ You should see five CRDs: `applicationpersonas`, `clusterpersonas`, `incidentmem
 | `--no-color` | Disable colored output | `false` |
 | `--context` | kube-context for every kubectl call | kubeconfig current-context |
 
-Cluster commands also accept `--kubeconfig`; both it and `--context` apply to every kubectl call the command makes. Set `DORGU_DEBUG=1` to see kubectl's raw output in error messages.
+Cluster commands also accept `--kubeconfig`; both it and `--context` apply to every kubectl call the command makes (and to the connection `dorgu dashboard` opens). Set `DORGU_DEBUG=1` to see kubectl's raw output in error messages.
 
 The CLI detects whether stdout is a terminal and suppresses colors and spinners when piped. Use `--json` for structured output.
 
@@ -412,6 +414,49 @@ dorgu remediation heal ra-default-api-oom-b71c -n default
 Once the operator has moved the remediation to `Verifying` or `Completed`, `heal` refuses: the verdict would be about a workload nobody changed, so patching it afterwards would make that verdict wrong. In that case apply the change yourself (or in your own source of truth) and let the next proposal start from there.
 
 Flags: `-n, --namespace`, `--workload`, `--container`, `--yes`, `--kubeconfig`.
+
+---
+
+## Dashboard
+
+```bash
+dorgu dashboard              # serve on a random free port and open your browser
+dorgu dashboard --no-browser # print the link and do not open anything
+dorgu dashboard --context staging -n shop --port 7171
+```
+
+`dorgu dashboard` serves the [dorgu-platform-v1](https://github.com/dorgu-ai/dorgu-platform-v1)
+dashboard from inside this binary: one command, nothing else to install. It shows
+your apps, incidents and remediation proposals, including the operator's gate
+verdicts, apply-ticket state, why a proposal expired, which workloads are owned
+(advisory only), refusals against deferrals, and recurrence lineage.
+
+It is **read-only in this release**. Approve or reject with `dorgu remediation
+approve|reject`.
+
+It is locked down because it shows your cluster:
+
+- it binds `127.0.0.1` on a random free port, and there is no flag to bind anywhere else;
+- every API call needs a random per-run session token. The link the command prints
+  carries it; the browser trades it for an `HttpOnly`, `SameSite=Strict` cookie on
+  first load and the token disappears from the address bar. Do not share the link;
+- requests with a foreign `Host` or `Origin` header are refused, and no CORS
+  headers are sent;
+- it uses your kubeconfig and your permissions only, and the header shows who the
+  cluster says you are (a `SelfSubjectReview`, Kubernetes 1.28 or newer).
+
+It talks to the Kubernetes API directly, so it does not need `kubectl` on your
+`PATH`. It honours `--kubeconfig` and the global `--context`.
+
+### How the dashboard UI gets into the binary
+
+The dashboard's web UI is built output (Vite), and Go's `go:embed` can only embed
+files that exist in the module Go downloads. The dashboard repository therefore
+tags every release on a commit that contains its built `dist/`, and this CLI
+depends on that tag. A plain `go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest`
+produces a working dashboard with no Node toolchain involved. The cost is that a
+dashboard release carries about 600 KB of build output in its tag,
+never on `main`. Details are in the dashboard repository's README.
 
 ---
 
