@@ -178,7 +178,7 @@ Test file locations:
 
 ## Feature requests
 
-When QA testing reveals improvement opportunities — either within this project or requiring changes in another project (dorgu-operator, dorgu-platform) — write a **feature request file**.
+When QA testing reveals improvement opportunities — either within this project or requiring changes in another project (dorgu-operator, dorgu-platform-v1) — write a **feature request file**.
 
 ### When to file a feature request
 
@@ -214,7 +214,7 @@ Examples:
 - **Discovered in phase:** <phase number and case>
 
 ## Target Project
-- **Repository:** <dorgu / dorgu-operator / dorgu-platform>
+- **Repository:** <dorgu / dorgu-operator / dorgu-platform-v1>
 - **Repository path:** <absolute path>
 
 ## Description

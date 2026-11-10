@@ -1289,166 +1289,186 @@ kubectl delete ns dorgu-qa-vcluster
 
 ---
 
-## Phase 15: Platform Serve (`dorgu platform serve`)
+## Phase 15: Dashboard (`dorgu dashboard`)
 
-This phase tests the web dashboard served by `dorgu platform serve`. It requires the operator and at least one ClusterPersona to be in the cluster (Phases 2-3 must have passed).
+This phase tests the local, read-only dashboard served by `dorgu dashboard`. It replaces the old `dorgu platform serve`, which was removed in v0.13.0. It requires the operator to be running; incidents and remediations make the views more interesting but are not required.
 
-**Prerequisite check:** If the user cleaned up in Phase 14, they need to re-initialize:
-- Operator must be running
-- At least one ClusterPersona must exist (e.g. `qa-cluster`)
+The dashboard binds `127.0.0.1` on a **random free port** by default and requires a **random per-run session token**. The link it prints carries the token (`http://127.0.0.1:<port>/?token=<token>`). Every command below that calls the API must use that token, so capture it once in 15.2. Never paste the token into a report or a feature request.
 
-Ask the user if they want to run this phase. If they cleaned up in Phase 14, they will need to re-create the operator and ClusterPersona first.
+**Prerequisite check:** the operator must be running. If the user cleaned up in Phase 14, they need to re-install it first.
+
+Ask the user if they want to run this phase.
 
 ### 15.1 Help text
 
 ```bash
-dorgu platform --help
-dorgu platform serve --help
+dorgu dashboard --help
 ```
 
 Ask the user to verify:
-- `dorgu platform` shows subcommand `serve`
-- `dorgu platform serve --help` shows `--port`, `--kubeconfig`, `--context`, `--verbose` flags
-- Help text includes usage examples
+- Shows `--port`, `--no-browser`, `-n/--namespace` and `--kubeconfig`, and the global `--context`
+- There is **no** `--host` flag: loopback only, by design
+- Help text explains the random port, the session token and that it is read-only
+- `dorgu platform serve` no longer exists (`dorgu platform` is an unknown command)
 
-### 15.2 Start platform on default port
+### 15.2 Start on a random port and capture the link
 
 ```bash
-dorgu platform serve &
-sleep 3
-curl -s http://localhost:8080/api/clusters | jq .
+dorgu dashboard --no-browser > /tmp/dorgu-dashboard.out 2>&1 &
+DASH_PID=$!
+sleep 5
+URL=$(grep -o 'http://[^ ]*' /tmp/dorgu-dashboard.out | head -1)
+BASE=$(echo "$URL" | sed 's#/?token=.*##')
+TOKEN=${URL##*token=}
+echo "$BASE"     # print the base only, never the token
 ```
 
 Ask the user to verify:
-- Server starts with log: `Dorgu Platform starting on http://localhost:8080`
-- API, WebSocket, and Frontend URLs are logged
-- `curl` returns JSON with `{"clusters": [...]}`
-- ClusterPersona data from previous phases is visible (e.g. `qa-cluster`)
+- The server printed one link of the form `http://127.0.0.1:<port>/?token=...` with a port that is not 8080 and not fixed between runs
+- It also printed that the link carries a session token and should be kept private
+- No browser opened (`--no-browser`)
 
-### 15.3 Custom port
+### 15.3 Authentication is enforced on every API route
 
 ```bash
-# Stop previous instance first
-kill %1 2>/dev/null
-dorgu platform serve --port 3000 &
-sleep 3
-curl -s http://localhost:3000/api/clusters | jq .
+for p in meta apps incidents remediations cluster; do printf "%s -> " $p; curl -s -o /dev/null -w "%{http_code}\n" $BASE/api/v1/$p; done
+curl -s -m 3 -o /dev/null -w "stream -> %{http_code}\n" $BASE/api/v1/stream
+curl -s -o /dev/null -w "bad bearer -> %{http_code}\n" -H "Authorization: Bearer wrong" $BASE/api/v1/meta
+curl -s -o /dev/null -w "token in API query -> %{http_code}\n" "$BASE/api/v1/meta?token=$TOKEN"
+curl -s -o /dev/null -w "bad Host -> %{http_code}\n" -H "Host: evil.example" -H "Authorization: Bearer $TOKEN" $BASE/api/v1/meta
+curl -s -o /dev/null -w "bad Origin -> %{http_code}\n" -H "Origin: https://evil.example" -H "Authorization: Bearer $TOKEN" $BASE/api/v1/meta
+curl -s -o /dev/null -w "valid bearer -> %{http_code}\n" -H "Authorization: Bearer $TOKEN" $BASE/api/v1/meta
+```
+
+Ask the user to verify:
+- Every call without a token returns `401`, the live stream included
+- A wrong bearer token returns `401`, and so does the token in an API query string (it is not accepted there)
+- A foreign `Host` and a foreign `Origin` return `403`, even with a valid token
+- The valid bearer token returns `200`
+- No response carries an `Access-Control-*` header
+
+### 15.4 Token exchange sets a port-specific HttpOnly cookie
+
+```bash
+curl -s -D - -o /dev/null -c /tmp/dorgu-dashboard.jar "$BASE/?token=$TOKEN" | grep -i -E "^HTTP|^location|^set-cookie" | sed "s/$TOKEN/<REDACTED>/g"
+curl -s -b /tmp/dorgu-dashboard.jar -o /dev/null -w "cookie -> %{http_code}\n" $BASE/api/v1/meta
+curl -s -D - -o /dev/null "$BASE/?token=wrong" | grep -i -E "^HTTP|^set-cookie"
+```
+
+Ask the user to verify:
+- The first call is `303 See Other` with `Location: /` (the token is gone from the URL)
+- `Set-Cookie` is named `dorgu_session_<port>` (the port the dashboard is on), with `HttpOnly` and `SameSite=Strict`
+- The cookie alone authenticates the API (`200`)
+- A wrong token in the URL is `401` and sets no cookie
+
+### 15.5 Identity, and the new operator data
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/meta | jq '{synced, operatorInstalled, identity: {available: .identity.available, groups: .identity.groups}}'
+curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/remediations | jq '.remediations[0] | {phase, advisoryOnly, gate: .gate.result, ticket: .ticket.state, expired: .expired.reason}'
+curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/incidents | jq '.incidents[0] | {proposal: .proposal.state, lineage: .lineage, signals: .signals.rank}'
+```
+
+Ask the user to verify:
+- `identity.available` is `true` on Kubernetes 1.28 or newer and names who the kubeconfig authenticates as (on an older cluster it is `false` with a reason, which is not a failure)
+- Remediations carry `gate`, `ticket` and `expired` where the operator wrote them, and `advisoryOnly` is `true` for Helm, ArgoCD, Flux and kustomize owned workloads
+- Incidents carry `proposal` (`refused`, `deferred`, `proposed` or `cleared`) and `lineage` (a recurrence has `generation` greater than 0)
+
+### 15.6 Custom port, and a new token every run
+
+```bash
+OLD_TOKEN=$TOKEN
+kill $DASH_PID 2>/dev/null; wait $DASH_PID 2>/dev/null
+dorgu dashboard --no-browser --port 3000 > /tmp/dorgu-dashboard.out 2>&1 &
+DASH_PID=$!
+sleep 5
+URL=$(grep -o 'http://[^ ]*' /tmp/dorgu-dashboard.out | head -1)
+BASE=$(echo "$URL" | sed 's#/?token=.*##')
+TOKEN=${URL##*token=}
+echo "$BASE"
+curl -s -o /dev/null -w "new token -> %{http_code}\n" -H "Authorization: Bearer $TOKEN" $BASE/api/v1/meta
+curl -s -o /dev/null -w "previous run's token -> %{http_code}\n" -H "Authorization: Bearer $OLD_TOKEN" $BASE/api/v1/meta
 ```
 
 Ask the user to verify:
 - Starts on port 3000
-- API returns cluster data on the custom port
+- The new token works and the previous run's token returns `401`
+- A port already in use fails with a message naming the address and does not open a browser
 
-### 15.4 Verbose mode
-
-```bash
-kill %1 2>/dev/null
-dorgu platform serve --verbose &
-sleep 3
-```
-
-Ask the user to verify:
-- Additional logging is visible compared to non-verbose mode
-
-### 15.5 Kubeconfig and context flags
+### 15.7 Kubeconfig and context flags
 
 ```bash
-kill %1 2>/dev/null
-dorgu platform serve --kubeconfig ~/.kube/config --context <current-context> &
-sleep 3
-curl -s http://localhost:8080/api/clusters | jq .
-```
-
-Ask the user to verify:
-- Server starts with specified kubeconfig and context
-- Returns cluster data
-
-### 15.6 API: GET /api/clusters returns ClusterPersona data
-
-```bash
-curl -s http://localhost:8080/api/clusters | jq '.clusters[0]'
-```
-
-Ask the user to verify:
-- Returns `qa-cluster` (or whichever ClusterPersona exists)
-- Has `name` field populated
-- `spec` and `status` fields present (may be partially populated depending on watcher implementation)
-- If Blessed Stack was installed (Phases 7-9), check `status.addons` reflects installed components
-
-### 15.7 API: GET /api/clusters/{name}
-
-```bash
-curl -s http://localhost:8080/api/clusters/qa-cluster | jq .
-```
-
-Ask the user to verify:
-- Returns single cluster object (not wrapped in array)
-- `name` matches requested cluster
-
-```bash
-curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/clusters/nonexistent
-```
-
-Ask the user to verify:
-- Returns HTTP 404
-
-### 15.8 Frontend loads
-
-```bash
-curl -s http://localhost:8080/ | grep -i "dorgu"
-```
-
-Ask the user to verify:
-- HTML contains "Dorgu" or "dorgu"
-- If React app is embedded: page references JavaScript assets
-- If placeholder: shows "Backend is running" message with API endpoint links
-
-### 15.9 WebSocket connectivity
-
-```bash
-# If wscat is available:
-timeout 5 wscat -c ws://localhost:8080/ws 2>&1 || echo "Connection test done"
-```
-
-Or instruct the user to check server logs for WebSocket client registration when the frontend connects in a browser.
-
-Ask the user to verify:
-- WebSocket endpoint is accessible at `ws://localhost:8080/ws`
-- Server logs show client connection
-
-### 15.10 Real-time updates
-
-While platform is running, create and then delete a test ClusterPersona:
-
-```bash
-dorgu cluster init --name platform-test --environment staging
+kill $DASH_PID 2>/dev/null; wait $DASH_PID 2>/dev/null
+dorgu dashboard --no-browser --kubeconfig ~/.kube/config --context <current-context> > /tmp/dorgu-dashboard.out 2>&1 &
+DASH_PID=$!
 sleep 5
-kubectl delete clusterpersona platform-test
+URL=$(grep -o 'http://[^ ]*' /tmp/dorgu-dashboard.out | head -1)
+BASE=$(echo "$URL" | sed 's#/?token=.*##'); TOKEN=${URL##*token=}
+curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/meta | jq '.cluster'
 ```
 
 Ask the user to verify:
-- Server logs show `Broadcasting WebSocket event: cluster.added - platform-test`
-- Server logs show `Broadcasting WebSocket event: cluster.deleted - platform-test`
-- If browser is open at `http://localhost:8080/`, the dashboard updates in real time
+- `cluster.context` is the context that was passed, and `cluster.server` is that cluster's API server
+- The dashboard does not require `kubectl` on the PATH (it reads the cluster itself)
 
-### 15.11 Graceful shutdown
+### 15.8 Namespace scope
 
 ```bash
-# Ctrl+C the running platform process (or kill %1)
+kill $DASH_PID 2>/dev/null; wait $DASH_PID 2>/dev/null
+dorgu dashboard --no-browser -n default > /tmp/dorgu-dashboard.out 2>&1 &
+DASH_PID=$!
+sleep 5
+URL=$(grep -o 'http://[^ ]*' /tmp/dorgu-dashboard.out | head -1)
+BASE=$(echo "$URL" | sed 's#/?token=.*##'); TOKEN=${URL##*token=}
+curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/incidents | jq '[.incidents[].namespace] | unique'
 ```
 
 Ask the user to verify:
-- Shutdown messages appear in logs
-- Process exits cleanly
-- Terminal prompt returns normally
+- Only the `default` namespace appears in the apps, incidents and remediations views
 
-### 15.12 Platform cleanup
+### 15.9 Browser: open the link and strip the token
+
+Run `dorgu dashboard` without `--no-browser` and ask the user to look at the browser.
+
+Ask the user to verify:
+- The default browser opens the dashboard (on a machine with no browser, the command prints a warning and the link still works)
+- After the page loads, the address bar shows `http://127.0.0.1:<port>/` **without** `?token=`
+- The header shows the cluster context and who you are (`as <identity>`)
+- Incidents show a Proposal column; expanding a remediation shows the operator gate panel
+- The page keeps updating with no refresh button
+
+### 15.10 Two dashboards at once keep separate sessions
+
+Start a second `dorgu dashboard` (for example with a different `--context`) while the first is running, and open both links in the **same browser profile**.
+
+Ask the user to verify:
+- Each dashboard is on its own random port
+- Both tabs keep working after the second link is opened: the first tab does not start showing 401 errors (the cookie name carries the port, so the sessions do not overwrite each other)
+
+Note for the report: browsers scope cookies by host, not port, so another local server visited in the same browser profile is also sent the dashboard cookie. This is a known, documented limit for a localhost tool.
+
+### 15.11 Read-only
 
 ```bash
-# Ensure platform process is stopped
-kill %1 2>/dev/null
-kill $(pgrep -f "dorgu platform serve") 2>/dev/null
+curl -s -o /dev/null -w "POST -> %{http_code}\n" -X POST -H "Authorization: Bearer $TOKEN" $BASE/api/v1/remediations
 ```
+
+Ask the user to verify:
+- A write returns `405 Method Not Allowed`: the dashboard exposes no route that changes the cluster
+- No Approve or Reject button exists in the UI; the Remediations view hands over the `dorgu remediation` command instead
+
+### 15.12 Graceful shutdown and cleanup
+
+```bash
+kill $DASH_PID 2>/dev/null
+wait $DASH_PID 2>/dev/null
+rm -f /tmp/dorgu-dashboard.out /tmp/dorgu-dashboard.jar
+```
+
+Ask the user to verify:
+- The process exits cleanly on Ctrl+C or SIGTERM with no error output
+- The terminal prompt returns normally
+- The old link no longer answers
 
 ---
 
@@ -1479,7 +1499,7 @@ At the end, produce a summary like:
   Phase 12: Component Verification ...... 5/6 PASS (1 SKIP)
   Phase 13: Addon Discovery ............. 3/3 PASS
   Phase 14: Cleanup ..................... 4/4 PASS
-  Phase 15: Platform Serve .............. 12/12 PASS
+  Phase 15: Dashboard ................... 12/12 PASS
   ────────────────────────────────────────────────
   TOTAL: 74/78 PASS | 0 FAIL | 4 SKIP
 
@@ -1605,7 +1625,7 @@ The unit test agent is responsible for writing and verifying the tests only. Onc
 
 ## Cross-dependency feature requests
 
-When QA testing reveals that the dorgu CLI requires changes in another project (dorgu-operator, dorgu-platform), or another project needs changes in the dorgu CLI, write a **feature request file** instead of attempting cross-repo changes.
+When QA testing reveals that the dorgu CLI requires changes in another project (dorgu-operator, dorgu-platform-v1), or another project needs changes in the dorgu CLI, write a **feature request file** instead of attempting cross-repo changes.
 
 **Feature request location:** `docs-internal/testing/dev/bugs/` (same directory as bug reports, prefixed with `FR-`)
 
@@ -1627,7 +1647,7 @@ Examples:
 - **Discovered in phase:** <phase number and case>
 
 ## Target Project
-- **Repository:** <dorgu-operator / dorgu-platform / dorgu>
+- **Repository:** <dorgu-operator / dorgu-platform-v1 / dorgu>
 - **Repository path:** <absolute path, e.g., /home/poklinho/dorgu-dev/dorgu-operator>
 
 ## Description
@@ -1668,9 +1688,9 @@ Examples:
 ### Known cross-dependencies to watch for:
 
 - **dorgu CLI → dorgu-operator:** The CLI installs the operator via Helm (`internal/setup/installer.go`), watches its WebSocket server (`internal/ws/client.go`), and depends on the CRD schema for `dorgu cluster init` and `dorgu persona generate`.
-- **dorgu CLI → dorgu-platform:** The CLI imports `github.com/dorgu-ai/dorgu-platform/pkg/platform` for the `dorgu platform serve` command (`internal/cli/platform.go`). API changes in the platform package affect the CLI.
+- **dorgu CLI → dorgu-platform-v1:** The CLI imports `github.com/dorgu-ai/dorgu-platform-v1/pkg/dashboard` for the `dorgu dashboard` command (`internal/cli/dashboard.go`). The dashboard's web UI is embedded from a tagged dashboard release. API changes in `pkg/dashboard` affect the CLI.
 - **dorgu-operator → dorgu CLI:** The operator's CRD fields define what `dorgu cluster status` and `dorgu persona status` can display. CRD schema changes must be reflected in CLI output formatters.
-- **dorgu-platform → dorgu-operator:** The platform's watcher depends on the operator's ClusterPersona CRD schema for data display.
+- **dorgu-platform-v1 → dorgu-operator:** The dashboard imports the operator's `api/v1` types and its informers depend on the CRD schema for data display.
 
 When you identify a cross-dependency need during QA, write the feature request file and **inform the user** about it so they can coordinate across repositories.
 

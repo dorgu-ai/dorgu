@@ -224,7 +224,7 @@ File a feature request when you observe:
 - **Discovered in phase:** <phase number and case>
 
 ## Target Project
-- **Repository:** <dorgu / dorgu-operator / dorgu-platform>
+- **Repository:** <dorgu / dorgu-operator / dorgu-platform-v1>
 - **Repository path:** <absolute path>
 
 ## Description
