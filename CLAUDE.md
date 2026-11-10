@@ -33,7 +33,7 @@ go test -v -run TestFunctionName ./internal/cli/...
 
 ### Command surface
 
-`health`, `incidents list|describe`, `remediation list|diff|approve|reject|heal`, `report`, `persona import|list|status`, `cluster status`, `version`. Every cluster command shells out to `kubectl` through the single `kubectlCmd` helper (`internal/cli/health.go`), which applies `--kubeconfig` and the global `--context`; `TestNoRawKubectlInvocations` fails on any other `exec.Command("kubectl", ...)`.
+`health`, `incidents list|describe`, `remediation list|diff|approve|reject|heal`, `report`, `dashboard`, `persona import|list|status`, `cluster status`, `version`. `dashboard` embeds `dorgu-platform-v1/pkg/dashboard` and reads the cluster with client-go (honouring `--kubeconfig` and `--context`); it never runs kubectl. Every other cluster command shells out to `kubectl` through the single `kubectlCmd` helper (`internal/cli/health.go`), which applies `--kubeconfig` and the global `--context`; `TestNoRawKubectlInvocations` fails on any other `exec.Command("kubectl", ...)`.
 
 ### Enforcement that lives in the CLI (to move into the operator)
 

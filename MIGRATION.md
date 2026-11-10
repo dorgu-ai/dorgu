@@ -21,7 +21,7 @@ go install github.com/dorgu-ai/dorgu/cmd/dorgu@pre-harness
 | `dorgu persona generate`, `dorgu persona apply` | Built a persona from local source | `dorgu persona import -n <namespace> --all`, which reads the Deployments already running |
 | `dorgu cluster setup`, `dorgu cluster info` | Installed and described a curated add-on stack. Not Dorgu's job | Install add-ons with their own charts |
 | `dorgu cluster init` | Hand-created a ClusterPersona | The operator creates `dorgu-cluster` on startup |
-| `dorgu platform serve` | ClusterPersona visualisation UI | A redesigned `dorgu dashboard` is planned |
+| `dorgu platform serve` | ClusterPersona visualisation UI | `dorgu dashboard`, a local read-only dashboard (unreleased). It is a new UI, not the old one |
 | `dorgu watch ...`, `dorgu sync ...`, `dorgu health --watch` | Streamed over the operator WebSocket | `dorgu health`, `dorgu incidents list`, `dorgu remediation list` (or `kubectl get -w` on the CRDs) |
 | global `--config` flag | Pointed at the `.dorgu.yaml` that only `generate` read | None |
 

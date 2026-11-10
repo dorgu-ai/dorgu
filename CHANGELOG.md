@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **`dorgu dashboard`: a local, read-only dashboard in your browser.** It embeds the [dorgu-platform-v1](https://github.com/dorgu-ai/dorgu-platform-v1) dashboard, so there is one command and nothing else to install. Flags: `--port` (default: a random free port), `--no-browser`, `-n/--namespace`, `--kubeconfig`, and the global `--context`. It shows apps, incidents and proposals, including the operator's gate verdicts, apply-ticket state (issued, expired, consumed), why a proposal expired (`ApprovalTimedOut`, `Superseded`, `PredatesGate`, `IncidentResolved`), owned workloads as advisory only, refused against deferred proposals, the `ProposalRefusalRecorded` record, and incident recurrence lineage (`-rN`) with the signal family it moved through. The header shows who the cluster says you are (`SelfSubjectReview`).
+  - **Locked down by default.** Binds `127.0.0.1` only (there is no `--host`), on a random port. Every API call, the live stream included, needs a per-run random session token: the printed link carries it, the browser exchanges it for an `HttpOnly`, `SameSite=Strict` cookie and the token is redirected out of the address bar. Foreign `Host` and `Origin` headers are refused and no CORS headers are sent. It uses your kubeconfig and permissions only and writes nothing to your cluster.
+  - **Does not need `kubectl`.** It reads the cluster with client-go, using the same kubeconfig loading rules.
+  - **The UI is embedded from a tagged dashboard release.** `go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest` produces a working dashboard. See the README, "Dashboard".
+
+### Changed
+
+- **The CLI now requires Go 1.26 to build and pulls in `k8s.io/*` v0.37 and controller-runtime dependencies** because the dashboard package does. The binary grows from about 24 MB to about 44 MB (linux/arm64, unstripped dev build). No behaviour of the existing commands changes.
+
+### Notes
+
+- `dorgu platform serve` was removed in v0.13.0 together with the `dorgu-platform` dependency; `dorgu dashboard` is a new command with a new UI, not its replacement.
+
 ## [0.14.1] - 2026-11-09
 
 Patch release for the findings of the dogfood upgrade to operator 0.13.0 / CLI v0.14.0 (D1.1), paired with operator v0.13.1. No new command or flag. Upgrade the CLI first, as before.
