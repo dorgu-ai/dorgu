@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dorgu-ai/dorgu-platform-v1/pkg/report"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,20 +28,20 @@ func TestReport_ApprovedNotHealedIsNotARollback(t *testing.T) {
 			cond("RolledBack", "True", "HealthDegraded", 30*time.Minute),
 		}})
 
-	got := buildReport(reportInputs{Remediations: []reportRA{never, healed}}, reportNow, reportFixtureWindow).HealAccounting
+	got := buildReportForTest(reportInputs{Remediations: []reportRA{never, healed}}, reportNow, reportFixtureWindow).HealAccounting
 
-	assert.Equal(t, 1, got.Excluded[excludedApprovedNotHealed], "approved, never patched, rolled back")
-	assert.Equal(t, 1, got.Excluded[excludedRolledBack], "a heal that was applied and rolled back is a rollback")
+	assert.Equal(t, 1, got.Excluded[report.ExcludedApprovedNotHealed], "approved, never patched, rolled back")
+	assert.Equal(t, 1, got.Excluded[report.ExcludedRolledBack], "a heal that was applied and rolled back is a rollback")
 }
 
 func TestReport_ARollbackWithNoRecordOfTheWorkloadStaysARollback(t *testing.T) {
 	// No WorkloadDiverged condition at all (an older operator): not provably unhealed.
 	old := mustRA(t, raOpts{name: "old", phase: "RolledBack", created: time.Hour, verification: "Degraded"})
 
-	got := buildReport(reportInputs{Remediations: []reportRA{old}}, reportNow, reportFixtureWindow).HealAccounting
+	got := buildReportForTest(reportInputs{Remediations: []reportRA{old}}, reportNow, reportFixtureWindow).HealAccounting
 
-	assert.Equal(t, 1, got.Excluded[excludedRolledBack])
-	assert.Equal(t, 0, got.Excluded[excludedApprovedNotHealed])
+	assert.Equal(t, 1, got.Excluded[report.ExcludedRolledBack])
+	assert.Equal(t, 0, got.Excluded[report.ExcludedApprovedNotHealed])
 }
 
 func TestReport_TheTextExplainsApprovedNotHealed(t *testing.T) {
@@ -66,7 +67,7 @@ func TestReport_OperatorLabelIsAVersionOrAnUnreleasedBuild(t *testing.T) {
 
 func TestReport_TheHeaderUsesTheOperatorLabel(t *testing.T) {
 	tag := "0e8a180"
-	doc := buildReport(reportInputs{}, reportNow, reportFixtureWindow)
+	doc := buildReportForTest(reportInputs{}, reportNow, reportFixtureWindow)
 	doc.Cluster.OperatorVersion = &tag
 	var buf bytes.Buffer
 

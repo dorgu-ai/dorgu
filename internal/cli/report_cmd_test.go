@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/dorgu-ai/dorgu-platform-v1/pkg/report"
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
 
@@ -117,9 +118,9 @@ func TestReportCommandReadsTheClusterAndPrintsJSON(t *testing.T) {
 	out, _, err := runReportCmd(t, true, "--since", "7d")
 
 	require.NoError(t, err)
-	var doc reportDoc
+	var doc report.Doc
 	require.NoError(t, json.Unmarshal([]byte(out), &doc), out)
-	assert.Equal(t, reportSchema, doc.Schema)
+	assert.Equal(t, report.Schema, doc.Schema)
 	assert.Equal(t, "7d", doc.Window.Since)
 	assert.Equal(t, 2, doc.HealAccounting.Total, "the 30 day old RemediationAction is outside the window")
 	assert.Equal(t, 1, doc.TierQ.Q2Precision.RejectionsByReason["too-risky"])

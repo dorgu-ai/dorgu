@@ -4,6 +4,12 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	dorguv1 "github.com/dorgu-ai/dorgu-operator/api/v1"
+	"github.com/dorgu-ai/dorgu-platform-v1/pkg/report"
 )
 
 // The report reads the cluster into these shapes and computes from them alone,
@@ -91,28 +97,7 @@ type reportEvent struct {
 	} `json:"involvedObject"`
 }
 
-// at is when the event happened: the newest timestamp it carries.
-func (e reportEvent) at() (time.Time, bool) {
-	for _, s := range []string{e.LastTimestamp, e.EventTime, e.FirstTimestamp} {
-		if t, ok := parseReportTime(s); ok {
-			return t, true
-		}
-	}
-	return time.Time{}, false
-}
-
-// occurrences is how many times the event fired (Kubernetes folds repeats).
-func (e reportEvent) occurrences() int {
-	if e.Series != nil && e.Series.Count > 0 {
-		return e.Series.Count
-	}
-	if e.Count > 0 {
-		return e.Count
-	}
-	return 1
-}
-
-// reportInputs is everything the report is computed from.
+// reportInputs is everything the report is computed from, as parsed from kubectl.
 type reportInputs struct {
 	Remediations []reportRA
 	Incidents    []reportIncident
@@ -123,57 +108,144 @@ type reportInputs struct {
 	EventsRead bool
 
 	// Errors are the cluster reads that failed. A section computed from one of them
-	// is no data (see buildReport), never zero.
-	Errors []reportInputError
+	// is no data, never zero.
+	Errors []report.InputError
 
 	// OperatorVersion is the operator's image tag, nil when it could not be read.
 	OperatorVersion *string
 }
 
-// unreadable reports whether the named input failed to read.
-func (in reportInputs) unreadable(input string) bool {
-	for _, e := range in.Errors {
-		if e.Input == input {
-			return true
-		}
+// toReport converts what kubectl printed into the operator's own types, which is
+// what pkg/report computes from. The mirrors are kept (rather than decoding into
+// the operator types directly) because they read a timestamp that does not parse
+// as "no time", exactly as the report always has, where the operator types would
+// refuse the whole list.
+func (in reportInputs) toReport() report.Inputs {
+	out := report.Inputs{
+		Remediations:    make([]dorguv1.RemediationAction, len(in.Remediations)),
+		Incidents:       make([]dorguv1.IncidentMemory, len(in.Incidents)),
+		Events:          make([]corev1.Event, len(in.Events)),
+		EventsRead:      in.EventsRead,
+		Errors:          append([]report.InputError(nil), in.Errors...),
+		OperatorVersion: in.OperatorVersion,
 	}
-	return false
+	for i := range in.Remediations {
+		out.Remediations[i] = in.Remediations[i].toOperator()
+	}
+	for i := range in.Incidents {
+		out.Incidents[i] = in.Incidents[i].toOperator()
+	}
+	for i := range in.Events {
+		out.Events[i] = in.Events[i].toOperator()
+	}
+	return out
 }
 
-// parseReportTime reads an RFC3339 timestamp. The empty string and anything
-// unparseable are "no time", never the zero time.
-func parseReportTime(s string) (time.Time, bool) {
+// reportTime reads an RFC3339 timestamp. The empty string and anything
+// unparseable are "no time": the zero metav1.Time, never a date in year 1 that
+// something could subtract from.
+func reportTime(s string) metav1.Time {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return time.Time{}, false
+		return metav1.Time{}
 	}
 	t, err := time.Parse(time.RFC3339Nano, s)
 	if err != nil {
-		return time.Time{}, false
+		return metav1.Time{}
 	}
-	return t, true
+	return metav1.NewTime(t)
 }
 
-func (r *reportRA) condition(condType string) *reportCondition {
-	for i := range r.Status.Conditions {
-		if r.Status.Conditions[i].Type == condType {
-			return &r.Status.Conditions[i]
+func reportTimePtr(s string) *metav1.Time {
+	t := reportTime(s)
+	if t.IsZero() {
+		return nil
+	}
+	return &t
+}
+
+func conditionsToOperator(in []reportCondition) []metav1.Condition {
+	out := make([]metav1.Condition, len(in))
+	for i, c := range in {
+		out[i] = metav1.Condition{
+			Type: c.Type, Status: metav1.ConditionStatus(c.Status), Reason: c.Reason,
+			LastTransitionTime: reportTime(c.LastTransitionTime),
 		}
 	}
-	return nil
+	return out
 }
 
-func (i *reportIncident) condition(condType string) *reportCondition {
-	for k := range i.Status.Conditions {
-		if i.Status.Conditions[k].Type == condType {
-			return &i.Status.Conditions[k]
-		}
+func (r reportRA) toOperator() dorguv1.RemediationAction {
+	out := dorguv1.RemediationAction{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: r.Metadata.Name, Namespace: r.Metadata.Namespace,
+			CreationTimestamp: reportTime(r.Metadata.CreationTimestamp),
+		},
+		Spec: dorguv1.RemediationActionSpec{
+			PlanSource: r.Spec.PlanSource,
+			IncidentRef: dorguv1.IncidentReference{
+				Name: r.Spec.IncidentRef.Name, Namespace: r.Spec.IncidentRef.Namespace,
+			},
+		},
+		Status: dorguv1.RemediationActionStatus{
+			Phase:              r.Status.Phase,
+			ApprovedAt:         reportTimePtr(r.Status.ApprovedAt),
+			AppliedAt:          reportTimePtr(r.Status.AppliedAt),
+			VerificationResult: r.Status.VerificationResult,
+			Conditions:         conditionsToOperator(r.Status.Conditions),
+		},
 	}
-	return nil
+	for _, step := range r.Spec.Steps {
+		safety := make([]dorguv1.StepSafety, len(step.Safety))
+		for i, s := range step.Safety {
+			safety[i] = dorguv1.StepSafety{Rule: s.Rule, Verdict: s.Verdict}
+		}
+		out.Spec.Steps = append(out.Spec.Steps, dorguv1.RemediationStep{Safety: safety})
+	}
+	if g := r.Status.Gate; g != nil {
+		gate := &dorguv1.GateStatus{Phase: g.Phase, Result: g.Result}
+		for _, v := range g.Verdicts {
+			gate.Verdicts = append(gate.Verdicts, dorguv1.GateVerdict{Stage: v.Stage, Guardrail: v.Guardrail, Verdict: v.Verdict})
+		}
+		out.Status.Gate = gate
+	}
+	return out
 }
 
-func (r *reportRA) created() (time.Time, bool) {
-	return parseReportTime(r.Metadata.CreationTimestamp)
+func (i reportIncident) toOperator() dorguv1.IncidentMemory {
+	out := dorguv1.IncidentMemory{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: i.Metadata.Name, Namespace: i.Metadata.Namespace,
+			CreationTimestamp: reportTime(i.Metadata.CreationTimestamp),
+		},
+		Spec: dorguv1.IncidentMemorySpec{
+			Detection: dorguv1.DetectionInfo{FirstSeen: reportTime(i.Spec.Detection.FirstSeen)},
+		},
+		Status: dorguv1.IncidentMemoryStatus{
+			Phase:      i.Status.Phase,
+			Conditions: conditionsToOperator(i.Status.Conditions),
+		},
+	}
+	if i.Spec.Resolution != nil {
+		out.Spec.Resolution = &dorguv1.ResolutionInfo{Outcome: i.Spec.Resolution.Outcome}
+	}
+	return out
+}
+
+func (e reportEvent) toOperator() corev1.Event {
+	out := corev1.Event{
+		Reason: e.Reason, Type: e.Type, Count: int32(e.Count), //nolint:gosec // an Event count never nears int32
+		FirstTimestamp: reportTime(e.FirstTimestamp),
+		LastTimestamp:  reportTime(e.LastTimestamp),
+		InvolvedObject: corev1.ObjectReference{Kind: e.InvolvedObject.Kind, Name: e.InvolvedObject.Name},
+	}
+	if t := reportTime(e.EventTime); !t.IsZero() {
+		out.EventTime = metav1.NewMicroTime(t.Time)
+	}
+	if e.Series != nil {
+		out.Series = &corev1.EventSeries{Count: int32(e.Series.Count)} //nolint:gosec // as above
+	}
+	return out
 }
 
 // parseReportList decodes a kubectl list into items of T.
@@ -185,12 +257,4 @@ func parseReportList[T any](raw []byte) ([]T, error) {
 		return nil, err
 	}
 	return list.Items, nil
-}
-
-// condTime is when a condition last changed.
-func condTime(c *reportCondition) (time.Time, bool) {
-	if c == nil {
-		return time.Time{}, false
-	}
-	return parseReportTime(c.LastTransitionTime)
 }

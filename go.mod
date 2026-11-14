@@ -4,7 +4,8 @@ go 1.26.0
 
 require (
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/dorgu-ai/dorgu-platform-v1 v0.1.0
+	github.com/dorgu-ai/dorgu-operator v0.13.1
+	github.com/dorgu-ai/dorgu-platform-v1 v0.2.0
 	github.com/spf13/cobra v1.10.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/term v0.45.0
@@ -21,7 +22,6 @@ require (
 	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/dorgu-ai/dorgu-operator v0.13.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect

@@ -51,7 +51,7 @@ func TestB6Review_DetectToProposalIsMeasuredOncePerIncident(t *testing.T) {
 		Incidents:    []reportIncident{mustIncident(t, incidentJSON("inc-1", 10*h, 10*h, ""))},
 	}
 
-	got := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q1TimeToHeal.DetectToProposal
+	got := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q1TimeToHeal.DetectToProposal
 
 	assert.Equal(t, 1, got.N, "one incident, one detect-to-proposal sample (the machine's first proposal)")
 	if got.P90Seconds != nil {

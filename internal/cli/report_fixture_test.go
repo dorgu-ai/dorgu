@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dorgu-ai/dorgu-platform-v1/pkg/report"
 	"github.com/stretchr/testify/require"
 )
 
@@ -220,4 +221,12 @@ func reportFixture(t *testing.T) reportInputs {
 // run the command, which windows against time.Now.
 func reportTimeAgo(h int) string {
 	return time.Now().UTC().Add(-time.Duration(h) * time.Hour).Format(time.RFC3339)
+}
+
+// buildReportForTest is how every report test reaches the computation: through
+// the converter the command uses, into pkg/report. The compute tests also live
+// next to the code in pkg/report; running them here too proves the conversion
+// from kubectl's JSON loses nothing, which is what keeps the output unchanged.
+func buildReportForTest(in reportInputs, now time.Time, since time.Duration) report.Doc {
+	return report.Build(in.toReport(), now, since)
 }

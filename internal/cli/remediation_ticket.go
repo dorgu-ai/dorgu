@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dorgu-ai/dorgu-platform-v1/pkg/report"
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
 
@@ -552,13 +553,13 @@ var operatorVersionReader = readOperatorVersion
 func warnIfOperatorPredatesTickets(ctx context.Context, kubeconfig string, w io.Writer) {
 	version := operatorVersionReader(ctx, kubeconfig)
 	switch {
-	case operatorPredatesTickets(version):
+	case report.OperatorPredatesTickets(version):
 		_, _ = fmt.Fprintf(w, "\nWarning: the operator on this cluster is %s, which is older than %s and does not issue apply tickets.\n"+
 			"This CLI cannot heal against it, and that is why no ticket arrived. Upgrade the operator to %s or newer; the CLI and the operator are a pair.\n",
-			*version, reportTicketOperator, reportTicketOperator)
-	case !operatorVersionKnown(version):
+			*version, report.TicketOperator, report.TicketOperator)
+	case !report.OperatorVersionKnown(version):
 		_, _ = fmt.Fprintf(w, "\nWarning: could not determine the operator version; an operator older than %s issues no tickets.\n"+
 			"If no ticket arrived, check the operator is %s or newer; the CLI and the operator are a pair.\n",
-			reportTicketOperator, reportTicketOperator)
+			report.TicketOperator, report.TicketOperator)
 	}
 }

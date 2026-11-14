@@ -20,7 +20,7 @@ func TestNEW3_AnOwnActionThatFinishedDoesNotHideARealConcurrentRefusal(t *testin
 		t.Run(phase, func(t *testing.T) {
 			in := concurrentRefused(t, raOpts{name: "ra-old", phase: phase, created: 40 * 24 * time.Hour})
 
-			q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+			q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 			assert.Len(t, q6.Rows, 1, "the incident was re-proposed after %s and refused because another fix holds the persona", phase)
 			assert.Equal(t, 0, deferredCount(q6))
@@ -34,7 +34,7 @@ func TestNEW3_AResolutionRecordThatIsNotResolvedDoesNotHideARealConcurrentRefusa
 			in := reportInputs{Incidents: []reportIncident{mustIncident(t,
 				incidentJSON("inc-1", 3*time.Hour, 3*time.Hour, outcome, cond("ProposalRefused", "True", "Guardrails_Concurrent", time.Hour)))}}
 
-			q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+			q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 			assert.Len(t, q6.Rows, 1, "an incident left open with outcome %s is not resolved", outcome)
 			assert.Equal(t, 0, deferredCount(q6))
@@ -55,11 +55,11 @@ func resolvedConcurrentIncident(t *testing.T) reportInputs {
 
 func TestNEW3_AnInFlightOwnActionAndAResolvedIncidentStillDefer(t *testing.T) {
 	inFlight := concurrentRefused(t, raOpts{name: "ra-own", phase: "Pending", created: 2 * time.Hour})
-	q6 := buildReport(inFlight, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 := buildReportForTest(inFlight, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 	assert.Empty(t, q6.Rows)
 	assert.Equal(t, 1, deferredCount(q6))
 
-	q6 = buildReport(resolvedConcurrentIncident(t), reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 = buildReportForTest(resolvedConcurrentIncident(t), reportNow, reportFixtureWindow).TierQ.Q6Refusals
 	assert.Empty(t, q6.Rows)
 	assert.Equal(t, 1, deferredCount(q6))
 }
