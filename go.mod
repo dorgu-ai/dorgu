@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/dorgu-ai/dorgu-operator v0.13.1
-	github.com/dorgu-ai/dorgu-platform-v1 v0.0.0-20261114140906-9c2f0fa343f1
+	github.com/dorgu-ai/dorgu-platform-v1 v0.2.0
 	github.com/spf13/cobra v1.10.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/term v0.45.0
