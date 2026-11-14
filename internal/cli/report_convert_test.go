@@ -24,7 +24,7 @@ func TestEveryRejectionReasonTheCLIWritesIsOneTheReportKnows(t *testing.T) {
 func TestReportReadsTheEventPrefixTheCLIWrites(t *testing.T) {
 	in := reportInputs{
 		EventsRead: true,
-		Events: []reportEvent{mustEvent(t, `{"reason":"`+reasonCLIPrefix+`NoTicket","lastTimestamp":"`+ago(time.Hour)+`","involvedObject":{"kind":"RemediationAction"}}`)},
+		Events:     []reportEvent{mustEvent(t, `{"reason":"`+reasonCLIPrefix+`NoTicket","lastTimestamp":"`+ago(time.Hour)+`","involvedObject":{"kind":"RemediationAction"}}`)},
 	}
 	got := buildReportForTest(in, reportNow, reportFixtureWindow)
 	assert.Equal(t, 1, got.CLIDeclines.ByReason[reasonCLIPrefix+"NoTicket"])
