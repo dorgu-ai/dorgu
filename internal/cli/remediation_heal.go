@@ -29,6 +29,9 @@ type healOptions struct {
 	workload   string // explicit Deployment name (overrides label discovery)
 	container  string // explicit container name
 	assumeYes  bool   // skip the confirmation prompt
+	// user is the authenticated username (SelfSubjectReview). It is what a heal
+	// record writes as the approver and what a ticket's approvedBy must equal.
+	user string
 }
 
 // healResourceChange is the resource intent extracted from a persona-update patch.
@@ -801,7 +804,7 @@ func executeHeal(
 
 	// The cluster has changed, so the record has to say so before this reports
 	// success. See remediation_record.go.
-	recordErr := recordHeal(ctx, opts.kubeconfig, r.Metadata.Namespace, r.Metadata.Name, exec)
+	recordErr := recordHeal(ctx, opts.kubeconfig, r.Metadata.Namespace, r.Metadata.Name, exec, opts.user)
 
 	output.Success(fmt.Sprintf(
 		"Healed %s/%s (container %s). The pod will restart with the updated resources.",
@@ -848,7 +851,13 @@ func healWithTicket(
 		return errSilent
 	}
 
-	bound, err := bindTicket(ctx, opts.kubeconfig, ticketed.Status.ApplyTicket, exec, time.Now())
+	// Ticket v1: specHash, approvedBy and expiresAt are present and true before the
+	// CLI binds the ticket to anything or reads the Deployment.
+	err = checkTicketV1(ticketed, opts.user, time.Now())
+	var bound *healExecution
+	if err == nil {
+		bound, err = bindTicket(ctx, opts.kubeconfig, ticketed.Status.ApplyTicket, exec, time.Now())
+	}
 	if err != nil {
 		recordDecline(ctx, opts.kubeconfig, r, err)
 		var declined *ownedWorkloadError
@@ -871,7 +880,7 @@ func healWithTicket(
 		output.Info("The operator's gate re-checked this on the live cluster and applied a different change than the preview; the ticket is what is applied.")
 	}
 	return executeHeal(ctx, ticketed, bound, opts, in, w, func(ctx context.Context) error {
-		return reverifyBeforePatch(ctx, opts.kubeconfig, ticketed, bound)
+		return reverifyBeforePatch(ctx, opts.kubeconfig, ticketed, bound, opts.user)
 	})
 }
 

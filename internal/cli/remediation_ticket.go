@@ -37,9 +37,14 @@ type applyTicket struct {
 	ObservedGeneration int64 `json:"observedGeneration"`
 	// IssuedAt is when the operator wrote the ticket. A ticket that predates the
 	// approval being recorded is not the operator's answer to it.
-	IssuedAt  string `json:"issuedAt"`
-	ExpiresAt string `json:"expiresAt"`
-	Verdicts  []struct {
+	IssuedAt string `json:"issuedAt"`
+	// ExpiresAt, SpecHash and ApprovedBy are ticket v1 (operator v0.14, P2-D9): until
+	// when the ticket stands, the hash of the RemediationAction spec it cleared, and
+	// who approved it. checkTicketV1 refuses a ticket without all three.
+	ExpiresAt  string `json:"expiresAt"`
+	SpecHash   string `json:"specHash"`
+	ApprovedBy string `json:"approvedBy"`
+	Verdicts   []struct {
 		Stage     string `json:"stage"`
 		Guardrail string `json:"guardrail"`
 		Verdict   string `json:"verdict"`
@@ -64,16 +69,12 @@ const (
 	reasonPreconditionRejected  = "PreconditionRejected"
 )
 
-// maxTicketLifetime mirrors the operator's gate.TicketTTL: no ticket it issues
-// lives longer. A ticket claiming more was not issued by it. ticketTimeSlack
-// covers the whole-second resolution both timestamps are stored at, and
-// ticketFutureSkew how far ahead of this machine's clock an issue time may be
-// (the operator's clock is not this one's).
-const (
-	maxTicketLifetime = 10 * time.Minute
-	ticketTimeSlack   = 2 * time.Second
-	ticketFutureSkew  = 2 * time.Minute
-)
+// ticketFutureSkew is how far ahead of this machine's clock a ticket's issue time
+// may be (the operator's clock is not this one's); it is the allowance the operator
+// applies too. There is no cap on a ticket's lifetime: the operator's default is 15
+// minutes and the chart sets it, so the CLI honours expiresAt and nothing else
+// (P2-D15, C3 review F-1).
+const ticketFutureSkew = 2 * time.Minute
 
 // ticketWaitTimeout is how long approve waits for the operator's ticket, and
 // ticketPollInterval how often it looks. Variables so tests do not wait 30s.
@@ -201,10 +202,6 @@ func ticketAnswersApproval(rem *remediationFull, ticket *applyTicket, now time.T
 	if issued.After(now.Add(ticketFutureSkew)) {
 		return false, mismatch("the apply ticket claims to be issued at %s, in the future; refusing it",
 			issued.UTC().Format(time.RFC3339))
-	}
-	if expires.Sub(issued) > maxTicketLifetime+ticketTimeSlack {
-		return false, mismatch("the apply ticket's lifetime (%s) is longer than the operator ever issues; refusing it",
-			expires.Sub(issued).Round(time.Second))
 	}
 	if issued.Before(approved) {
 		return false, nil
@@ -451,7 +448,7 @@ func sameWorkloadAsTicket(live deploymentSummary, ticket *applyTicket, exec *hea
 // operator's gate already refuses an approval and an apply under observe mode;
 // the CLI cannot yet rely on the operator being the only writer of the ticket
 // (admission policy for that is P2 task 2.5), so it checks the policy itself.
-func reverifyBeforePatch(ctx context.Context, kubeconfig string, ticketed *remediationFull, bound *healExecution) error {
+func reverifyBeforePatch(ctx context.Context, kubeconfig string, ticketed *remediationFull, bound *healExecution, user string) error {
 	name, namespace := ticketed.Metadata.Name, ticketed.Metadata.Namespace
 	fresh, err := fetchRemediation(ctx, kubeconfig, name, namespace)
 	if err != nil {
@@ -468,6 +465,11 @@ func reverifyBeforePatch(ctx context.Context, kubeconfig string, ticketed *remed
 	expires, err := time.Parse(time.RFC3339, now.ExpiresAt)
 	if err != nil || !time.Now().Before(expires) {
 		return &ticketExpiredError{expiresAt: now.ExpiresAt, whileWaiting: true}
+	}
+	// The spec may have been edited since the ticket was read: hash what is served
+	// now, and check the approver again, on the object just read.
+	if err := checkTicketV1(fresh, user, time.Now()); err != nil {
+		return err
 	}
 
 	live, err := getDeployment(ctx, kubeconfig, bound.Namespace, bound.Deployment)

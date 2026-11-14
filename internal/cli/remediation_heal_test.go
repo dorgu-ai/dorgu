@@ -263,6 +263,12 @@ type fakeKubectlResponses struct {
 	// failEventCreate makes `kubectl create` (how the CLI writes its decline
 	// Events) fail, the way a user without events/create would.
 	failEventCreate bool
+
+	// whoami is what `kubectl auth whoami -o json` (a SelfSubjectReview) returns;
+	// the default is fixtureUser. whoamiError, when set, is the stderr it fails
+	// with, the way a cluster or a kubectl without SelfSubjectReview would.
+	whoami      string
+	whoamiError string
 }
 
 // writeFakeKubectlDispatch installs a fake kubectl on PATH that dispatches by
@@ -334,6 +340,16 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		eventFails = "1"
 	}
 	statusErrFile := write("status-err.txt", r.statusPatchError)
+	whoamiDoc := r.whoami
+	if whoamiDoc == "" {
+		whoamiDoc = whoamiJSON(fixtureUser)
+	}
+	whoamiFile := write("whoami.json", whoamiDoc)
+	whoamiErrFile := write("whoami-err.txt", r.whoamiError)
+	whoamiFails := "0"
+	if r.whoamiError != "" {
+		whoamiFails = "1"
+	}
 
 	callLog := filepath.Join(dir, "calls.log")
 
@@ -344,6 +360,7 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"for a in \"$@\"; do\n" +
 		"  case \"$a\" in\n" +
 		"    get) mode=get ;;\n" +
+		"    whoami) mode=whoami ;;\n" +
 		"    patch) mode=patch ;;\n" +
 		"    create) mode=create ;;\n" +
 		"    remediationaction|remediationactions) [ -z \"$kind\" ] && kind=rem ;;\n" +
@@ -352,6 +369,9 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"    clusterpersona|clusterpersonas) [ -z \"$kind\" ] && kind=cp ;;\n" +
 		"  esac\n" +
 		"done\n" +
+		"if [ \"$mode\" = whoami ]; then\n" +
+		"  if [ " + whoamiFails + " = 1 ]; then cat " + whoamiErrFile + " >&2; exit 1; fi\n" +
+		"  cat " + whoamiFile + "; exit 0; fi\n" +
 		"if [ \"$mode\" = create ]; then\n" +
 		"  if [ " + eventFails + " = 1 ]; then echo 'Error from server (Forbidden): events is forbidden' >&2; exit 1; fi\n" +
 		"  cat >> " + filepath.Join(dir, "events.log") + "; echo >> " + filepath.Join(dir, "events.log") + "; echo created; exit 0; fi\n" +
@@ -643,7 +663,7 @@ func TestHealWorkloadDeclinedConfirmation(t *testing.T) {
 
 	// No --yes and "n" on stdin → declines, patches nothing.
 	err := healWorkload(t.Context(), &r,
-		healOptions{}, strings.NewReader("n\n"), io.Discard)
+		healOptions{user: fixtureUser}, strings.NewReader("n\n"), io.Discard)
 	require.NoError(t, err)
 	assert.NotContains(t, readPatchLog(t, patchLog), "patch deployment")
 }

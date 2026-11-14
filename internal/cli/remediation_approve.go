@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/dorgu-ai/dorgu/internal/output"
@@ -32,9 +33,12 @@ var phasesWhereTheApprovalStands = map[string]bool{
 // anything wrote to the action since the CLI read it (an expiry, a supersede, a
 // teammate's decision). An empty version sends no precondition; a live API server
 // always has one.
-func buildApprovePatch(resourceVersion, now string) (string, error) {
+func buildApprovePatch(resourceVersion, now, user string) (string, error) {
+	if strings.TrimSpace(user) == "" {
+		return "", errors.New("no authenticated user to record as the approver")
+	}
 	patch := map[string]any{"status": map[string]any{
-		"phase": "Approved", "approvedBy": "cli-user", "approvedAt": now,
+		"phase": "Approved", "approvedBy": user, "approvedAt": now,
 	}}
 	if resourceVersion != "" {
 		patch["metadata"] = map[string]any{"resourceVersion": resourceVersion}
@@ -53,12 +57,12 @@ func buildApprovePatch(resourceVersion, now string) (string, error) {
 // somebody else's approval landed first and stands: it is said so, nothing is written
 // by this command, and the caller reports no approval of its own.
 func approveAndConfirm(
-	ctx context.Context, kubeconfig, namespace, name string, rem *remediationFull, w io.Writer,
+	ctx context.Context, kubeconfig, namespace, name, user string, rem *remediationFull, w io.Writer,
 ) (byAnother bool, err error) {
 	current := rem
 	written := false
 	for attempt := 0; attempt < recordAttempts && !written; attempt++ {
-		patch, err := buildApprovePatch(current.Metadata.ResourceVersion, time.Now().UTC().Format(time.RFC3339))
+		patch, err := buildApprovePatch(current.Metadata.ResourceVersion, time.Now().UTC().Format(time.RFC3339), user)
 		if err != nil {
 			return false, err
 		}
@@ -66,6 +70,9 @@ func approveAndConfirm(
 		switch {
 		case err == nil:
 			written = true
+		case isAdmissionDenial(err):
+			printAdmissionDenial(w, err, "approved")
+			return false, withExitCode(ExitDeclined, errSilent)
 		case !isConflictError(err):
 			return false, fmt.Errorf("failed to approve remediation: %w", err)
 		default:
@@ -207,4 +214,19 @@ func withdrawnReason(rem *remediationFull) string {
 		}
 	}
 	return "the operator moved it to " + rem.Status.Phase + "."
+}
+
+// isAdmissionDenial reports whether err is the API server refusing a write with a
+// dorgu: <Reason> admission message.
+func isAdmissionDenial(err error) bool {
+	var denied *admissionDeniedError
+	return errors.As(err, &denied)
+}
+
+// printAdmissionDenial says, in one plain sentence, why the API server refused the
+// write, and that the decision was not recorded. verb is "approved" or "rejected".
+func printAdmissionDenial(w io.Writer, err error, verb string) {
+	fmt.Fprintf(w, "\n")
+	output.Error(err.Error())
+	output.Info("Nothing was " + verb + " and nothing was changed.")
 }

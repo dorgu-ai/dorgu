@@ -20,9 +20,14 @@ type rejectRun struct {
 
 func runReject(t *testing.T, rem string, args ...string) rejectRun {
 	t.Helper()
-	patchLog := writeFakeKubectlDispatch(t, fakeKubectlResponses{
+	return runRejectWith(t, fakeKubectlResponses{
 		context: "kind-dorgu-spike", rem: rem, persona: personaFixture, deployment: deploymentListFixture, noTicket: true,
-	})
+	}, args...)
+}
+
+func runRejectWith(t *testing.T, r fakeKubectlResponses, args ...string) rejectRun {
+	t.Helper()
+	patchLog := writeFakeKubectlDispatch(t, r)
 	cmd := newRemediationRejectCmd()
 	cmd.SetArgs(append([]string{"fix-oom-api-server", "-n", "production"}, args...))
 	var sb strings.Builder

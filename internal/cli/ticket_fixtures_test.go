@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 	"time"
 
+	dorguv1 "github.com/dorgu-ai/dorgu-operator/api/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,6 +22,34 @@ const (
 	// observedGeneration of the fixture tickets: the spec has not moved.
 	fixtureGeneration = 3
 )
+
+// fixtureUser is who the fake cluster's SelfSubjectReview says the CLI user is, and
+// the approver the fixture tickets carry. fixtureOtherUser is somebody else.
+const (
+	fixtureUser      = "alice@example.com"
+	fixtureOtherUser = "mallory@example.com"
+)
+
+// whoamiJSON is the SelfSubjectReview `kubectl auth whoami -o json` prints.
+func whoamiJSON(username string) string {
+	return `{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","status":{"userInfo":{"username":"` +
+		username + `","groups":["system:authenticated"]}}}`
+}
+
+// specHashOfDoc is the specHash of the .spec of a RemediationAction JSON document,
+// computed the way P2-D14 says a client does: from the served object, generically.
+func specHashOfDoc(t *testing.T, doc string) string {
+	t.Helper()
+	dec := json.NewDecoder(bytes.NewReader([]byte(doc)))
+	dec.UseNumber()
+	var obj struct {
+		Spec map[string]any `json:"spec"`
+	}
+	require.NoError(t, dec.Decode(&obj))
+	hash, err := dorguv1.SpecHashFromMap(obj.Spec)
+	require.NoError(t, err)
+	return hash
+}
 
 // fixtureApprovedAt is when the fixtures say the approval was recorded. Tickets
 // are issued after it, as the operator's are.
@@ -75,7 +105,9 @@ func withTicket(t *testing.T, fixture, phase string, mutate ...func(ticket map[s
 		"observedResourceVersion": fixtureDeploymentRV,
 		"observedGeneration":      fixtureGeneration,
 		"issuedAt":                time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano),
-		"expiresAt":               time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339),
+		"expiresAt":               time.Now().Add(15 * time.Minute).UTC().Format(time.RFC3339),
+		"specHash":                specHashOfDoc(t, fixture),
+		"approvedBy":              fixtureUser,
 		"verdicts":                []any{map[string]any{"stage": "Guardrails", "guardrail": "blast-radius", "verdict": "pass"}},
 	}
 	for _, m := range mutate {

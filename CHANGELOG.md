@@ -7,8 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Upgrade notes
+
+> **This CLI is required for operator v0.14, and it must be upgraded first.** Operator v0.14 issues ticket v1 with a default lifetime of 15 minutes, and its admission policy (P2) denies the literal `approvedBy: cli-user` that CLI v0.14.x writes. A CLI older than this one refuses every v0.14 ticket (it caps a ticket's life at 10 minutes), so with it `dorgu remediation approve` applies nothing. Install this CLI, then upgrade the operator. This CLI is safe against an older operator: a v0.13 ticket has no `specHash`, so it is refused with a message that says why, and nothing is applied.
+>
+> **`approve`, `reject` and `heal` now need `kubectl auth whoami` to work.** The approver is the authenticated username from a SelfSubjectReview (`authentication.k8s.io/v1`, GA in Kubernetes 1.28), which needs kubectl 1.28 or newer and an API server that serves it. If it is not available, or returns no username, the command stops before it writes anything and says so. There is no fallback name.
+>
+> **A ticket approved by somebody else is not yours to apply.** `heal` refuses a ticket whose `approvedBy` is not your authenticated username. Run it as the user who approved.
+
 ### Added
 
+- **The approver is the authenticated user (harness P2, task 2.7).** `approve`, `reject` and the implicit approval a `heal` records write `status.approvedBy` from a SelfSubjectReview, never the old literal `cli-user`, and print "Approving as <user>" or "Rejecting as <user>" before the write. `reject` now records the rejecter in `approvedBy` too, because the admission policy checks that field on both decisions.
+- **Ticket v1 checks, before the CLI touches anything (P2-D9, P2-D14).** The CLI refuses a ticket that lacks `specHash`, `approvedBy` or `expiresAt`, is expired, whose `specHash` is not the SHA-256 of the RFC 8785 canonical form of the RemediationAction `.spec` as the API server serves it (computed with the operator module's `SpecHashFromJSON` on the raw `.spec`, never a typed struct, so the CLI and the operator agree for any way the spec was written), or whose `approvedBy` is not the authenticated user. The checks run when the ticket arrives and again, on a fresh read, right before the patch, so a spec edited after the ticket is refused. The golden vectors from the operator (`internal/cli/testdata/spechash_vectors.json`, copied from operator `api/v1/testdata`) run in the test suite.
+- **Friendly admission errors.** A write the API server refuses with a `dorgu: <Reason>: ` message is shown as one plain sentence for each of the nine reasons (for example "You proposed this, so someone else has to approve it." and "Your account lacks the approve permission on remediations in <namespace>; ask an admin for the dorgu-approver role."), exit code 4 (declined) and "Nothing was approved". An unknown reason shows the raw message; nothing after the reason token is read.
+- **`dorgu health` shows CPU throttling detection.** On, off or unknown, which source it reads (`metrics.k8s.io` or `prometheus`) and, when it is off, why, from ClusterPersona `status.cpuThrottlingDetection`. In `--json` it is the `cpuThrottling` object (`state`, `source`, `reason`, `message`). An operator older than v0.14 writes no such field and shows as "unknown (operator older than v0.14)".
+- **Adversarial suite: 8/8 (was 6/6).** CLI-07 (ID-03 from the CLI side: `approvedBy` is never anything but the authenticated user, and nothing is written without one) and CLI-08 (a forged ticket is refused before apply: wrong `specHash`, expired, missing fields, another approver).
 - **`dorgu dashboard`: a local, read-only dashboard in your browser.** It embeds the [dorgu-platform-v1](https://github.com/dorgu-ai/dorgu-platform-v1) dashboard, so there is one command and nothing else to install. Flags: `--port` (default: a random free port), `--no-browser`, `-n/--namespace`, `--kubeconfig`, and the global `--context`. It shows apps, incidents and proposals, including the operator's gate verdicts, apply-ticket state (issued, expired, consumed), why a proposal expired (`ApprovalTimedOut`, `Superseded`, `PredatesGate`, `IncidentResolved`), owned workloads as advisory only, refused against deferred proposals, the `ProposalRefusalRecorded` record, and incident recurrence lineage (`-rN`) with the signal family it moved through. The header shows who the cluster says you are (`SelfSubjectReview`).
   - **Locked down by default.** Binds `127.0.0.1` only (there is no `--host`), on a random port. Every API call, the live stream included, needs a per-run random session token: the printed link carries it, the browser exchanges it for an `HttpOnly`, `SameSite=Strict` cookie and the token is redirected out of the address bar. Foreign `Host` and `Origin` headers are refused and no CORS headers are sent. It uses your kubeconfig and permissions only and writes nothing to your cluster.
   - **Does not need `kubectl`.** It reads the cluster with client-go, using the same kubeconfig loading rules.
@@ -16,6 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **The CLI no longer caps a ticket's lifetime at 10 minutes (operator C3 review F-1).** It honours `expiresAt` exactly, with the existing 2 minute allowance for an issue time ahead of this machine's clock. The operator's default is 15 minutes and the chart sets it, up to 24 hours.
+- **`go.mod`: `github.com/dorgu-ai/dorgu-operator` is pinned to a master pseudo-version (`ee08af4`, operator C3) for `SpecHashFromJSON`; the release brief re-pins it to the tag.** Adds `github.com/gowebpki/jcs` (RFC 8785) and raises `testify` to v1.12.1.
 - **The CLI now requires Go 1.26 to build and pulls in `k8s.io/*` v0.37 and controller-runtime dependencies** because the dashboard package does. The binary grows from about 24 MB to about 44 MB (linux/arm64, unstripped dev build). No behaviour of the existing commands changes.
 
 ### Notes

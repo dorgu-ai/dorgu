@@ -111,6 +111,8 @@ dorgu remediation diff <remediation-name> -n <namespace>
 dorgu remediation approve <remediation-name> -n <namespace>
 ```
 
+Approval is recorded under your authenticated username, the one `kubectl auth whoami` prints (a SelfSubjectReview, Kubernetes 1.28 or newer). Dorgu shows "Approving as <user>" first, and approves nothing if the cluster cannot say who you are.
+
 Healing is **on by default**. Approving patches the Persona spec *and* applies the equivalent change to the running workload, then the operator verifies health and rolls back if the workload regresses. Use `--no-heal` to approve the proposal without touching the workload (you can still `heal` it within the verification window, see [Heal separately](#heal-separately)).
 
 ---
@@ -220,7 +222,7 @@ You should see five CRDs: `applicationpersonas`, `clusterpersonas`, `incidentmem
 
 | Command | Description |
 |---------|-------------|
-| `dorgu health` | Cluster health summary: nodes, resource saturation, control plane, active incidents, pending remediations |
+| `dorgu health` | Cluster health summary: nodes, resource saturation, CPU throttling detection (on, off or unknown, and its source), control plane, active incidents, pending remediations |
 | `dorgu incidents list` | List incidents with severity, category, affected persona, and phase |
 | `dorgu incidents describe <name>` | Incident detail: timeline, root cause, confidence score, contributing signals |
 | `dorgu remediation list` | List remediation proposals |
@@ -405,7 +407,7 @@ Where there is nothing to measure it says `no data`, never `0`. KPIs a cluster c
 
 ### Heal separately
 
-If you approved with `--no-heal` and then want the workload change, run `heal` soon after: it works only while the operator still has the remediation in `Applying`, which is the verification window (10 minutes by default), the same ten minutes the apply ticket lives for.
+If you approved with `--no-heal` and then want the workload change, run `heal` soon after: it works only while the operator still has the remediation in `Applying`, which is the verification window (10 minutes by default). The apply ticket has its own expiry (15 minutes by default, set by the operator); the CLI honours it and refuses an expired one.
 
 ```bash
 dorgu remediation heal ra-default-api-oom-b71c -n default

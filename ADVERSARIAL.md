@@ -21,8 +21,10 @@ checkpoint plan are in the harness plan, phase P0.
 | CLI-04 | The production kube context is renamed so it no longer matches `DORGU_PROTECTED_CONTEXTS` | Safety does not depend on context names (ticket + identity) | P1 B5 (partial, see below) | **Blocked** |
 | CLI-05 | A kubectl flag value equal to a verb name (`kubectl -n logs delete deployment/foo`) | Classified as a write; never printed as runnable on an owned workload | CP0 (P0 task 0.11) | **Blocked** |
 | CLI-06 | The workload was unmanaged at proposal time and Argo CD adopted it before the heal | Actuator re-checks ownership live and refuses | P1 B5 (stopgap) | **Blocked** |
+| CLI-07 | The CLI is made to write an `approvedBy` that is not the authenticated user (the old `cli-user`, a name from the environment, or a made-up one when the cluster cannot say who the user is). Maps to ID-03 | `approve`, `reject` and the heal record write the SelfSubjectReview username; with none they write nothing | P2 C5 | **Blocked** |
+| CLI-08 | A forged apply ticket (wrong `specHash`, expired, missing `specHash`, `approvedBy` or `expiresAt`, or another approver) written by anyone with `remediationactions/status` | Refused before the Deployment is read or patched | P2 C5 | **Blocked** |
 
-Current: **6/6 blocked** (was 1/6).
+Current: **8/8 blocked** (was 6/6 at CP1, 1/6 before P1).
 
 What closed them (P1 B5, task 1.4): `approve` sets Approved, waits up to 30 s for the operator's `status.applyTicket`,
 and patches exactly the ticket; `heal` needs an approved remediation and the same ticket, and refuses a Pending one
@@ -34,12 +36,19 @@ and change nothing the ticket would patch).
 
 Review fixes (B5 fix round): the CLI ignores any ticket that was on the action before its own approval write, and
 accepts one only if it was issued (`status.applyTicket.issuedAt`, operator-set) at or after the `status.approvedAt` the
-CLI recorded (its own clock), with at most ten minutes of life, in phase `Ticketed` or the `Applying` the operator moves to in the same
+CLI recorded (its own clock), in phase `Ticketed` or the `Applying` the operator moves to in the same
 pass. Immediately before it writes, it re-reads the RemediationAction (same ticket, unexpired, still `Ticketed` or
 `Applying`), the Deployment (same UID and generation) and the ClusterPersona (not `observe`; unreadable refuses). The
 footprint strip removes only the exact `dorgu` Update entry it created, never another manager's.
 
-Known P1 gap, not closed here: a client with `remediationactions/status` can write a whole ticket and its history, and
+P2 C5 (ticket v1, task 2.7): the approver is the authenticated username from a SelfSubjectReview (CLI-07), and the
+CLI refuses a ticket that lacks `specHash`, `approvedBy` or `expiresAt`, is expired, does not hash to the RemediationAction
+spec as the API server serves it now (RFC 8785, the operator's `SpecHashFromJSON` on the raw `.spec`), or names another
+approver (CLI-08). The check runs when the ticket arrives and again right before the patch. The CLI no longer caps a
+ticket's lifetime; it honours `expiresAt`. These checks are the CLI refusing to be the weak link; admission (P2 C2) is
+what stops a forgery being written at all.
+
+Known P1 gap, not closed here (the forgery now has to pass the checks above, and admission in P2 C2 closes it): a client with `remediationactions/status` can write a whole ticket and its history, and
 the CLI cannot tell it from the operator's. The checks above make a forgery harder (it has to be issued after the
 approval, short-lived, bound to the live UID and generation, and pass the observe-mode check) but not impossible.
 Closing it is P2 task 2.5: an admission policy that lets only the operator ServiceAccount write the ticket and the
