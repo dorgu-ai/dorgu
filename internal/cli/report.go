@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dorgu-ai/dorgu-platform-v1/pkg/report"
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
 
@@ -87,7 +88,7 @@ func runReport(cmd *cobra.Command, _ []string) error {
 	}
 	reads.inputs.OperatorVersion = reads.cluster.OperatorVersion
 	reads.inputs.Errors = reads.errors()
-	doc := buildReport(reads.inputs, time.Now().UTC(), since)
+	doc := report.Build(reads.inputs.toReport(), time.Now().UTC(), since)
 	doc.Cluster = reads.cluster
 	doc.Sources = reads.sources
 
@@ -101,15 +102,15 @@ func runReport(cmd *cobra.Command, _ []string) error {
 // reportReads is what the cluster told us, and which reads worked.
 type reportReads struct {
 	inputs  reportInputs
-	cluster reportCluster
-	sources reportSources
+	cluster report.Cluster
+	sources report.Sources
 }
 
 // readReportInputs reads the cluster. RemediationActions are the report's core: if
 // they cannot be read there is no report, and that is an error. Every other read
 // is allowed to fail, and the report says which did, so a gap is never a zero.
 func readReportInputs(ctx context.Context, kubeconfig, namespace string) (*reportReads, error) {
-	reads := &reportReads{cluster: reportCluster{Namespace: "all", SelfHealing: []string{}}}
+	reads := &reportReads{cluster: report.Cluster{Namespace: "all", SelfHealing: []string{}}}
 	if namespace != "" {
 		reads.cluster.Namespace = namespace
 	}
@@ -126,7 +127,7 @@ func readReportInputs(ctx context.Context, kubeconfig, namespace string) (*repor
 		return nil, fmt.Errorf("failed to list remediations: %w", err)
 	}
 	reads.inputs.Remediations = ras
-	reads.sources.RemediationActions = reportSource{OK: true, Count: len(ras)}
+	reads.sources.RemediationActions = report.Source{OK: true, Count: len(ras)}
 
 	incidents, err := readReportList[reportIncident](ctx, kubeconfig, namespace, "incidentmemory")
 	reads.sources.Incidents = sourceOf(len(incidents), err)
@@ -143,20 +144,20 @@ func readReportInputs(ctx context.Context, kubeconfig, namespace string) (*repor
 	return reads, nil
 }
 
-func sourceOf(n int, err error) reportSource {
+func sourceOf(n int, err error) report.Source {
 	if err != nil {
-		return reportSource{Error: err.Error()}
+		return report.Source{Error: err.Error()}
 	}
-	return reportSource{OK: true, Count: n}
+	return report.Source{OK: true, Count: n}
 }
 
 // errors lists the inputs that could not be read, each with a bounded class, in a
 // fixed order. The RemediationActions are not here: without them there is no report.
-func (r *reportReads) errors() []reportInputError {
-	out := []reportInputError{}
+func (r *reportReads) errors() []report.InputError {
+	out := []report.InputError{}
 	for _, in := range []struct {
 		name string
-		src  reportSource
+		src  report.Source
 	}{
 		{"incidents", r.sources.Incidents},
 		{"events", r.sources.Events},
@@ -164,7 +165,7 @@ func (r *reportReads) errors() []reportInputError {
 		{"cluster_personas", r.sources.ClusterPersonas},
 	} {
 		if !in.src.OK {
-			out = append(out, reportInputError{Input: in.name, Error: errorClass(in.src.Error)})
+			out = append(out, report.InputError{Input: in.name, Error: errorClass(in.src.Error)})
 		}
 	}
 	return out
@@ -218,7 +219,7 @@ func (r *reportReads) readPersonas(ctx context.Context, kubeconfig, namespace st
 
 	out, cerr := kubectlCmd(ctx, kubeconfig, "get", "clusterpersona", "-o", "json").CombinedOutput()
 	if cerr != nil {
-		r.sources.ClusterPersonas = reportSource{Error: kubectlErrText(out)}
+		r.sources.ClusterPersonas = report.Source{Error: kubectlErrText(out)}
 		return
 	}
 	var list struct {
@@ -233,10 +234,10 @@ func (r *reportReads) readPersonas(ctx context.Context, kubeconfig, namespace st
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(out, &list); err != nil {
-		r.sources.ClusterPersonas = reportSource{Error: "could not parse clusterpersona: " + err.Error()}
+		r.sources.ClusterPersonas = report.Source{Error: "could not parse clusterpersona: " + err.Error()}
 		return
 	}
-	r.sources.ClusterPersonas = reportSource{OK: true, Count: len(list.Items)}
+	r.sources.ClusterPersonas = report.Source{OK: true, Count: len(list.Items)}
 	for _, item := range list.Items {
 		mode := item.Spec.Policies.SelfHealing.Mode
 		if mode == "" {

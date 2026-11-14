@@ -67,7 +67,7 @@ func TestReportTextCarriesNoInternalLabels(t *testing.T) {
 		assert.False(t, strings.Contains(out, internal), "report text mentions %q", internal)
 	}
 	var buf bytes.Buffer
-	doc := buildReport(reportInputs{}, reportNow, reportFixtureWindow)
+	doc := buildReportForTest(reportInputs{}, reportNow, reportFixtureWindow)
 	b, err := json.Marshal(doc)
 	require.NoError(t, err)
 	buf.Write(b)

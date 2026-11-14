@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dorgu-ai/dorgu-platform-v1/pkg/report"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +19,7 @@ import (
 func renderText(t *testing.T, in reportInputs) string {
 	t.Helper()
 	var buf bytes.Buffer
-	renderReportText(&buf, buildReport(in, reportNow, reportFixtureWindow))
+	renderReportText(&buf, buildReportForTest(in, reportNow, reportFixtureWindow))
 	return buf.String()
 }
 
@@ -34,7 +35,7 @@ func TestFix_AStandingActiveRemediationConditionIsNotARefusal(t *testing.T) {
 		Incidents:    []reportIncident{mustIncident(t, incidentJSON("inc-1", 3*time.Hour, 3*time.Hour, "", standing))},
 	}
 
-	q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 	assert.Equal(t, 1, q6.Proposals, "the proposal is counted once: the RemediationAction, not the incident condition too")
 	assert.Empty(t, q6.Rows, "an outstanding proposal is not a refusal")
@@ -46,7 +47,7 @@ func TestFix_ARealProposalRefusalIsStillCounted(t *testing.T) {
 	refused := cond("ProposalRefused", "True", "ModePolicy_SelfHealingMode", time.Hour)
 	in := reportInputs{Incidents: []reportIncident{mustIncident(t, incidentJSON("inc-1", 3*time.Hour, 3*time.Hour, "", refused))}}
 
-	q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 	require.Len(t, q6.Rows, 1)
 	assert.Equal(t, "ModePolicy", q6.Rows[0].Stage)
@@ -97,7 +98,7 @@ func TestFix_AFirstProposalOlderThanTheWindowIsNotMeasuredFromALaterOne(t *testi
 		Incidents:    []reportIncident{mustIncident(t, incidentJSON("inc-1", 30*24*h, 30*24*h, ""))},
 	}
 
-	got := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q1TimeToHeal.DetectToProposal
+	got := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q1TimeToHeal.DetectToProposal
 
 	assert.Equal(t, 0, got.N, "the retry is not the incident's first proposal, and the first is outside the window")
 	assert.True(t, got.NoData)
@@ -116,7 +117,7 @@ func TestFix_EachIncidentContributesItsOwnFirstProposal(t *testing.T) {
 		},
 	}
 
-	got := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q1TimeToHeal.DetectToProposal
+	got := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q1TimeToHeal.DetectToProposal
 
 	assert.Equal(t, 2, got.N)
 	assert.InDelta(t, 120.0, *got.P90Seconds, 0.001)
@@ -134,10 +135,10 @@ func credited(t *testing.T) reportRA {
 func TestFix_UnreadableIncidentsMakeEverythingThatNeedsThemNoData(t *testing.T) {
 	in := reportInputs{
 		Remediations: []reportRA{credited(t)},
-		Errors:       []reportInputError{{Input: "incidents", Error: "forbidden"}},
+		Errors:       []report.InputError{{Input: "incidents", Error: "forbidden"}},
 	}
 
-	doc := buildReport(in, reportNow, reportFixtureWindow)
+	doc := buildReportForTest(in, reportNow, reportFixtureWindow)
 
 	assert.True(t, doc.TierA.NorthStar.NoData)
 	assert.Nil(t, doc.TierA.NorthStar.SafeHeals, "null, not 0")
@@ -151,7 +152,7 @@ func TestFix_UnreadableIncidentsMakeEverythingThatNeedsThemNoData(t *testing.T) 
 	assert.True(t, doc.TierQ.Q1TimeToHeal.DetectToProposal.NoData)
 	assert.NotEmpty(t, doc.TierQ.Q1TimeToHeal.DetectToProposal.Reason)
 	assert.False(t, doc.TierQ.Q1TimeToHeal.ProposalToDecision.NoData, "this one needs no incident")
-	assert.Equal(t, []reportInputError{{Input: "incidents", Error: "forbidden"}}, doc.InputErrors)
+	assert.Equal(t, []report.InputError{{Input: "incidents", Error: "forbidden"}}, doc.InputErrors)
 
 	out := renderText(t, in)
 	assert.Contains(t, out, "Safe heals: no data (")
@@ -165,9 +166,9 @@ func TestFix_UnreadableIncidentsMakeEverythingThatNeedsThemNoData(t *testing.T) 
 }
 
 func TestFix_UnreadableEventsMakeTheDeclinesNoDataWithTheReason(t *testing.T) {
-	in := reportInputs{Errors: []reportInputError{{Input: "events", Error: "timeout"}}}
+	in := reportInputs{Errors: []report.InputError{{Input: "events", Error: "timeout"}}}
 
-	doc := buildReport(in, reportNow, reportFixtureWindow)
+	doc := buildReportForTest(in, reportNow, reportFixtureWindow)
 
 	assert.True(t, doc.CLIDeclines.NoData)
 	assert.Equal(t, "the Events could not be read", doc.CLIDeclines.Reason)
@@ -175,7 +176,7 @@ func TestFix_UnreadableEventsMakeTheDeclinesNoDataWithTheReason(t *testing.T) {
 }
 
 func TestFix_AllReadableInputsCarryAnEmptyErrorList(t *testing.T) {
-	doc := buildReport(reportInputs{}, reportNow, reportFixtureWindow)
+	doc := buildReportForTest(reportInputs{}, reportNow, reportFixtureWindow)
 
 	require.NotNil(t, doc.InputErrors, "an empty array in the JSON, not null")
 	assert.Empty(t, doc.InputErrors)
@@ -203,7 +204,7 @@ func TestFix_ClusterPersonasThatCannotBeReadAreNamedNotSilentlyEmpty(t *testing.
 	out, _, err := runReportCmd(t, true)
 	require.NoError(t, err)
 
-	var doc reportDoc
+	var doc report.Doc
 	require.NoError(t, json.Unmarshal([]byte(out), &doc))
 	assert.False(t, doc.Sources.ClusterPersonas.OK)
 	inputs := []string{}
@@ -216,7 +217,7 @@ func TestFix_ClusterPersonasThatCannotBeReadAreNamedNotSilentlyEmpty(t *testing.
 // --- F-5 (report side) ---------------------------------------------------------
 
 func TestFix_TheReportSaysProtectedContextDeclinesAreLocalOnly(t *testing.T) {
-	note := buildReport(reportInputs{EventsRead: true}, reportNow, reportFixtureWindow).CLIDeclines.Note
+	note := buildReportForTest(reportInputs{EventsRead: true}, reportNow, reportFixtureWindow).CLIDeclines.Note
 
 	assert.Contains(t, note, "local only")
 	assert.Contains(t, note, "never counted")
@@ -232,19 +233,19 @@ func TestFix_Q2CountsOnlyWrongDiagnosisAsWrong(t *testing.T) {
 	}
 	ras = append(ras, mustRA(t, raOpts{name: "ok", phase: "Pending", created: time.Hour, approvedAt: time.Minute}))
 
-	q2 := buildReport(reportInputs{Remediations: ras}, reportNow, reportFixtureWindow).TierQ.Q2Precision
+	q2 := buildReportForTest(reportInputs{Remediations: ras}, reportNow, reportFixtureWindow).TierQ.Q2Precision
 
 	assert.Equal(t, 7, q2.Decided, "the denominator is every decided proposal")
 	assert.Equal(t, 1, q2.Wrong, "only wrong-diagnosis calls the proposal wrong")
 	assert.Equal(t, map[string]int{"wrong-diagnosis": 1, "too-risky": 1, "not-now": 1, "duplicate": 1, "not-needed": 1, "other": 1,
-		reportNoReasonGiven: 0}, q2.RejectionsByReason)
+		report.NoReasonGiven: 0}, q2.RejectionsByReason)
 }
 
 func TestFix_AStoredWrongActionReadsAsOtherNotAsWrong(t *testing.T) {
 	ras := []reportRA{mustRA(t, raOpts{name: "old", phase: "Rejected", created: time.Hour,
 		conds: []string{cond("RejectionReason", "True", "WrongAction", time.Minute)}})}
 
-	q2 := buildReport(reportInputs{Remediations: ras}, reportNow, reportFixtureWindow).TierQ.Q2Precision
+	q2 := buildReportForTest(reportInputs{Remediations: ras}, reportNow, reportFixtureWindow).TierQ.Q2Precision
 
 	assert.Equal(t, 0, q2.Wrong)
 	assert.Equal(t, 1, q2.RejectionsByReason["other"])
@@ -260,19 +261,19 @@ func TestFix_OperatorVersionComparison(t *testing.T) {
 		"v1.0.0": false, "v0.13.0-rc1": false, "v0.12.9-rc1": true,
 		"dev": false, "latest": false, "": false, "v0.13": false, "vx.y.z": false,
 	} {
-		assert.Equal(t, want, operatorPredatesTickets(strp(tag)), tag)
+		assert.Equal(t, want, report.OperatorPredatesTickets(strp(tag)), tag)
 	}
-	assert.False(t, operatorPredatesTickets(nil), "an unreadable version is never blamed")
+	assert.False(t, report.OperatorPredatesTickets(nil), "an unreadable version is never blamed")
 }
 
 func TestFix_AnOldOperatorMakesTheHealSectionsNoDataNotZero(t *testing.T) {
 	in := reportInputs{Remediations: []reportRA{credited(t)}, OperatorVersion: strp("v0.12.1")}
 
-	doc := buildReport(in, reportNow, reportFixtureWindow)
+	doc := buildReportForTest(in, reportNow, reportFixtureWindow)
 
 	assert.True(t, doc.HealAccounting.NoData)
 	assert.Contains(t, doc.HealAccounting.Reason, "v0.12.1")
-	assert.Contains(t, doc.HealAccounting.Reason, reportTicketOperator)
+	assert.Contains(t, doc.HealAccounting.Reason, report.TicketOperator)
 	assert.True(t, doc.TierA.NorthStar.NoData)
 	assert.Nil(t, doc.TierA.NorthStar.SafeHeals)
 	assert.False(t, doc.TierQ.Q6Refusals.NoData, "refusals do not depend on tickets")
@@ -281,7 +282,7 @@ func TestFix_AnOldOperatorMakesTheHealSectionsNoDataNotZero(t *testing.T) {
 
 func TestFix_AnUnknownOperatorVersionIsNotMarked(t *testing.T) {
 	for _, v := range []*string{nil, strp("dev"), strp("")} {
-		doc := buildReport(reportInputs{Remediations: []reportRA{credited(t)}, OperatorVersion: v,
+		doc := buildReportForTest(reportInputs{Remediations: []reportRA{credited(t)}, OperatorVersion: v,
 			Incidents: []reportIncident{mustIncident(t, incidentJSON("inc-a", 5*time.Hour, 5*time.Hour, "resolved"))}},
 			reportNow, reportFixtureWindow)
 		assert.False(t, doc.HealAccounting.NoData)
@@ -313,7 +314,7 @@ func TestFix_AFoldedEventSeriesThatBeganBeforeTheWindowCountsOnce(t *testing.T) 
 	inside := mustEvent(t, `{"reason":"DorguCLINoTicket","firstTimestamp":"`+ago(2*time.Hour)+`","lastTimestamp":"`+
 		ago(time.Hour)+`","count":3,"involvedObject":{"kind":"RemediationAction"}}`)
 
-	got := buildReport(reportInputs{EventsRead: true, Events: []reportEvent{folded, inside}},
+	got := buildReportForTest(reportInputs{EventsRead: true, Events: []reportEvent{folded, inside}},
 		reportNow, reportFixtureWindow).CLIDeclines
 
 	assert.Equal(t, 1+3, got.ByReason["DorguCLINoTicket"])

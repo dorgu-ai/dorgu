@@ -42,7 +42,7 @@ func TestReviewB10_ARefusalThatRecurredIsDatedByTheFirstOne(t *testing.T) {
 			cond(refusalRecorded, "True", "Validate_StepCommand", 10*24*h))),
 	}}
 
-	q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 	require.Len(t, q6.Rows, 1, "the refusal standing on the incident 2 hours ago is inside the window")
 }

@@ -7,11 +7,13 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/dorgu-ai/dorgu-platform-v1/pkg/report"
 )
 
 // renderReportJSON prints the report as indented JSON, the schema the golden test
 // pins.
-func renderReportJSON(w io.Writer, d reportDoc) error {
+func renderReportJSON(w io.Writer, d report.Doc) error {
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal report: %w", err)
@@ -22,7 +24,7 @@ func renderReportJSON(w io.Writer, d reportDoc) error {
 
 // renderReportText prints the report for a person. Anything with no sample behind
 // it reads "no data", never 0.
-func renderReportText(w io.Writer, d reportDoc) {
+func renderReportText(w io.Writer, d report.Doc) {
 	p := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format+"\n", args...) }
 
 	p("Dorgu report (%s)", d.Schema)
@@ -71,7 +73,7 @@ func operatorLabel(s *string) string {
 	if s == nil || *s == "" {
 		return orUnknownPtr(s)
 	}
-	if _, ok := parseVersion(*s); ok {
+	if _, ok := report.ParseVersion(*s); ok {
 		return *s
 	}
 	return "unreleased build " + *s
@@ -84,8 +86,8 @@ func orUnknownPtr(s *string) string {
 	return *s
 }
 
-func sourcesLine(s reportSources) string {
-	part := func(name string, src reportSource) string {
+func sourcesLine(s report.Sources) string {
+	part := func(name string, src report.Source) string {
 		if !src.OK {
 			return fmt.Sprintf("%s UNREADABLE (%s)", name, src.Error)
 		}
@@ -97,7 +99,7 @@ func sourcesLine(s reportSources) string {
 	}, ", ")
 }
 
-func renderHealAccounting(w io.Writer, h reportHealAccounting) {
+func renderHealAccounting(w io.Writer, h report.HealAccounting) {
 	fmt.Fprintf(w, "Heal accounting (%d RemediationActions created in the window)\n", h.Total)
 	if h.Total == 0 {
 		_, _ = fmt.Fprintln(w, "  no data: no RemediationActions were created in the window")
@@ -111,17 +113,17 @@ func renderHealAccounting(w io.Writer, h reportHealAccounting) {
 	}
 	fmt.Fprintf(w, "  clean heals: %d (HealCredited=True and the incident outcome is resolved)\n", *h.Clean)
 	_, _ = fmt.Fprintln(w, "  everything else, by why it is not a clean heal:")
-	for _, k := range allExclusions {
+	for _, k := range report.AllExclusions {
 		if n := h.Excluded[k]; n > 0 {
 			fmt.Fprintf(w, "    %-20s %d\n", k, n)
 		}
 	}
-	if h.Excluded[excludedApprovedNotHealed] > 0 {
+	if h.Excluded[report.ExcludedApprovedNotHealed] > 0 {
 		_, _ = fmt.Fprintln(w, "    (approved_not_healed: approved but never patched, so there was no heal to roll back)")
 	}
 	if len(h.HealNotCredited) > 0 {
 		parts := make([]string, 0, len(h.HealNotCredited))
-		for _, k := range sortedMapKeys(h.HealNotCredited) {
+		for _, k := range report.SortedKeys(h.HealNotCredited) {
 			parts = append(parts, fmt.Sprintf("%s %d", k, h.HealNotCredited[k]))
 		}
 		fmt.Fprintf(w, "  HealCredited=False by reason: %s\n", strings.Join(parts, ", "))
@@ -129,7 +131,7 @@ func renderHealAccounting(w io.Writer, h reportHealAccounting) {
 	fmt.Fprintln(w)
 }
 
-func renderTierA(w io.Writer, a reportTierA) {
+func renderTierA(w io.Writer, a report.TierA) {
 	fmt.Fprintln(w, "Tier A: value and adoption")
 	fmt.Fprintf(w, "  A2 active cluster:    %s (%d proposals decided in the window)\n", yesNo(a.A2Active.Active), a.A2Active.ProposalsDecided)
 	if a.A5Depth.NoData {
@@ -166,12 +168,12 @@ func bandSentence(band string) string {
 	}
 }
 
-func renderTierQ(w io.Writer, q reportTierQ) {
+func renderTierQ(w io.Writer, q report.TierQ) {
 	fmt.Fprintln(w, "Tier Q: operational quality")
 	fmt.Fprintln(w, "  Q1 time to heal (p50 / p90, n):")
 	stages := []struct {
 		label string
-		d     reportDistribution
+		d     report.Distribution
 	}{
 		{"detect -> proposal", q.Q1TimeToHeal.DetectToProposal},
 		{"proposal -> decision (human)", q.Q1TimeToHeal.ProposalToDecision},
@@ -195,7 +197,7 @@ func renderTierQ(w io.Writer, q reportTierQ) {
 	}
 	if rejected := sumValues(p.RejectionsByReason); rejected > 0 {
 		parts := []string{}
-		for _, k := range sortedMapKeys(p.RejectionsByReason) {
+		for _, k := range report.SortedKeys(p.RejectionsByReason) {
 			if n := p.RejectionsByReason[k]; n > 0 {
 				parts = append(parts, fmt.Sprintf("%s %d", k, n))
 			}
@@ -206,7 +208,7 @@ func renderTierQ(w io.Writer, q reportTierQ) {
 	fmt.Fprintf(w, "  Q3 LLM efficiency:     no data (%s)\n", q.Q3LLM.Reason)
 	if len(q.Q3LLM.PlanSources) > 0 {
 		parts := []string{}
-		for _, k := range sortedMapKeys(q.Q3LLM.PlanSources) {
+		for _, k := range report.SortedKeys(q.Q3LLM.PlanSources) {
 			parts = append(parts, fmt.Sprintf("%s %d", k, q.Q3LLM.PlanSources[k]))
 		}
 		fmt.Fprintf(w, "    plan sources: %s\n", strings.Join(parts, ", "))
@@ -241,7 +243,7 @@ func renderTierQ(w io.Writer, q reportTierQ) {
 	fmt.Fprintln(w)
 }
 
-func renderClamps(w io.Writer, c reportClamps) {
+func renderClamps(w io.Writer, c report.Clamps) {
 	fmt.Fprintln(w, "First-run clamps (spec.steps[].safety and status.gate)")
 	if c.NoData {
 		fmt.Fprintln(w, "  no data: no RemediationActions in the window")
@@ -251,21 +253,21 @@ func renderClamps(w io.Writer, c reportClamps) {
 	fmt.Fprintf(w, "  proposals with a clamped value: %d\n", c.ProposalsWithClamp)
 	if len(c.ClampsByRule) > 0 {
 		parts := []string{}
-		for _, k := range sortedMapKeys(c.ClampsByRule) {
+		for _, k := range report.SortedKeys(c.ClampsByRule) {
 			parts = append(parts, fmt.Sprintf("%s %d", k, c.ClampsByRule[k]))
 		}
 		fmt.Fprintf(w, "  clamps by guardrail: %s\n", strings.Join(parts, ", "))
 	}
 	if len(c.StepVerdicts) > 0 {
 		parts := []string{}
-		for _, k := range sortedMapKeys(c.StepVerdicts) {
+		for _, k := range report.SortedKeys(c.StepVerdicts) {
 			parts = append(parts, fmt.Sprintf("%s %d", k, c.StepVerdicts[k]))
 		}
 		fmt.Fprintf(w, "  step verdicts: %s\n", strings.Join(parts, ", "))
 	}
 	if len(c.GateClamps) > 0 {
 		parts := []string{}
-		for _, k := range sortedMapKeys(c.GateClamps) {
+		for _, k := range report.SortedKeys(c.GateClamps) {
 			parts = append(parts, fmt.Sprintf("%s %d", k, c.GateClamps[k]))
 		}
 		fmt.Fprintf(w, "  clamps recorded by the approval-time gate: %s\n", strings.Join(parts, ", "))
@@ -273,21 +275,21 @@ func renderClamps(w io.Writer, c reportClamps) {
 	fmt.Fprintln(w)
 }
 
-func renderDeclines(w io.Writer, d reportCLIDeclines) {
+func renderDeclines(w io.Writer, d report.CLIDeclines) {
 	fmt.Fprintln(w, "CLI declines (Events on RemediationActions)")
 	if d.NoData {
 		fmt.Fprintf(w, "  no data: %s\n", d.Reason)
 	} else if len(d.ByReason) == 0 {
 		fmt.Fprintln(w, "  none recorded in the window")
 	} else {
-		for _, k := range sortedMapKeys(d.ByReason) {
+		for _, k := range report.SortedKeys(d.ByReason) {
 			fmt.Fprintf(w, "  %-26s %d\n", k, d.ByReason[k])
 		}
 	}
 	fmt.Fprintf(w, "  note: %s\n\n", d.Note)
 }
 
-func distributionText(d reportDistribution) string {
+func distributionText(d report.Distribution) string {
 	if d.NoData && d.Reason != "" {
 		return "no data (" + d.Reason + ")"
 	}

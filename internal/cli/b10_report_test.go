@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dorgu-ai/dorgu-platform-v1/pkg/report"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,7 +37,7 @@ func TestReportCountsARefusalThatResolvedAfterwards(t *testing.T) {
 			cond(refusalRecorded, "True", "Validate_StepCommand", 3*h))),
 	}}
 
-	q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 	require.Len(t, q6.Rows, 1)
 	assert.Equal(t, "proposal", q6.Rows[0].Phase)
@@ -57,7 +58,7 @@ func TestReportCountsARefusalAnAnswerClearedWithoutDoublingTheProposal(t *testin
 		Remediations: []reportRA{mustRA(t, raOpts{name: "ra-fallback", phase: "Pending", created: 3 * h, incident: "inc-fallback"})},
 	}
 
-	q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 	require.Len(t, q6.Rows, 1)
 	assert.Equal(t, 1, q6.Rows[0].Count)
@@ -74,7 +75,7 @@ func TestReportCountsAStandingRefusalOnce(t *testing.T) {
 			cond(refusalRecorded, "True", "ModePolicy_SelfHealingMode", 3*h))),
 	}}
 
-	q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 	require.Len(t, q6.Rows, 1)
 	assert.Equal(t, 1, q6.Rows[0].Count)
@@ -88,7 +89,7 @@ func TestReportLeavesOutARecordedRefusalFromBeforeTheWindow(t *testing.T) {
 			cond(refusalRecorded, "True", "Validate_StepCommand", 10*24*time.Hour))),
 	}}
 
-	q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 	assert.Empty(t, q6.Rows)
 }
@@ -102,7 +103,7 @@ func TestReportStillReadsTheLiveConditionOfAnOlderOperator(t *testing.T) {
 		mustIncident(t, incidentJSON("inc-cleared", 5*h, 5*h, "", cond("ProposalRefused", "False", "ProposalMade", 2*h))),
 	}}
 
-	q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 	require.Len(t, q6.Rows, 1)
 	assert.Equal(t, "WorkloadGone", q6.Rows[0].Reason)
@@ -113,7 +114,7 @@ func TestReportStillReadsTheLiveConditionOfAnOlderOperator(t *testing.T) {
 const deferralsNote = "not recorded on cluster objects (see the dorgu_gate_decisions_total metric, result=deferred)"
 
 func TestReportDoesNotClaimZeroDeferrals(t *testing.T) {
-	d := buildReport(reportInputs{Incidents: []reportIncident{
+	d := buildReportForTest(reportInputs{Incidents: []reportIncident{
 		mustIncident(t, incidentJSON("i", 5*time.Hour, 5*time.Hour, "", cond("ProposalRefused", "True", "ModePolicy_SelfHealingMode", time.Hour))),
 	}}, reportNow, reportFixtureWindow)
 
@@ -139,7 +140,7 @@ func TestReportDoesNotClaimZeroDeferrals(t *testing.T) {
 // Deferrals an operator before the fix wrote onto incidents are still counted, and the note says
 // the count is partial.
 func TestReportCountsTheDeferralsAnOlderOperatorWrote(t *testing.T) {
-	d := buildReport(reportInputs{Incidents: []reportIncident{
+	d := buildReportForTest(reportInputs{Incidents: []reportIncident{
 		mustIncident(t, incidentJSON("i", 3*time.Hour, 3*time.Hour, "", cond("ProposalRefused", "True", "DedupCooldown_ActiveRemediation", 2*time.Hour))),
 	}}, reportNow, reportFixtureWindow)
 
@@ -155,7 +156,7 @@ func TestReportCountsTheDeferralsAnOlderOperatorWrote(t *testing.T) {
 
 // deferredCount is the number of deferrals read off incidents, 0 when none were (the field is
 // null then: see TestReportDoesNotClaimZeroDeferrals).
-func deferredCount(q reportRefusals) int {
+func deferredCount(q report.Refusals) int {
 	if q.Deferred == nil {
 		return 0
 	}

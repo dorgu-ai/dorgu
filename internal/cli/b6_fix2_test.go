@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dorgu-ai/dorgu-platform-v1/pkg/report"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +29,7 @@ func TestN1_AConcurrentRefusalWhileTheIncidentsOwnActionIsInFlightIsDeferred(t *
 		t.Run(phase, func(t *testing.T) {
 			in := concurrentRefused(t, raOpts{name: "ra-own", phase: phase, created: 2 * time.Hour})
 
-			q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+			q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 			assert.Empty(t, q6.Rows, "the incident's own fix is being worked: nothing was refused")
 			assert.Equal(t, 1, deferredCount(q6))
@@ -38,7 +39,7 @@ func TestN1_AConcurrentRefusalWhileTheIncidentsOwnActionIsInFlightIsDeferred(t *
 }
 
 func TestN1_AConcurrentRefusalOnAResolvedIncidentIsDeferred(t *testing.T) {
-	q6 := buildReport(resolvedConcurrentIncident(t), reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 := buildReportForTest(resolvedConcurrentIncident(t), reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 	assert.Empty(t, q6.Rows)
 	assert.Equal(t, 1, deferredCount(q6))
@@ -47,7 +48,7 @@ func TestN1_AConcurrentRefusalOnAResolvedIncidentIsDeferred(t *testing.T) {
 func TestN1_AConcurrentRefusalWithNoActionOfItsOwnIsStillARefusal(t *testing.T) {
 	in := concurrentRefused(t) // another incident's fix holds the persona
 
-	q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+	q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 	require.Len(t, q6.Rows, 1)
 	assert.Equal(t, "Guardrails", q6.Rows[0].Stage)
@@ -59,7 +60,7 @@ func TestN1_AFailedOrRejectedActionDoesNotExemptAConcurrentRefusal(t *testing.T)
 	for _, phase := range []string{"Failed", "Rejected", "Expired"} {
 		in := concurrentRefused(t, raOpts{name: "ra-old", phase: phase, created: 2 * time.Hour})
 
-		q6 := buildReport(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
+		q6 := buildReportForTest(in, reportNow, reportFixtureWindow).TierQ.Q6Refusals
 
 		assert.Len(t, q6.Rows, 1, "%s: the fix is not in flight, so the refusal is real", phase)
 	}
@@ -83,7 +84,7 @@ func TestN6_AnUnknownVersionWithCompletedActionsAndNoHealCreditedIsNoData(t *tes
 		t.Run(name, func(t *testing.T) {
 			in := reportInputs{Remediations: []reportRA{completedNoCredit(t)}, OperatorVersion: version}
 
-			doc := buildReport(in, reportNow, reportFixtureWindow)
+			doc := buildReportForTest(in, reportNow, reportFixtureWindow)
 
 			assert.True(t, doc.HealAccounting.NoData)
 			assert.Contains(t, doc.HealAccounting.Reason, "could not be determined")
@@ -102,7 +103,7 @@ func TestN6_OneHealCreditedRecordAmongCompletedActionsMakesTheDataTrusted(t *tes
 			Incidents:       []reportIncident{mustIncident(t, incidentJSON("inc-a", 5*time.Hour, 5*time.Hour, "resolved"))},
 		}
 
-		doc := buildReport(in, reportNow, reportFixtureWindow)
+		doc := buildReportForTest(in, reportNow, reportFixtureWindow)
 
 		assert.False(t, doc.HealAccounting.NoData, "an operator that writes HealCredited on one writes it on all")
 		require.NotNil(t, doc.HealAccounting.Clean)
@@ -113,14 +114,14 @@ func TestN6_OneHealCreditedRecordAmongCompletedActionsMakesTheDataTrusted(t *tes
 func TestN6_ANotCreditedRecordIsEvidenceToo(t *testing.T) {
 	notCredited := mustRA(t, raOpts{name: "x", phase: "Completed", created: 4 * time.Hour,
 		conds: []string{cond("HealCredited", "False", "NothingPatched", time.Hour)}})
-	doc := buildReport(reportInputs{Remediations: []reportRA{notCredited}}, reportNow, reportFixtureWindow)
+	doc := buildReportForTest(reportInputs{Remediations: []reportRA{notCredited}}, reportNow, reportFixtureWindow)
 
 	assert.False(t, doc.HealAccounting.NoData, "HealCredited=False is still a HealCredited record")
 }
 
 func TestN6_NoCompletedActionsMeansNothingToBlank(t *testing.T) {
 	pending := mustRA(t, raOpts{name: "p", phase: "Pending", created: time.Hour})
-	doc := buildReport(reportInputs{Remediations: []reportRA{pending}}, reportNow, reportFixtureWindow)
+	doc := buildReportForTest(reportInputs{Remediations: []reportRA{pending}}, reportNow, reportFixtureWindow)
 
 	assert.False(t, doc.HealAccounting.NoData, "zero heals is true when nothing Completed")
 	require.NotNil(t, doc.HealAccounting.Clean)
@@ -130,7 +131,7 @@ func TestN6_NoCompletedActionsMeansNothingToBlank(t *testing.T) {
 func TestN6_AKnownNewVersionIsTrustedWithoutHealCredited(t *testing.T) {
 	in := reportInputs{Remediations: []reportRA{completedNoCredit(t)}, OperatorVersion: strp("v0.13.0")}
 
-	doc := buildReport(in, reportNow, reportFixtureWindow)
+	doc := buildReportForTest(in, reportNow, reportFixtureWindow)
 
 	assert.False(t, doc.HealAccounting.NoData, "the tag is a fast path and it says 0.13+")
 }
@@ -138,7 +139,7 @@ func TestN6_AKnownNewVersionIsTrustedWithoutHealCredited(t *testing.T) {
 func TestN6_AKnownOldVersionIsNoDataWhateverTheRecordsSay(t *testing.T) {
 	in := reportInputs{Remediations: []reportRA{credited(t)}, OperatorVersion: strp("v0.12.1")}
 
-	assert.True(t, buildReport(in, reportNow, reportFixtureWindow).HealAccounting.NoData)
+	assert.True(t, buildReportForTest(in, reportNow, reportFixtureWindow).HealAccounting.NoData)
 }
 
 func TestN6_TheNoTicketWarningNeverStaysSilentOnAnUnknownVersion(t *testing.T) {
@@ -174,7 +175,7 @@ func TestN6_TheNoTicketWarningNeverStaysSilentOnAnUnknownVersion(t *testing.T) {
 // --- N-7 ------------------------------------------------------------------------------
 
 func TestN7_UnreadablePersonasDoNotClaimASectionDependsOnThem(t *testing.T) {
-	in := reportInputs{Errors: []reportInputError{{Input: "personas", Error: "forbidden"}, {Input: "cluster_personas", Error: "forbidden"}}}
+	in := reportInputs{Errors: []report.InputError{{Input: "personas", Error: "forbidden"}, {Input: "cluster_personas", Error: "forbidden"}}}
 
 	text := renderText(t, in)
 
@@ -184,7 +185,7 @@ func TestN7_UnreadablePersonasDoNotClaimASectionDependsOnThem(t *testing.T) {
 }
 
 func TestN7_UnreadableIncidentsStillSayWhichSectionsAreNoData(t *testing.T) {
-	text := renderText(t, reportInputs{Errors: []reportInputError{{Input: "incidents", Error: "forbidden"}}})
+	text := renderText(t, reportInputs{Errors: []report.InputError{{Input: "incidents", Error: "forbidden"}}})
 
 	assert.Contains(t, text, "Unreadable: incidents (forbidden): the sections that need it say no data below, never zero")
 }
