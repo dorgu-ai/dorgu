@@ -169,7 +169,10 @@ func TestPrintRemediationDiffManualRollback(t *testing.T) {
 	printRemediationDiff(&buf, &r)
 	out := buf.String()
 
-	assert.Contains(t, out, "Manual rollback required")
+	assert.Contains(t, out, "Automatic rollback is off for this remediation")
+	assert.Contains(t, out, "dorgu remediation rollback fix-manual -n default",
+		"the way to undo it later is the ticketed rollback")
+	assert.NotContains(t, out, "Manual rollback required")
 }
 
 func TestNewRemediationCmdStructure(t *testing.T) {

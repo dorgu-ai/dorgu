@@ -232,6 +232,7 @@ You should see five CRDs: `applicationpersonas`, `clusterpersonas`, `incidentmem
 | `dorgu remediation approve [name]` | Approve a proposal and (by default) heal the workload |
 | `dorgu remediation reject <name>` | Reject a proposal, with a `--reason` from a fixed list |
 | `dorgu remediation heal <name>` | Apply an already-approved proposal's change to the workload |
+| `dorgu remediation rollback <name>` | Ask for a ticketed rollback of an applied remediation: Dorgu derives the restore from what it recorded, you approve it |
 | `dorgu report` | KPI summary for this cluster (safe heals, approval rate, time to heal, refusals), text or `--json` |
 | `dorgu dashboard` | Local, read-only dashboard in your browser: apps, incidents, proposals and what the operator's gate decided. See [Dashboard](#dashboard) |
 
@@ -418,6 +419,16 @@ dorgu remediation heal ra-default-api-oom-b71c -n default
 Once the operator has moved the remediation to `Verifying` or `Completed`, `heal` refuses: the verdict would be about a workload nobody changed, so patching it afterwards would make that verdict wrong. In that case apply the change yourself (or in your own source of truth) and let the next proposal start from there.
 
 Flags: `-n, --namespace`, `--workload`, `--container`, `--yes`, `--kubeconfig`.
+
+### Roll back an applied change
+
+```bash
+dorgu remediation rollback ra-default-api-oom-b71c -n default --reason "the new limit starves the node"
+```
+
+This asks the operator to restore what the remediation changed. The CLI sends only the name of the remediation, your reason and your username (the one `kubectl auth whoami` reports); it never writes a value. The operator works out the restore from the values it recorded before it applied the change, checks it against the cluster as it is now, and makes a new remediation that waits for approval. The command prints it and the approve command; approve it as usual (you may approve your own request) and the CLI applies it with your credentials.
+
+It is refused, with the reason and exit code 4 (a decision, not a breakage; nothing was changed), when the remediation did not end `Completed` or `RolledBack`, when no values from before the change were recorded, when the workload or its persona has been changed since (restoring would overwrite that change), when it already has the old values, or when a rollback is already open. A service account cannot ask, and asking needs the `approve` permission on remediations in the namespace (the `dorgu-approver` role). Needs operator v0.14 or later. Flags: `-n, --namespace`, `--reason`, `--kubeconfig`.
 
 ---
 
