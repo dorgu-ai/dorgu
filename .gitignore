@@ -11,7 +11,8 @@ TEST_PLAN.md
 
 # Test applications (sample apps for development)
 testapps/
-testdata/
+# Root-level scratch fixtures only; package testdata/ dirs are committed
+/testdata/
 
 # Generated output from dorgu runs (by dorgu generate)
 k8s/
