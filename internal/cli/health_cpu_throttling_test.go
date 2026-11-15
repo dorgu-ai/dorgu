@@ -231,3 +231,73 @@ func TestParseCPUThrottlingEnabledWithoutASourceIsNotOn(t *testing.T) {
 
 	assert.Equal(t, cpuThrottlingUnknown, got.State)
 }
+
+// --- C5 review F-4: a v0.14 operator with a stale CRD ---
+//
+// Helm does not upgrade crds/, so the API server prunes status.cpuThrottlingDetection
+// on an upgraded cluster. The operator notices and keeps a CPUThrottlingDetection
+// condition, which an old CRD retains. The CLI reads it rather than call the
+// operator old.
+
+func staleCRDPersona(condStatus, reason string) string {
+	return personaListWithStatus(`{"conditions":[{"type":"CPUThrottlingDetection","status":"` + condStatus +
+		`","reason":"` + reason + `","message":"detection is running"}]}`)
+}
+
+func TestParseCPUThrottlingReadsTheConditionWhenTheFieldIsPruned(t *testing.T) {
+	tests := []struct {
+		name       string
+		raw        string
+		wantState  string
+		wantSource string
+		wantReason string
+	}{
+		{"detection on", staleCRDPersona("True", "MetricsServerActive"), cpuThrottlingOn, "unknown", "MetricsServerActive"},
+		{"detection off", staleCRDPersona("False", "NoMetricsSource"), cpuThrottlingOff, "", "NoMetricsSource"},
+		{"unknown status", staleCRDPersona("Unknown", "MetricsReadFailed"), cpuThrottlingUnknown, "", "MetricsReadFailed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseCPUThrottling([]byte(tt.raw))
+
+			assert.Equal(t, tt.wantState, got.State)
+			assert.Equal(t, tt.wantSource, got.Source)
+			assert.Equal(t, tt.wantReason, got.Reason)
+			assert.Contains(t, got.Note, "ClusterPersona CRD is older than the operator", "a stale CRD is said so")
+			assert.Contains(t, got.Note, "kubectl apply -f")
+			assert.NotEqual(t, reasonOperatorPredatesCPUThrottling, got.Reason, "the operator is not old")
+		})
+	}
+}
+
+func TestParseCPUThrottlingTheFieldWinsOverTheConditionAndHasNoNote(t *testing.T) {
+	raw := personaListWithStatus(`{"cpuThrottlingDetection":{"enabled":true,"source":"prometheus","reason":"PrometheusActive"},` +
+		`"conditions":[{"type":"CPUThrottlingDetection","status":"False","reason":"NoMetricsSource"}]}`)
+
+	got := parseCPUThrottling([]byte(raw))
+
+	assert.Equal(t, cpuThrottlingOn, got.State)
+	assert.Equal(t, "prometheus", got.Source)
+	assert.Empty(t, got.Note)
+}
+
+func TestParseCPUThrottlingAnotherConditionIsNotTheOperatorOldEvidence(t *testing.T) {
+	raw := personaListWithStatus(`{"conditions":[{"type":"Ready","status":"True","reason":"Reconciled"}]}`)
+
+	got := parseCPUThrottling([]byte(raw))
+
+	assert.Equal(t, cpuThrottlingUnknown, got.State)
+	assert.Equal(t, reasonOperatorPredatesCPUThrottling, got.Reason, "neither the field nor the condition: the operator is old")
+}
+
+func TestPrintCPUThrottlingShowsTheStaleCRDNote(t *testing.T) {
+	var buf bytes.Buffer
+
+	printCPUThrottling(&buf, parseCPUThrottling([]byte(staleCRDPersona("True", "MetricsServerActive"))))
+
+	out := buf.String()
+	assert.Contains(t, out, "CPU throttling detection: on")
+	assert.Contains(t, out, "ClusterPersona CRD is older than the operator")
+	assert.NotContains(t, out, "operator older than v0.14")
+	assert.NotContains(t, out, "—")
+}

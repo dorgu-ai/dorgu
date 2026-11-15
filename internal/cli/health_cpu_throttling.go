@@ -43,7 +43,19 @@ type cpuThrottlingStatus struct {
 	Reason string `json:"reason,omitempty"`
 	// Message is the operator's own sentence, when it wrote one.
 	Message string `json:"message,omitempty"`
+	// Note is something this CLI adds: today, that the ClusterPersona CRD is older
+	// than the operator, so the state was read from the condition the operator keeps
+	// for that case.
+	Note string `json:"note,omitempty"`
 }
+
+// staleCRDNote is shown when the status field was pruned by an old CRD.
+const staleCRDNote = "The ClusterPersona CRD is older than the operator (helm upgrade does not update CRDs): " +
+	"run `kubectl apply -f` on the CRDs from the operator's chart to see the full statement."
+
+// cpuThrottlingConditionType is the condition the operator keeps beside the status
+// field, because an old CRD prunes the field but retains conditions.
+const cpuThrottlingConditionType = "CPUThrottlingDetection"
 
 // cpuThrottlingReasons say each operator reason in a phrase, for the plain output. An
 // unknown reason is shown as the token itself.
@@ -78,8 +90,10 @@ func fetchCPUThrottling(ctx context.Context, kubeconfig string) *cpuThrottlingSt
 }
 
 // parseCPUThrottling reads `kubectl get clusterpersona -o json`. The first
-// ClusterPersona that carries status.cpuThrottlingDetection decides; with none
-// carrying it the state is unknown.
+// ClusterPersona that carries status.cpuThrottlingDetection decides. With none
+// carrying it, the first that carries the CPUThrottlingDetection condition decides
+// (a v0.14 operator behind a stale CRD), with a note saying so. With neither the
+// state is unknown and the operator is taken to predate the feature.
 func parseCPUThrottling(raw []byte) *cpuThrottlingStatus {
 	var list struct {
 		Items []struct {
@@ -90,6 +104,7 @@ func parseCPUThrottling(raw []byte) *cpuThrottlingStatus {
 					Reason  string `json:"reason"`
 					Message string `json:"message"`
 				} `json:"cpuThrottlingDetection"`
+				Conditions []statusCondition `json:"conditions"`
 			} `json:"status"`
 		} `json:"items"`
 	}
@@ -122,7 +137,28 @@ func parseCPUThrottling(raw []byte) *cpuThrottlingStatus {
 		}
 		return s
 	}
+	for _, item := range list.Items {
+		if c := findCondition(item.Status.Conditions, cpuThrottlingConditionType); c != nil {
+			return cpuThrottlingFromCondition(c)
+		}
+	}
 	return &cpuThrottlingStatus{State: cpuThrottlingUnknown, Reason: reasonOperatorPredatesCPUThrottling}
+}
+
+// cpuThrottlingFromCondition is the statement read from the operator's fallback
+// condition: True is on (the condition does not say from which source, so it is
+// "unknown"), False is off, anything else is unknown.
+func cpuThrottlingFromCondition(c *statusCondition) *cpuThrottlingStatus {
+	s := &cpuThrottlingStatus{Reason: c.Reason, Message: c.Message, Note: staleCRDNote}
+	switch c.Status {
+	case "True":
+		s.State, s.Source = cpuThrottlingOn, "unknown"
+	case "False":
+		s.State = cpuThrottlingOff
+	default:
+		s.State = cpuThrottlingUnknown
+	}
+	return s
 }
 
 // printCPUThrottling renders the one-line statement, and under it what the operator
@@ -142,6 +178,9 @@ func printCPUThrottling(w io.Writer, s *cpuThrottlingStatus) {
 		fmt.Fprintln(w, output.Dim("  "+cpuThrottlingReason(s)))
 	default:
 		fmt.Fprintf(w, "CPU throttling detection: %s (%s)\n", output.Yellow("unknown"), cpuThrottlingReason(s))
+	}
+	if s.Note != "" {
+		fmt.Fprintln(w, output.Dim("  "+plainInline(s.Note)))
 	}
 	fmt.Fprintln(w)
 }
