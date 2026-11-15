@@ -46,15 +46,31 @@ var admissionReasons = map[string]string{
 // can say `dorgu: <Reason>: ` too (C5 review F-6).
 var admissionTokenRe = regexp.MustCompile(`(^|denied request: |denied the request: )dorgu: ([A-Z][A-Za-z0-9]*): `)
 
+// insideQuotedValue reports whether the end of prefix is inside a double-quoted
+// value. It quotes the way Go does (the API server prints values with %q): a quote
+// after a backslash is part of the value and neither opens nor closes it (C5b R-2).
+func insideQuotedValue(prefix string) bool {
+	inside := false
+	for i := 0; i < len(prefix); i++ {
+		switch prefix[i] {
+		case '\\':
+			i++ // the escaped byte is data
+		case '"':
+			inside = !inside
+		}
+	}
+	return inside
+}
+
 // admissionToken returns the reason token of a policy denial in raw, and whether
 // there is one. The leftmost valid position wins: the text before it is the API
-// server's own. A position inside a double-quoted value (an odd number of quotes
-// before it) is an echo of user text, so it is skipped.
+// server's own. A position inside a double-quoted value (see
+// insideQuotedValue) is an echo of user text, so it is skipped.
 func admissionToken(raw string) (string, bool) {
 	trimmed := strings.TrimSpace(raw)
 	for _, m := range admissionTokenRe.FindAllStringSubmatchIndex(trimmed, -1) {
 		// m[2]:m[3] is the position marker, m[4]:m[5] the token.
-		if strings.Count(trimmed[:m[3]], `"`)%2 != 0 {
+		if insideQuotedValue(trimmed[:m[3]]) {
 			continue
 		}
 		return trimmed[m[4]:m[5]], true

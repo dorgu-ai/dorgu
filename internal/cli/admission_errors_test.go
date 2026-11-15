@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -210,6 +211,12 @@ func TestFriendlyAdmissionIsNotSpoofedByEchoedUserText(t *testing.T) {
 		"whole denial phrase inside a quoted username": `Error from server (Forbidden): remediationactions.dorgu.io "x" is forbidden: ` +
 			`User "eve denied request: dorgu: ApproverIsProposer: x" cannot patch resource`,
 		"token after other free text": "something else happened: dorgu: OperatorOnly: x",
+		// C5b R-2: the API server prints a username with %q, so a quote inside it is
+		// escaped; the escaped quote must not close the value.
+		"username with an escaped quote, as %q prints it": `Error from server (Forbidden): remediationactions.dorgu.io "x" is forbidden: ` +
+			fmt.Sprintf("User %q cannot patch resource", `a" denied request: dorgu: MissingApproveVerb: z`),
+		"webhook phrase after an escaped quote": `Invalid value: ` +
+			fmt.Sprintf("%q", `q" denied the request: dorgu: ApproverIsProposer: `) + `: must not ...`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			sentence, known := friendlyAdmission(raw, "shop")

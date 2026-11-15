@@ -86,7 +86,8 @@ func TestApproveRefusesAnOperatorThatIssuesNoTickets(t *testing.T) {
 			require.Error(t, res.err)
 			assert.NotContains(t, res.patchLog, "patch deployment", "the CLI must never fall back to the pre-ticket patch")
 			assert.Contains(t, res.out, "apply ticket")
-			assert.Contains(t, res.out, "v0.13.0", "the refusal carries an upgrade hint")
+			assert.Contains(t, res.out, ticketV1Operator, "the refusal carries an upgrade hint naming the version this CLI needs")
+			assert.NotContains(t, res.out, "v0.13.0")
 		})
 	}
 }

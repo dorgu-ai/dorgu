@@ -128,7 +128,7 @@ func TestHealOnAPreTicketOperatorSaysWhy(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, readPatchLog(t, patchLog), "patch deployment")
 	assert.Contains(t, out.String()+stdout, "the operator on this cluster is v0.12.1")
-	assert.Contains(t, out.String()+stdout, "does not issue apply tickets")
+	assert.Contains(t, out.String()+stdout, "does not issue the apply tickets this CLI needs")
 }
 
 // C5 review F-8: approve, like reject, acts on a Pending remediation only.
