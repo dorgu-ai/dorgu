@@ -54,8 +54,12 @@ func rollbackConverted() string {
 }
 
 func rollbackRejected(reason, message string) string {
+	return rollbackRejectedAt("Intake", reason, message)
+}
+
+func rollbackRejectedAt(stage, reason, message string) string {
 	return `{"metadata":{"name":"` + rollbackProposal + `","namespace":"production"},` +
-		`"status":{"phase":"Rejected","rejection":{"stage":"Intake","reason":"` + reason + `"},` +
+		`"status":{"phase":"Rejected","rejection":{"stage":"` + stage + `","reason":"` + reason + `"},` +
 		`"conditions":[{"type":"Converted","status":"False","reason":"` + reason + `","message":"` + message + `"}]}}`
 }
 
@@ -221,6 +225,7 @@ func TestRollback_ARefusalIsExplainedAndExitsDeclined(t *testing.T) {
 		"RollbackTargetNotFound":   "does not exist",
 		"RollbackNotHuman":         "person, not a service account",
 		"RollbackTargetMismatch":   "different application",
+		"RollbackWouldBePartial":   "all of it or none of it",
 	}
 	for reason, want := range cases {
 		t.Run(reason, func(t *testing.T) {
@@ -386,7 +391,7 @@ func TestRollback_TheOperatorsWordsCannotMoveTheCursor(t *testing.T) {
 
 	require.Error(t, run.err)
 	assert.NotContains(t, run.out, "\x1b")
-	assert.NotContains(t, run.out, "‮")
+	assert.NotContains(t, run.out, "\u202e")
 	assert.Contains(t, run.out, "evil[2Jtextend", "the characters that make it a command are gone; the rest is plain text")
 }
 
@@ -429,4 +434,80 @@ func TestRollback_OtherCreateFailures(t *testing.T) {
 		assert.Contains(t, run.err.Error(), "Unable to connect to the server")
 		assert.NotEqual(t, ExitDeclined, ExitCode(run.err))
 	})
+}
+
+// C6 review F-7a: a refusal that is not the safety gate's must not be called the gate's, and
+// one that is temporary says so.
+func TestRollback_AnIntakeRefusalWithoutASentenceIsNotCalledTheGates(t *testing.T) {
+	for _, reason := range []string{"RateLimited", "ProposerInvalid", "DuplicateIdempotencyKey"} {
+		t.Run(reason, func(t *testing.T) {
+			run := runRollback(t, rollbackWorld{proposals: []string{rollbackRejected(reason, "operator text")}},
+				rollbackTargetRA, "-n", "production")
+
+			require.Error(t, run.err)
+			assert.Equal(t, ExitDeclined, ExitCode(run.err))
+			assert.NotContains(t, run.out, "safety gate", "the intake refused this one, not the gate")
+			assert.Contains(t, run.out, "intake")
+			assert.Contains(t, run.out, reason)
+			assert.Contains(t, run.out, "operator text")
+			assert.Contains(t, run.out, "Nothing was changed")
+		})
+	}
+}
+
+func TestRollback_AnOperatorFromBeforeRollbackSaysToUpgradeNotThatTheGateRefused(t *testing.T) {
+	// A development build from before ticketed rollback answers NotYetSupported at intake.
+	run := runRollback(t, rollbackWorld{proposals: []string{rollbackRejected("NotYetSupported", "rollbackOf is reserved")}},
+		rollbackTargetRA, "-n", "production")
+
+	require.Error(t, run.err)
+	assert.Equal(t, ExitDeclined, ExitCode(run.err))
+	assert.NotContains(t, run.out, "safety gate")
+	assert.Contains(t, run.out, "too old for rollback")
+	assert.Contains(t, run.out, "upgrade the operator")
+}
+
+func TestRollback_ARefusalThatClearsOnItsOwnSaysItIsTemporary(t *testing.T) {
+	for _, guardrail := range []string{"failed-cooldown", "rejection-cooldown", "rate-limit", "concurrent", "active-remediation"} {
+		t.Run(guardrail, func(t *testing.T) {
+			run := runRollback(t, rollbackWorld{proposals: []string{rollbackRejectedAt("Guardrails", guardrail, "operator text")}},
+				rollbackTargetRA, "-n", "production")
+
+			require.Error(t, run.err)
+			assert.Equal(t, ExitDeclined, ExitCode(run.err))
+			assert.Contains(t, run.out, "safety gate refused")
+			assert.Contains(t, run.out, "temporary")
+			assert.Contains(t, run.out, "ask again")
+		})
+	}
+}
+
+func TestRollback_APermanentGateRefusalDoesNotPromiseItWillClear(t *testing.T) {
+	for _, guardrail := range []string{"blast-radius", "live-workload", "self-healing-mode"} {
+		t.Run(guardrail, func(t *testing.T) {
+			stage := "Guardrails"
+			if guardrail == "self-healing-mode" {
+				stage = "ModePolicy"
+			}
+			run := runRollback(t, rollbackWorld{proposals: []string{rollbackRejectedAt(stage, guardrail, "operator text")}},
+				rollbackTargetRA, "-n", "production")
+
+			require.Error(t, run.err)
+			assert.NotContains(t, run.out, "temporary")
+		})
+	}
+}
+
+// F-7b: a forbidden create names the role, and when the role is bound, the chart.
+func TestRollback_AForbiddenCreateAlsoPointsAtAnOlderChart(t *testing.T) {
+	run := runRollback(t, rollbackWorld{createError: `Error from server (Forbidden): remediationproposals.dorgu.io is forbidden: ` +
+		`User "alice@example.com" cannot create resource "remediationproposals" in API group "dorgu.io" in the namespace "production"`},
+		rollbackTargetRA, "-n", "production")
+
+	require.Error(t, run.err)
+	assert.Equal(t, ExitDeclined, ExitCode(run.err))
+	assert.Contains(t, run.out, "dorgu-approver role in production")
+	assert.Contains(t, run.out, "already have", "it speaks to someone who is bound to the role")
+	assert.Contains(t, run.out, "chart", "the role gained create on proposals in the same release as rollback")
+	assert.Contains(t, run.out, "upgrade")
 }

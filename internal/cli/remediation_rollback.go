@@ -70,6 +70,23 @@ var rollbackRefusals = map[string]string{
 	v1alpha1.ReasonRollbackAlreadyOpen: "A rollback of that remediation is already open. " +
 		"Approve or reject it first: dorgu remediation list -n " + namespacePlaceholder,
 	v1alpha1.ReasonRollbackNotHuman: rollbackNeedsAPerson,
+	v1alpha1.ReasonRollbackWouldBePartial: "Dorgu would not restore all of what it recorded (its safety limits would have held part of it back), " +
+		"and it restores all of it or none of it, so nothing was made. " +
+		"Look at the live values and set them yourself if you still want to go back.",
+	// An operator built before ticketed rollback answered every rollbackOf with this.
+	reasonNotYetSupported: "This operator is too old for rollback (operator v0.14 or later): upgrade the operator and apply its CRDs.",
+}
+
+// reasonNotYetSupported is what an operator from before ticketed rollback rejected
+// rollbackOf with. The current operator never says it; the CLI still meets old ones.
+const reasonNotYetSupported = "NotYetSupported"
+
+// temporaryGuardrails are the gate refusals that clear by themselves: a cooldown after a
+// remediation that went wrong or a proposal that was declined, the hourly limit, and
+// another remediation in flight on the persona.
+var temporaryGuardrails = map[string]bool{
+	"failed-cooldown": true, "rejection-cooldown": true, "rate-limit": true,
+	"concurrent": true, "active-remediation": true,
 }
 
 // rollbackNeedsAPerson is the sentence for a service account asking for a rollback,
@@ -325,6 +342,8 @@ func reportRollbackCreateError(out, errw io.Writer, err error, namespace string)
 	if strings.Contains(text, "forbidden") {
 		_, _ = fmt.Fprintln(errw, "✗ Your account may not create proposals here: "+text)
 		_, _ = fmt.Fprintln(out, "Asking for a rollback needs the dorgu-approver role in "+namespace+".")
+		_, _ = fmt.Fprintln(out, "If you already have it, the Dorgu chart on this cluster may be older than rollback: "+
+			"the role gained the create verb on remediationproposals in the same release, so upgrade the chart (operator v0.14 or later) and apply its CRDs.")
 		return withExitCode(ExitDeclined, errSilent)
 	}
 	return fmt.Errorf("could not request the rollback: %s", text)
@@ -394,10 +413,20 @@ func printRollbackRefusal(w io.Writer, p *proposalStatus, namespace string) {
 		stage, reason = p.Status.Rejection.Stage, p.Status.Rejection.Reason
 	}
 	_, _ = fmt.Fprintln(w)
-	if sentence, ok := rollbackRefusals[reason]; ok && stage == v1alpha1.StageIntake {
+	sentence, known := rollbackRefusals[reason]
+	switch {
+	case known && stage == v1alpha1.StageIntake:
 		_, _ = fmt.Fprintln(w, "✗ "+strings.ReplaceAll(sentence, namespacePlaceholder, namespace))
-	} else {
+	case stage == v1alpha1.StageIntake:
+		// The operator's own checks before the gate (a rate limit, a malformed request):
+		// not the safety gate, and not a reason this version has a sentence for.
+		_, _ = fmt.Fprintf(w, "✗ The operator's intake refused the rollback (%s).\n", printable(reason))
+	default:
 		_, _ = fmt.Fprintf(w, "✗ Dorgu's safety gate refused the rollback (%s, %s).\n", printable(stage), printable(reason))
+		if temporaryGuardrails[reason] {
+			_, _ = fmt.Fprintln(w, "  This refusal is temporary: it clears by itself (a cooldown, the hourly limit or "+
+				"a remediation in flight), so ask again once it has.")
+		}
 	}
 	if c := findCondition(p.Status.Conditions, v1alpha1.ConditionConverted); c != nil && strings.TrimSpace(c.Message) != "" {
 		_, _ = fmt.Fprintln(w, "  "+plainInline(printable(strings.TrimSpace(c.Message))))
