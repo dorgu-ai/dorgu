@@ -36,6 +36,75 @@ func TestApproveOnAnOperatorOlderThanV014RefusesBeforeRecordingTheApproval(t *te
 			assert.Contains(t, res.out, "Nothing was approved")
 			assert.Contains(t, res.out, "--no-heal", "the way to record the decision alone is named")
 			assert.NotContains(t, res.out, "—")
+			assert.Contains(t, res.out, "approve --no-heal", "the command that records the decision alone is named")
+			assert.Contains(t, res.out, "dorgu remediation heal", "heal can apply it once the operator is upgraded")
+			assert.Contains(t, res.out, "upgraded")
+		})
+	}
+}
+
+// C5b R-3: only a plain release tag is a version. A dev build, a git-describe or
+// pseudo-version tag and any pre-release is unknown (never "older"), so the ticket
+// itself settles it later.
+func TestOperatorVersionDetectionTable(t *testing.T) {
+	for _, tc := range []struct {
+		tag     *string
+		predate bool
+		known   bool
+	}{
+		{strp("v0.12.1"), true, true},
+		{strp("v0.13.0"), true, true},
+		{strp("v0.13.9"), true, true},
+		{strp("0.13.9"), true, true},
+		{strp("v0.9.0"), true, true},
+		{strp("v0.14.0"), false, true},
+		{strp("v0.14.1"), false, true},
+		{strp("v0.15.0"), false, true},
+		{strp("v0.100.0"), false, true},
+		{strp("v1.0.0"), false, true},
+		// unknown: not a plain release
+		{strp("v0.13.0-5-gabcdef"), false, false},
+		{strp("v0.13.0-5-gabcdef0"), false, false},
+		{strp("v0.13.2-0.20261114233415-ee08af450eaa"), false, false},
+		{strp("v0.13.0+build5"), false, false},
+		{strp("v0.13.0-rc.1"), false, false},
+		{strp("v0.13.0-alpha"), false, false},
+		{strp("v0.12.1-beta.2"), false, false},
+		{strp("v0.14.0-rc.1"), false, false},
+		{strp("v0.14.0-dirty"), false, false},
+		{strp("dev"), false, false},
+		{strp("dev-9fd7079"), false, false},
+		{strp("main-ee08af4"), false, false},
+		{strp("latest"), false, false},
+		{strp("v0.13"), false, false},
+		{strp("V0.13.0"), false, false},
+		{strp(""), false, false},
+		{nil, false, false},
+	} {
+		name := "nil"
+		if tc.tag != nil {
+			name = *tc.tag
+		}
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.predate, operatorPredatesTicketV1(tc.tag), "predates v0.14.0")
+			assert.Equal(t, tc.known, operatorVersionKnown(tc.tag), "is a release version")
+		})
+	}
+}
+
+func TestApproveOnADevOrPrereleaseOperatorIsNotRefusedAsOld(t *testing.T) {
+	for _, version := range []string{
+		"v0.13.0-5-gabcdef", "v0.13.2-0.20261114233415-ee08af450eaa", "v0.13.0+build5", "v0.13.0-rc.1", "dev-9fd7079",
+	} {
+		t.Run(version, func(t *testing.T) {
+			withOperatorVersion(t, strp(version))
+			r := baseResponses()
+			r.deployment = withIdentity(t, r.deployment)
+
+			res := runApprove(t, r)
+
+			assert.NotContains(t, res.out, "Nothing was approved", "an unknown tag is settled by the ticket, not refused up front")
+			assert.NotContains(t, res.out, "Cannot heal: "+needsOperatorV014)
 		})
 	}
 }

@@ -37,14 +37,31 @@ func errV0Ticket() error {
 	return &operatorTooOldError{detail: "the apply ticket has no specHash, approvedBy or expiresAt, so the operator issues ticket v0"}
 }
 
-// operatorPredatesTicketV1 reports whether the operator's image tag is a release
-// before v0.14.0. A tag that is not a version (a dev build, a digest, nothing) is
-// unknown, and unknown is not refused: the ticket itself settles it later.
-func operatorPredatesTicketV1(tag *string) bool {
-	if tag == nil {
-		return false
+// releaseVersion reads a plain release tag, vMAJOR.MINOR.PATCH (the v is optional).
+// Anything else is not a version this CLI will compare: a pre-release (-rc.1), build
+// metadata (+build5), a git-describe tag (v0.13.0-5-gSHA), a pseudo-version
+// (v0.13.2-0.YYYYMMDDhhmmss-SHA), a dev tag, a digest or nothing. Such a tag may be
+// built from code newer than its base release, so reading it as that base would
+// refuse a working operator (C5b R-3).
+func releaseVersion(tag *string) ([3]int, bool) {
+	if tag == nil || strings.ContainsAny(*tag, "-+") {
+		return [3]int{}, false
 	}
-	have, ok := report.ParseVersion(*tag)
+	return report.ParseVersion(*tag)
+}
+
+// operatorVersionKnown reports whether the tag is a plain release version.
+func operatorVersionKnown(tag *string) bool {
+	_, ok := releaseVersion(tag)
+	return ok
+}
+
+// operatorPredatesTicketV1 reports whether the operator's image tag is a release
+// before v0.14.0. A tag that is not a plain release (a dev or pseudo-version build,
+// a pre-release, a digest, nothing) is unknown, and unknown is not refused: the
+// ticket itself settles it later.
+func operatorPredatesTicketV1(tag *string) bool {
+	have, ok := releaseVersion(tag)
 	if !ok {
 		return false
 	}
@@ -69,8 +86,9 @@ func refuseOperatorBeforeV014(ctx context.Context, kubeconfig string, w io.Write
 	}
 	_, _ = fmt.Fprintln(w)
 	output.Error(fmt.Sprintf("Cannot heal: %s (the operator on this cluster is %s).", needsOperatorV014, *version))
-	output.Info("Nothing was approved and nothing was changed. Upgrade the operator (and apply its CRDs), " +
-		"or record the decision alone with --no-heal and apply the change yourself.")
+	output.Info("Nothing was approved and nothing was changed. Upgrade the operator (and apply its CRDs). " +
+		"Or record the decision alone with `dorgu remediation approve --no-heal`; " +
+		"once the operator is upgraded, `dorgu remediation heal` can apply it.")
 	return true
 }
 

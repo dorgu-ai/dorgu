@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dorgu-ai/dorgu-platform-v1/pkg/report"
 	"github.com/dorgu-ai/dorgu/internal/output"
 )
 
@@ -574,21 +573,22 @@ func contains(items []string, want string) bool {
 var operatorVersionReader = readOperatorVersion
 
 // warnIfOperatorPredatesTickets tells the user, when the CLI found no apply
-// ticket, that the likely reason is the operator: one before v0.13.0 does not
-// issue them. It fails closed: a version that cannot be determined (an unreadable
-// Deployment, an image pinned by digest, a tag that is not a version) is said so,
-// never silently dropped, because this CLI cannot tell a slow operator from an old
-// one. Only a release at v0.13.0 or later says nothing extra.
+// ticket, that the likely reason is the operator: one before ticketV1Operator does
+// not issue the tickets this CLI needs. It fails closed: a version that cannot be
+// determined (an unreadable Deployment, an image pinned by digest, a dev or
+// pre-release tag) is said so, never silently dropped, because this CLI cannot tell
+// a slow operator from an old one. Only a release at ticketV1Operator or later says
+// nothing extra.
 func warnIfOperatorPredatesTickets(ctx context.Context, kubeconfig string, w io.Writer) {
 	version := operatorVersionReader(ctx, kubeconfig)
 	switch {
-	case report.OperatorPredatesTickets(version):
-		_, _ = fmt.Fprintf(w, "\nWarning: the operator on this cluster is %s, which is older than %s and does not issue apply tickets.\n"+
+	case operatorPredatesTicketV1(version):
+		_, _ = fmt.Fprintf(w, "\nWarning: the operator on this cluster is %s, which is older than %s and does not issue the apply tickets this CLI needs.\n"+
 			"This CLI cannot heal against it, and that is why no ticket arrived. Upgrade the operator to %s or newer; the CLI and the operator are a pair.\n",
-			*version, report.TicketOperator, report.TicketOperator)
-	case !report.OperatorVersionKnown(version):
-		_, _ = fmt.Fprintf(w, "\nWarning: could not determine the operator version; an operator older than %s issues no tickets.\n"+
+			*version, ticketV1Operator, ticketV1Operator)
+	case !operatorVersionKnown(version):
+		_, _ = fmt.Fprintf(w, "\nWarning: could not determine the operator version; an operator older than %s issues no tickets this CLI can use.\n"+
 			"If no ticket arrived, check the operator is %s or newer; the CLI and the operator are a pair.\n",
-			report.TicketOperator, report.TicketOperator)
+			ticketV1Operator, ticketV1Operator)
 	}
 }

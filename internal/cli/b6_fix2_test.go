@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,35 +144,48 @@ func TestN6_AKnownOldVersionIsNoDataWhateverTheRecordsSay(t *testing.T) {
 }
 
 func TestN6_TheNoTicketWarningNeverStaysSilentOnAnUnknownVersion(t *testing.T) {
+	// The version the CLI needs is the constant the code uses, never a literal.
 	for name, tc := range map[string]struct {
 		version *string
 		want    string
 		silent  bool
 	}{
-		"unreadable": {nil, "could not determine the operator version; an operator older than v0.13.0 issues no tickets", false},
+		"unreadable": {nil, "could not determine the operator version; an operator older than " + ticketV1Operator + " issues no tickets", false},
 		"latest":     {strp("latest"), "could not determine the operator version", false},
-		// An operator before v0.14 is refused before the approval is written (C5
-		// review F-3); the no-ticket warning is for a version this CLI cannot read.
-		"old": {strp("v0.12.1"), "the operator on this cluster is v0.12.1", false},
-		"new": {strp("v0.14.0"), "", true},
+		"dev build":  {strp("v0.13.0-5-gabcdef"), "could not determine the operator version", false},
+		"old":        {strp("v0.12.1"), "the operator on this cluster is v0.12.1", false},
+		// v0.13.0 issues ticket v0, which this CLI refuses: it is old, not silent.
+		"v0.13.0": {strp("v0.13.0"), "which is older than " + ticketV1Operator, false},
+		"new":     {strp(ticketV1Operator), "", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			operatorVersionReader = func(context.Context, string) *string { return tc.version }
 			t.Cleanup(func() { operatorVersionReader = readOperatorVersion })
-			r := declineBase(t)
-			r.remAfterApprove = replacePhase(operatorRemediationFixture, "Approved")
+			var out strings.Builder
 
-			res := runApprove(t, r)
+			warnIfOperatorPredatesTickets(context.Background(), "", &out)
 
-			require.Error(t, res.err)
 			if tc.silent {
-				assert.NotContains(t, res.out, "operator version")
-				assert.NotContains(t, res.out, "the operator on this cluster")
+				assert.Empty(t, out.String())
 				return
 			}
-			assert.Contains(t, res.out, tc.want)
+			assert.Contains(t, out.String(), tc.want)
+			assert.Contains(t, out.String(), ticketV1Operator+" or newer", "the advice names the version this CLI needs")
 		})
 	}
+}
+
+func TestN6_TheNoTicketWarningNeverNamesAVersionThisCLIRefuses(t *testing.T) {
+	for _, version := range []*string{nil, strp("v0.12.1"), strp("v0.13.0"), strp("latest")} {
+		operatorVersionReader = func(context.Context, string) *string { return version }
+		var out strings.Builder
+
+		warnIfOperatorPredatesTickets(context.Background(), "", &out)
+
+		assert.NotContains(t, out.String(), "v0.13.0 or newer")
+		assert.NotContains(t, out.String(), "older than v0.13.0")
+	}
+	t.Cleanup(func() { operatorVersionReader = readOperatorVersion })
 }
 
 // --- N-7 ------------------------------------------------------------------------------
