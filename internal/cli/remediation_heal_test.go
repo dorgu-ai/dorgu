@@ -276,6 +276,9 @@ type fakeKubectlResponses struct {
 	// with, the way a cluster or a kubectl without SelfSubjectReview would.
 	whoami      string
 	whoamiError string
+	// whoamiWarning is text kubectl writes to stderr on a successful call (a
+	// deprecation warning, an exec plugin's login prompt).
+	whoamiWarning string
 }
 
 // writeFakeKubectlDispatch installs a fake kubectl on PATH that dispatches by
@@ -358,6 +361,7 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 	}
 	whoamiFile := write("whoami.json", whoamiDoc)
 	whoamiErrFile := write("whoami-err.txt", r.whoamiError)
+	whoamiWarnFile := write("whoami-warn.txt", r.whoamiWarning)
 	whoamiFails := "0"
 	if r.whoamiError != "" {
 		whoamiFails = "1"
@@ -383,6 +387,7 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"done\n" +
 		"if [ \"$mode\" = whoami ]; then\n" +
 		"  if [ " + whoamiFails + " = 1 ]; then cat " + whoamiErrFile + " >&2; exit 1; fi\n" +
+		"  cat " + whoamiWarnFile + " >&2\n" +
 		"  cat " + whoamiFile + "; exit 0; fi\n" +
 		"if [ \"$mode\" = create ]; then\n" +
 		"  if [ " + eventFails + " = 1 ]; then echo 'Error from server (Forbidden): events is forbidden' >&2; exit 1; fi\n" +

@@ -948,7 +948,7 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 	// Write the approval as an optimistic-lock patch, then confirm after a short
 	// settle that the operator still has it Approved (R2-3). "Approved" is printed
 	// only past this point.
-	output.Info("Approving as " + user)
+	output.Info("Approving as " + displayUser(user))
 	byAnother, err := approveAndConfirm(ctx, kubeconfig, namespace, name, user, rem, cmd.OutOrStdout())
 	if err != nil {
 		return err

@@ -180,7 +180,7 @@ func runRemediationReject(cmd *cobra.Command, args []string) error {
 		output.Error(err.Error())
 		return errSilent
 	}
-	output.Info("Rejecting as " + user)
+	output.Info("Rejecting as " + displayUser(user))
 
 	if err := writeRejection(ctx, kubeconfig, namespace, name, user, reason, note); err != nil {
 		if isAdmissionDenial(err) {

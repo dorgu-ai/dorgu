@@ -25,7 +25,7 @@ func TestParseWhoami(t *testing.T) {
 	}{
 		{"a user", whoamiJSON("alice@example.com"), "alice@example.com", ""},
 		{"an IAM-style name", whoamiJSON("arn:aws:iam::123456789012:user/alice"), "arn:aws:iam::123456789012:user/alice", ""},
-		{"surrounding space is not part of the name", whoamiJSON("  alice  "), "alice", ""},
+		{"surrounding space is part of the name: the API server compares it byte for byte", whoamiJSON("  alice  "), "  alice  ", ""},
 		{"empty username", whoamiJSON(""), "", "no username"},
 		{"blank username", whoamiJSON("   "), "", "no username"},
 		{"no status", `{"kind":"SelfSubjectReview"}`, "", "no username"},
@@ -247,4 +247,66 @@ func TestRemediationFullKeepsTheServedSpecAndRejectsGarbage(t *testing.T) {
 
 	require.Error(t, json.Unmarshal([]byte(`{"spec":`), &rem))
 	require.Error(t, json.Unmarshal([]byte(`{"spec":"not an object"}`), &rem))
+}
+
+// --- C5 review F-7: the username is used exactly as the cluster says it ---
+
+func TestApproveWritesTheUsernameByteForByte(t *testing.T) {
+	r := baseResponses()
+	r.whoami = whoamiJSON(" alice ")
+	r.rem = withResourceVersion(operatorRemediationFixture, "4242")
+	r.remAfterApprove = withApprovePhase(r.rem, "Approved")
+
+	res := approveNoHeal(t, r)
+
+	require.NoError(t, res.err)
+	assert.Contains(t, res.patchLog, `"approvedBy":" alice "`, "the API server compares approvedBy with the username exactly")
+	assert.NotContains(t, res.patchLog, `"approvedBy":"alice"`)
+}
+
+func TestDisplayUserEscapesForTheTerminalAndNothingElse(t *testing.T) {
+	assert.Equal(t, "alice@example.com", displayUser("alice@example.com"))
+	assert.Equal(t, "arn:aws:iam::123456789012:user/alice", displayUser("arn:aws:iam::123456789012:user/alice"))
+	assert.Equal(t, `" alice "`, displayUser(" alice "), "padding must be visible")
+	assert.Equal(t, `"al ice"`, displayUser("al ice"))
+	assert.Equal(t, `"a\u202eb"`, displayUser("a\u202eb"), "a bidi override must not reach the terminal raw")
+	assert.Equal(t, `"a\x1b[31mb"`, displayUser("a\x1b[31mb"))
+}
+
+func TestApproveSaysWhoItApprovesAsWithAVisiblePadding(t *testing.T) {
+	r := baseResponses()
+	r.whoami = whoamiJSON(" alice ")
+	r.rem = withResourceVersion(operatorRemediationFixture, "4242")
+	r.remAfterApprove = withApprovePhase(r.rem, "Approved")
+
+	res := approveNoHeal(t, r)
+
+	assert.Contains(t, res.out, `Approving as " alice "`)
+}
+
+// --- C5 review F-10: only stdout is the SelfSubjectReview ---
+
+func TestResolveIdentityIgnoresStderrOnASuccessfulCall(t *testing.T) {
+	writeFakeKubectlDispatch(t, fakeKubectlResponses{
+		context: "kind-dorgu-spike", whoami: whoamiJSON("carol@example.com"),
+		whoamiWarning: "Warning: the exec plugin is deprecated; please log in again",
+	})
+
+	got, err := resolveIdentity(t.Context(), "")
+
+	require.NoError(t, err)
+	assert.Equal(t, "carol@example.com", got)
+}
+
+func TestResolveIdentityShowsStderrWhenTheAnswerCannotBeRead(t *testing.T) {
+	writeFakeKubectlDispatch(t, fakeKubectlResponses{
+		context: "kind-dorgu-spike", whoami: "this is not json",
+		whoamiWarning: "error: you must be logged in to the server",
+	})
+
+	got, err := resolveIdentity(t.Context(), "")
+
+	require.Error(t, err)
+	assert.Empty(t, got)
+	assert.Contains(t, err.Error(), "you must be logged in to the server")
 }
