@@ -183,3 +183,55 @@ func TestRejectShowsAFriendlyDenial(t *testing.T) {
 	assert.Contains(t, res.out, "Service accounts and other system users cannot approve or reject")
 	assert.Contains(t, res.out, "Nothing was rejected")
 }
+
+// --- C5 review F-6: the token counts only in the policy denial position ---
+
+func TestFriendlyAdmissionAcceptsTheTokenOnlyWhereThePolicyPutsIt(t *testing.T) {
+	for name, raw := range map[string]string{
+		"validating admission policy": vapDenied("dorgu: ApproverIsProposer: x"),
+		"webhook wording":             `Error from server (Forbidden): admission webhook "dorgu.io" denied the request: dorgu: ApproverIsProposer: x`,
+		"the API status message":      "dorgu: ApproverIsProposer: x",
+		"message with a leading line": "\n dorgu: ApproverIsProposer: x",
+	} {
+		t.Run(name, func(t *testing.T) {
+			sentence, known := friendlyAdmission(raw, "shop")
+			require.True(t, known)
+			assert.Contains(t, sentence, "You proposed this")
+		})
+	}
+}
+
+func TestFriendlyAdmissionIsNotSpoofedByEchoedUserText(t *testing.T) {
+	for name, raw := range map[string]string{
+		"token in a rejected field value": `The remediationactions "x" is invalid: status.approvedBy: Invalid value: ` +
+			`"dorgu: ApproverIsProposer: x": must not ...`,
+		"token in the username of an RBAC refusal": `Error from server (Forbidden): remediationactions.dorgu.io "x" is forbidden: ` +
+			`User "dorgu: MissingApproveVerb: x" cannot patch resource "remediationactions/status" in API group "dorgu.io"`,
+		"whole denial phrase inside a quoted username": `Error from server (Forbidden): remediationactions.dorgu.io "x" is forbidden: ` +
+			`User "eve denied request: dorgu: ApproverIsProposer: x" cannot patch resource`,
+		"token after other free text": "something else happened: dorgu: OperatorOnly: x",
+	} {
+		t.Run(name, func(t *testing.T) {
+			sentence, known := friendlyAdmission(raw, "shop")
+			assert.False(t, known)
+			assert.Equal(t, raw, sentence)
+
+			err := classifyWriteError(raw, "shop")
+			assert.False(t, isAdmissionDenial(err), "not a Dorgu denial: it must not exit 4 with a wrong cause")
+			assert.Equal(t, raw, err.Error())
+		})
+	}
+}
+
+func TestApproveDoesNotMistakeAnEchoedUsernameForADenial(t *testing.T) {
+	r := baseResponses()
+	r.rem = withResourceVersion(operatorRemediationFixture, "4242")
+	r.statusPatchError = `Error from server (Forbidden): remediationactions.dorgu.io "x" is forbidden: ` +
+		`User "dorgu: MissingApproveVerb: x" cannot patch resource`
+
+	res := approveNoHeal(t, r)
+
+	require.Error(t, res.err)
+	assert.NotEqual(t, ExitDeclined, ExitCode(res.err))
+	assert.NotContains(t, res.out, "lacks the approve permission")
+}

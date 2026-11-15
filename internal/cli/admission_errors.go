@@ -38,19 +38,39 @@ var admissionReasons = map[string]string{
 	"TargetNamespaceMismatch": "The proposal's namespace must be the namespace of the workload it targets.",
 }
 
-// admissionTokenRe finds the contract's prefix. The leftmost match wins: the text
-// before it is the API server's own.
-var admissionTokenRe = regexp.MustCompile(`dorgu: ([A-Z][A-Za-z0-9]*): `)
+// admissionTokenRe finds the contract's prefix, and only in the position a policy
+// denial puts it: at the very start of the message (the API status message), or
+// directly after the API server's `denied request: ` (ValidatingAdmissionPolicy) or
+// `denied the request: ` (webhook). Free text that merely contains the prefix is
+// not a denial: a username, an echoed field value or any other value a user chose
+// can say `dorgu: <Reason>: ` too (C5 review F-6).
+var admissionTokenRe = regexp.MustCompile(`(^|denied request: |denied the request: )dorgu: ([A-Z][A-Za-z0-9]*): `)
+
+// admissionToken returns the reason token of a policy denial in raw, and whether
+// there is one. The leftmost valid position wins: the text before it is the API
+// server's own. A position inside a double-quoted value (an odd number of quotes
+// before it) is an echo of user text, so it is skipped.
+func admissionToken(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	for _, m := range admissionTokenRe.FindAllStringSubmatchIndex(trimmed, -1) {
+		// m[2]:m[3] is the position marker, m[4]:m[5] the token.
+		if strings.Count(trimmed[:m[3]], `"`)%2 != 0 {
+			continue
+		}
+		return trimmed[m[4]:m[5]], true
+	}
+	return "", false
+}
 
 // friendlyAdmission returns the sentence for a denial whose message carries a known
 // reason token, and true. For an unknown token, or a message with none, it returns
 // the raw message and false.
 func friendlyAdmission(raw, namespace string) (string, bool) {
-	m := admissionTokenRe.FindStringSubmatch(raw)
-	if m == nil {
+	token, found := admissionToken(raw)
+	if !found {
 		return raw, false
 	}
-	sentence, ok := admissionReasons[m[1]]
+	sentence, ok := admissionReasons[token]
 	if !ok {
 		return raw, false
 	}
@@ -79,14 +99,14 @@ func (e *admissionDeniedError) Error() string {
 }
 
 // classifyWriteError turns the text kubectl printed for a refused write into an
-// error. A message carrying the contract's prefix becomes an admissionDeniedError
+// error. A message carrying the contract's prefix in the denial position becomes an admissionDeniedError
 // (whose token is set even when this CLI does not know it); anything else stays a
 // plain error with the text unchanged.
 func classifyWriteError(raw, namespace string) error {
-	m := admissionTokenRe.FindStringSubmatch(raw)
-	if m == nil {
+	token, found := admissionToken(raw)
+	if !found {
 		return errors.New(raw)
 	}
 	_, known := friendlyAdmission(raw, namespace)
-	return &admissionDeniedError{Token: m[1], Raw: raw, Namespace: namespace, known: known}
+	return &admissionDeniedError{Token: token, Raw: raw, Namespace: namespace, known: known}
 }
