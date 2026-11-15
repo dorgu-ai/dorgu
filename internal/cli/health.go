@@ -36,6 +36,12 @@ is what the scheduler has committed, used is what the containers are consuming
 (needs metrics-server). Pods no node has accepted hold no allocation, so they
 are excluded and counted separately.
 
+Says whether CPU throttling detection is on, which source it reads
+(metrics.k8s.io or Prometheus), or why it is off, from the ClusterPersona
+status. An operator older than v0.14 reports nothing, which shows as unknown. A v0.14
+operator behind a ClusterPersona CRD that was not upgraded is read from its condition
+and the output says to apply the chart's CRDs.
+
 Also names the Deployments that no ApplicationPersona covers. Those are not
 watched as applications, so Dorgu plans nothing for them. If one of their pods
 fails, the operator can still record an incident for it, marked unattributed:
@@ -73,11 +79,12 @@ Examples:
 
 // healthSummary is the JSON output structure.
 type healthSummary struct {
-	Nodes               []healthNode        `json:"nodes"`
-	ResourceSaturation  *resourceSaturation `json:"resourceSaturation,omitempty"`
-	ControlPlane        *controlPlaneStatus `json:"controlPlane"`
-	ActiveIncidents     *incidentsSummary   `json:"activeIncidents"`
-	PendingRemediations *remediationSummary `json:"pendingRemediations"`
+	Nodes               []healthNode         `json:"nodes"`
+	ResourceSaturation  *resourceSaturation  `json:"resourceSaturation,omitempty"`
+	CPUThrottling       *cpuThrottlingStatus `json:"cpuThrottling,omitempty"`
+	ControlPlane        *controlPlaneStatus  `json:"controlPlane"`
+	ActiveIncidents     *incidentsSummary    `json:"activeIncidents"`
+	PendingRemediations *remediationSummary  `json:"pendingRemediations"`
 	// Unmonitored names the Deployments no ApplicationPersona covers. Reporting
 	// health without it presents a blind spot as health (F-02b).
 	Unmonitored *unmonitoredSummary `json:"unmonitored"`
@@ -211,6 +218,7 @@ func runHealth(cmd *cobra.Command, args []string) error {
 		output.Warn("Could not fetch control plane status: " + fetchErr.Error())
 	}
 
+	summary.CPUThrottling = fetchCPUThrottling(ctx, kubeconfig)
 	summary.ActiveIncidents = fetchIncidentsBrief(ctx, kubeconfig, namespace)
 	summary.PendingRemediations = fetchPendingRemediations(ctx, kubeconfig, namespace)
 	summary.Unmonitored = fetchUnmonitored(ctx, kubeconfig, namespace)
@@ -309,6 +317,9 @@ func printHealthSummary(w io.Writer, s *healthSummary) {
 
 	// Resource saturation (health_saturation.go)
 	printResourceSaturation(w, s.ResourceSaturation)
+
+	// CPU throttling detection (health_cpu_throttling.go)
+	printCPUThrottling(w, s.CPUThrottling)
 
 	// Control plane
 	if s.ControlPlane != nil {

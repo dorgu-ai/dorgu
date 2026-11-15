@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -95,7 +97,15 @@ func newRemediationRejectCmd() *cobra.Command {
 		Use:   "reject <name>",
 		Short: "Reject a remediation proposal",
 		Long: `Reject a RemediationAction, transitioning it to Rejected phase.
-Can reject remediations in Pending or Approved phase.
+Only a Pending remediation can be rejected: a decision is made once, and rejecting an
+Approved one would overwrite who approved it.
+
+The decision is recorded under your authenticated username, asked of the cluster
+with a SelfSubjectReview (what 'kubectl auth whoami' prints) and shown as
+"Rejecting as <user>" before anything is written. If the cluster cannot say who
+you are, nothing is written. If the cluster's admission policy refuses the
+rejection, the reason is shown as one plain sentence and nothing is rejected.
+Exit code 4 means declined: a decision, not a breakage. Other failures exit 1.
 
 --reason says why, from a fixed list, and is recorded on the RemediationAction as a
 RejectionReason condition. ` + "`dorgu report`" + ` counts rejections by it. Only
@@ -161,13 +171,25 @@ func runRemediationReject(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if rem.Status.Phase != "Pending" && rem.Status.Phase != "Approved" {
-		output.Error(fmt.Sprintf("Remediation is in %s phase, can only reject Pending or Approved remediations",
-			rem.Status.Phase))
+	if rem.Status.Phase != "Pending" {
+		output.Error(fmt.Sprintf("Remediation is in phase %s: only a Pending remediation can be rejected "+
+			"(a decision is made once, and rejecting an Approved one would overwrite who approved it).", phaseOrUnset(rem.Status.Phase)))
+		output.Info("Nothing was rejected and nothing was changed.")
 		return errSilent
 	}
 
-	if err := writeRejection(ctx, kubeconfig, namespace, name, reason, note); err != nil {
+	user, err := resolveIdentity(ctx, kubeconfig)
+	if err != nil {
+		output.Error(err.Error())
+		return errSilent
+	}
+	output.Info("Rejecting as " + displayUser(user))
+
+	if err := writeRejection(ctx, kubeconfig, namespace, name, user, reason, note); err != nil {
+		if isAdmissionDenial(err) {
+			printAdmissionDenial(os.Stdout, err, "rejected")
+			return withExitCode(ExitDeclined, errSilent)
+		}
 		return fmt.Errorf("failed to reject remediation: %w", err)
 	}
 
@@ -194,10 +216,17 @@ func runRemediationReject(cmd *cobra.Command, args []string) error {
 // reads the status first, sends every condition it is not touching back untouched,
 // and retries on a conflict, the same way the heal record does.
 func writeRejection(
-	ctx context.Context, kubeconfig, namespace, name string, reason *rejectionReason, note string,
+	ctx context.Context, kubeconfig, namespace, name, user string, reason *rejectionReason, note string,
 ) error {
+	if strings.TrimSpace(user) == "" {
+		return errors.New("no authenticated user to record as the rejecter")
+	}
 	if reason == nil {
-		return patchRemediationStatus(ctx, kubeconfig, namespace, name, `{"status":{"phase":"Rejected"}}`)
+		patch, err := json.Marshal(map[string]any{"status": map[string]any{"phase": "Rejected", "approvedBy": user}})
+		if err != nil {
+			return fmt.Errorf("marshal rejection patch: %w", err)
+		}
+		return patchRemediationStatus(ctx, kubeconfig, namespace, name, string(patch))
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -206,7 +235,11 @@ func writeRejection(
 		if err != nil {
 			return err
 		}
-		patch, err := buildRejectPatch(st, *reason, note, now)
+		if st.Phase != "" && st.Phase != "Pending" {
+			// Someone decided between the check and the write: this write would overwrite them.
+			return fmt.Errorf("the remediation is now %s, not Pending, so it was not rejected", st.Phase)
+		}
+		patch, err := buildRejectPatch(st, *reason, note, now, user)
 		if err != nil {
 			return err
 		}
@@ -223,7 +256,7 @@ func writeRejection(
 
 // buildRejectPatch builds the status merge patch: phase Rejected plus the
 // RejectionReason condition, with every other condition returned byte for byte.
-func buildRejectPatch(st recordState, reason rejectionReason, note, now string) (string, error) {
+func buildRejectPatch(st recordState, reason rejectionReason, note, now, user string) (string, error) {
 	marker, err := json.Marshal(map[string]any{
 		"type":               conditionRejectionReason,
 		"status":             "True",
@@ -245,7 +278,7 @@ func buildRejectPatch(st recordState, reason rejectionReason, note, now string) 
 	}
 	conditions = append(conditions, marker)
 
-	patch := map[string]any{"status": map[string]any{"phase": "Rejected", "conditions": conditions}}
+	patch := map[string]any{"status": map[string]any{"phase": "Rejected", "approvedBy": user, "conditions": conditions}}
 	if st.ResourceVersion != "" {
 		patch["metadata"] = map[string]any{"resourceVersion": st.ResourceVersion}
 	}

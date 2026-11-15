@@ -230,6 +230,13 @@ type fakeKubectlResponses struct {
 	// way an RBAC denial or an admission webhook rejection would.
 	failDeploymentPatch bool
 
+	// deploymentPatchConflicts makes the first N `kubectl patch deployment` calls
+	// fail with a Conflict (the resourceVersion precondition lost a race), then
+	// succeed. deploymentPatchError, when set, is the stderr every such call
+	// fails with instead (a refusal that is not a Conflict).
+	deploymentPatchConflicts int
+	deploymentPatchError     string
+
 	// deploymentAfterPatch, when set, is served by `get deployment` once the
 	// resource patch has landed, and deploymentAfterStrip once the
 	// managedFields patch has. They exist so the footprint strip can be driven
@@ -263,6 +270,15 @@ type fakeKubectlResponses struct {
 	// failEventCreate makes `kubectl create` (how the CLI writes its decline
 	// Events) fail, the way a user without events/create would.
 	failEventCreate bool
+
+	// whoami is what `kubectl auth whoami -o json` (a SelfSubjectReview) returns;
+	// the default is fixtureUser. whoamiError, when set, is the stderr it fails
+	// with, the way a cluster or a kubectl without SelfSubjectReview would.
+	whoami      string
+	whoamiError string
+	// whoamiWarning is text kubectl writes to stderr on a successful call (a
+	// deprecation warning, an exec plugin's login prompt).
+	whoamiWarning string
 }
 
 // writeFakeKubectlDispatch installs a fake kubectl on PATH that dispatches by
@@ -334,6 +350,22 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		eventFails = "1"
 	}
 	statusErrFile := write("status-err.txt", r.statusPatchError)
+	depErrFile := write("deploy-patch-err.txt", r.deploymentPatchError)
+	depErrFails := "0"
+	if r.deploymentPatchError != "" {
+		depErrFails = "1"
+	}
+	whoamiDoc := r.whoami
+	if whoamiDoc == "" {
+		whoamiDoc = whoamiJSON(fixtureUser)
+	}
+	whoamiFile := write("whoami.json", whoamiDoc)
+	whoamiErrFile := write("whoami-err.txt", r.whoamiError)
+	whoamiWarnFile := write("whoami-warn.txt", r.whoamiWarning)
+	whoamiFails := "0"
+	if r.whoamiError != "" {
+		whoamiFails = "1"
+	}
 
 	callLog := filepath.Join(dir, "calls.log")
 
@@ -344,6 +376,7 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"for a in \"$@\"; do\n" +
 		"  case \"$a\" in\n" +
 		"    get) mode=get ;;\n" +
+		"    whoami) mode=whoami ;;\n" +
 		"    patch) mode=patch ;;\n" +
 		"    create) mode=create ;;\n" +
 		"    remediationaction|remediationactions) [ -z \"$kind\" ] && kind=rem ;;\n" +
@@ -352,6 +385,10 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"    clusterpersona|clusterpersonas) [ -z \"$kind\" ] && kind=cp ;;\n" +
 		"  esac\n" +
 		"done\n" +
+		"if [ \"$mode\" = whoami ]; then\n" +
+		"  if [ " + whoamiFails + " = 1 ]; then cat " + whoamiErrFile + " >&2; exit 1; fi\n" +
+		"  cat " + whoamiWarnFile + " >&2\n" +
+		"  cat " + whoamiFile + "; exit 0; fi\n" +
 		"if [ \"$mode\" = create ]; then\n" +
 		"  if [ " + eventFails + " = 1 ]; then echo 'Error from server (Forbidden): events is forbidden' >&2; exit 1; fi\n" +
 		"  cat >> " + filepath.Join(dir, "events.log") + "; echo >> " + filepath.Join(dir, "events.log") + "; echo created; exit 0; fi\n" +
@@ -365,7 +402,16 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"      if [ " + statusFails + " = 1 ]; then cat " + statusErrFile + " >&2; exit 1; fi\n" +
 		"      touch " + filepath.Join(dir, "approved") + "\n" +
 		"      echo patched; exit 0 ;;\n" +
-		"    *) touch " + filepath.Join(dir, "patched") + " ;;\n" +
+		"    *)\n" +
+		"      if [ \"$kind\" = deploy ] && [ " + depErrFails + " = 1 ]; then cat " + depErrFile + " >&2; exit 1; fi\n" +
+		"      if [ \"$kind\" = deploy ]; then\n" +
+		"        c=0; [ -f " + filepath.Join(dir, "conflicts.n") + " ] && c=$(cat " + filepath.Join(dir, "conflicts.n") + ")\n" +
+		"        if [ $c -lt " + fmt.Sprint(r.deploymentPatchConflicts) + " ]; then\n" +
+		"          echo $((c+1)) > " + filepath.Join(dir, "conflicts.n") + "\n" +
+		"          echo 'Error from server (Conflict): Operation cannot be fulfilled on deployments.apps \"api-server\": the object has been modified' >&2; exit 1\n" +
+		"        fi\n" +
+		"      fi\n" +
+		"      touch " + filepath.Join(dir, "patched") + " ;;\n" +
 		"  esac\n" +
 		"  if [ \"$kind\" = deploy ] && [ " + patchFails + " = 1 ]; then echo 'Error from server (Forbidden): deployments.apps is forbidden' >&2; exit 1; fi\n" +
 		"  echo patched; exit 0; fi\n" +
@@ -643,7 +689,7 @@ func TestHealWorkloadDeclinedConfirmation(t *testing.T) {
 
 	// No --yes and "n" on stdin → declines, patches nothing.
 	err := healWorkload(t.Context(), &r,
-		healOptions{}, strings.NewReader("n\n"), io.Discard)
+		healOptions{user: fixtureUser}, strings.NewReader("n\n"), io.Discard)
 	require.NoError(t, err)
 	assert.NotContains(t, readPatchLog(t, patchLog), "patch deployment")
 }

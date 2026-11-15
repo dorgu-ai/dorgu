@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -57,11 +58,6 @@ const (
 	// reasonWorkloadPatched is the condition reason. The CRD constrains reasons
 	// to a CamelCase-ish token, so this is not free text.
 	reasonWorkloadPatched = "CLIAppliedResourceChange"
-
-	// healApprovedBy matches what `dorgu remediation approve` writes, so the two
-	// routes to an approval are not distinguishable by accident. Which route it
-	// was is recorded in the marker's message instead.
-	healApprovedBy = "cli-user"
 )
 
 // recordAttempts is how many read-modify-write rounds the record write gets.
@@ -153,7 +149,7 @@ func healRecordMessage(e *healExecution) string {
 // status subresource, so the conflict retry above it is what actually carries
 // the correctness; the CLI only ever writes here on a phase the operator is not
 // reconciling, or immediately after a phase it just set itself.
-func buildHealRecordPatch(st recordState, e *healExecution, now string) (string, error) {
+func buildHealRecordPatch(st recordState, e *healExecution, now, user string) (string, error) {
 	marker := map[string]any{
 		"type":               conditionWorkloadPatched,
 		"status":             "True",
@@ -180,8 +176,15 @@ func buildHealRecordPatch(st recordState, e *healExecution, now string) (string,
 
 	status := map[string]any{"conditions": conditions}
 	if st.needsImplicitApproval() {
+		// The approver is the authenticated user, as in `approve`, so the two routes
+		// to an approval are not distinguishable by accident (which route it was is
+		// in the marker's message). With no authenticated user there is no approval
+		// to record: the CLI never invents one.
+		if strings.TrimSpace(user) == "" {
+			return "", errors.New("no authenticated user to record as the approver")
+		}
 		status["phase"] = "Approved"
-		status["approvedBy"] = healApprovedBy
+		status["approvedBy"] = user
 		status["approvedAt"] = now
 	}
 
@@ -222,7 +225,7 @@ func (e *recordError) Unwrap() error { return e.Cause }
 // approval for a change the cluster refused would be the same divergence with
 // the two sides swapped, which is why nothing here runs on the declined,
 // advisory or failed paths.
-func recordHeal(ctx context.Context, kubeconfig, namespace, name string, e *healExecution) error {
+func recordHeal(ctx context.Context, kubeconfig, namespace, name string, e *healExecution, user string) error {
 	fail := func(cause error) error {
 		return &recordError{Namespace: namespace, Name: name, Cause: cause}
 	}
@@ -233,7 +236,7 @@ func recordHeal(ctx context.Context, kubeconfig, namespace, name string, e *heal
 		if err != nil {
 			return fail(err)
 		}
-		patch, err := buildHealRecordPatch(st, e, now)
+		patch, err := buildHealRecordPatch(st, e, now, user)
 		if err != nil {
 			return fail(err)
 		}
@@ -266,7 +269,7 @@ func patchRemediationStatus(ctx context.Context, kubeconfig, namespace, name, pa
 		"patch", "remediationaction", name, "-n", namespace,
 		"--type", "merge", "--subresource", "status", "-p", patch).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s", kubectlErrText(out))
+		return classifyWriteError(kubectlErrText(out), namespace)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -281,6 +282,10 @@ func patchDeploymentMetadata(ctx context.Context, kubeconfig, ns, name, patch st
 // has no typed API error to inspect.
 func isConflictError(err error) bool {
 	if err == nil {
+		return false
+	}
+	var denied *admissionDeniedError
+	if errors.As(err, &denied) {
 		return false
 	}
 	text := strings.ToLower(err.Error())

@@ -301,7 +301,7 @@ func TestFix_NoTicketOnAnOldOperatorSaysWhy(t *testing.T) {
 
 	require.Error(t, res.err)
 	assert.Contains(t, res.out, "the operator on this cluster is v0.12.1")
-	assert.Contains(t, res.out, "does not issue apply tickets")
+	assert.Contains(t, res.out, needsOperatorV014, "refused before the approval, not after it")
 }
 
 // --- F-12 to F-14 ------------------------------------------------------------------

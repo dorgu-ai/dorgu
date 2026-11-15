@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,7 +30,7 @@ import (
 var openScenarios = map[string]string{}
 
 // cliScenarioIDs is the CLI catalogue; every ID has exactly one test below.
-var cliScenarioIDs = []string{"CLI-01", "CLI-02", "CLI-03", "CLI-04", "CLI-05", "CLI-06"}
+var cliScenarioIDs = []string{"CLI-01", "CLI-02", "CLI-03", "CLI-04", "CLI-05", "CLI-06", "CLI-07", "CLI-08"}
 
 // expectBlocked records one scenario's result against openScenarios.
 func expectBlocked(t *testing.T, id string, blocked bool, detail string) {
@@ -251,4 +252,115 @@ func TestAdversarialCLI06AdoptedByArgoAfterProposal(t *testing.T) {
 	})
 	expectBlocked(t, "CLI-06", !res.deployPatch,
 		"proposal recorded managedBy=unmanaged; the live Deployment now carries Argo CD tracking")
+}
+
+// CLI-07 (ID-03 from the CLI side, P2 task 2.7): the CLI is made to write an
+// approvedBy that is not the authenticated user: the old literal `cli-user`, a name
+// from the environment or the kubeconfig, or a made-up one when the cluster
+// cannot say who the user is. Safe outcome: approve, reject and the heal record
+// write the SelfSubjectReview username, and when there is none they write nothing.
+func TestAdversarialCLI07ApprovedByIsNeverAnythingButTheAuthenticatedUser(t *testing.T) {
+	var forged []string
+	record := func(what, patchLog, wantUser string) {
+		for _, bad := range []string{"cli-user", "approvedBy\":\"\""} {
+			if strings.Contains(patchLog, bad) {
+				forged = append(forged, what+" wrote "+bad)
+			}
+		}
+		if wantUser != "" && !strings.Contains(patchLog, `"approvedBy":"`+wantUser+`"`) {
+			forged = append(forged, what+" did not write "+wantUser)
+		}
+	}
+
+	// The user's environment and kubeconfig suggest other names; none may be used.
+	t.Setenv("USER", "someone-else")
+	t.Setenv("LOGNAME", "someone-else")
+
+	// approve, as the authenticated user.
+	r := baseResponses()
+	r.whoami = whoamiJSON(fixtureUser)
+	r.rem = withResourceVersion(operatorRemediationFixture, "4242")
+	r.remAfterApprove = withApprovePhase(r.rem, "Approved")
+	record("approve", approveNoHeal(t, r).patchLog, fixtureUser)
+
+	// reject, as the authenticated user.
+	record("reject", runRejectAs(t, fixtureUser, operatorRemediationFixture, "--reason", "too-risky").patchLog, fixtureUser)
+
+	// the heal record's implicit approval, as the authenticated user.
+	patch, err := buildHealRecordPatch(recordState{Phase: "Pending"}, healRecordFor(), "2026-08-27T12:00:00Z", fixtureUser)
+	require.NoError(t, err)
+	record("heal record", patch, fixtureUser)
+
+	// no identity: nothing is written at all.
+	for _, mutate := range []func(*fakeKubectlResponses){
+		func(r *fakeKubectlResponses) { r.whoamiError = `error: unknown command "whoami"` }, // SelfSubjectReview unavailable
+		func(r *fakeKubectlResponses) { r.whoami = whoamiJSON("") },                         // no username
+	} {
+		nr := baseResponses()
+		nr.rem = withResourceVersion(operatorRemediationFixture, "4242")
+		mutate(&nr)
+		if log := approveNoHeal(t, nr).patchLog; log != "" {
+			forged = append(forged, "approve without an identity wrote: "+log)
+		}
+		rr := fakeKubectlResponses{context: "kind-dorgu-spike", rem: operatorRemediationFixture, persona: personaFixture,
+			deployment: deploymentListFixture, noTicket: true}
+		mutate(&rr)
+		if log := runRejectWith(t, rr, "--reason", "too-risky").patchLog; log != "" {
+			forged = append(forged, "reject without an identity wrote: "+log)
+		}
+	}
+	if _, err := buildHealRecordPatch(recordState{Phase: "Pending"}, healRecordFor(), "2026-08-27T12:00:00Z", ""); err == nil {
+		forged = append(forged, "heal record without an identity built a patch")
+	}
+
+	detail := "every approvedBy the CLI writes is the SelfSubjectReview username; none without one"
+	if len(forged) > 0 {
+		detail = strings.Join(forged, "; ")
+	}
+	expectBlocked(t, "CLI-07", len(forged) == 0, detail)
+}
+
+// CLI-08: a forged apply ticket, written by anyone with remediationactions/status
+// (the P1 gap), is refused before the CLI touches the Deployment: a wrong
+// specHash (the plan was edited after the operator cleared it), an expired
+// ticket, a ticket missing specHash, approvedBy or expiresAt, and a ticket
+// whose approvedBy is somebody else.
+func TestAdversarialCLI08ForgedTicketIsRefusedBeforeApply(t *testing.T) {
+	forgeries := map[string]func(ticket map[string]any){
+		"wrong specHash": func(m map[string]any) { m["specHash"] = strings.Repeat("0", 64) },
+		"expired": func(m map[string]any) {
+			m["issuedAt"] = fixtureApprovedAt().Add(time.Second).UTC().Format(time.RFC3339Nano)
+			m["expiresAt"] = time.Now().Add(-time.Second).UTC().Format(time.RFC3339)
+		},
+		"no specHash":      func(m map[string]any) { delete(m, "specHash") },
+		"no approvedBy":    func(m map[string]any) { delete(m, "approvedBy") },
+		"no expiresAt":     func(m map[string]any) { delete(m, "expiresAt") },
+		"another approver": func(m map[string]any) { m["approvedBy"] = fixtureOtherUser },
+	}
+
+	// Positive control: the same flow with a good ticket does patch, so the refusals
+	// below are the ticket checks and not a broken fixture.
+	good := baseResponses()
+	good.deployment = withIdentity(t, good.deployment)
+	good.remAfterApprove = withTicket(t, operatorRemediationFixture, "Applying")
+	if !strings.Contains(runApprove(t, good).patchLog, "patch deployment") {
+		t.Fatal("precondition: a good ticket must be applied")
+	}
+
+	var applied []string
+	for name, forge := range forgeries {
+		r := baseResponses()
+		r.deployment = withIdentity(t, r.deployment)
+		r.remAfterApprove = withTicket(t, operatorRemediationFixture, "Applying", forge)
+		if strings.Contains(runApprove(t, r).patchLog, "patch deployment") {
+			applied = append(applied, name)
+		}
+	}
+	sort.Strings(applied)
+
+	detail := "every forged ticket was refused before the Deployment was patched"
+	if len(applied) > 0 {
+		detail = "the Deployment was patched under: " + strings.Join(applied, ", ")
+	}
+	expectBlocked(t, "CLI-08", len(applied) == 0, detail)
 }

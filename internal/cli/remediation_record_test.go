@@ -200,7 +200,7 @@ func healRecordFor() *healExecution {
 func TestBuildHealRecordPatchPendingRecordsApproval(t *testing.T) {
 	st := recordState{Phase: "Pending", ResourceVersion: "4711"}
 
-	patch, err := buildHealRecordPatch(st, healRecordFor(), "2026-08-27T12:00:00Z")
+	patch, err := buildHealRecordPatch(st, healRecordFor(), "2026-08-27T12:00:00Z", recordTestUser)
 	require.NoError(t, err)
 
 	var got struct {
@@ -225,7 +225,7 @@ func TestBuildHealRecordPatchPendingRecordsApproval(t *testing.T) {
 	assert.Equal(t, "4711", got.Metadata.ResourceVersion,
 		"the write is a read-modify-write and must not clobber state it never saw")
 	assert.Equal(t, "Approved", got.Status.Phase)
-	assert.Equal(t, healApprovedBy, got.Status.ApprovedBy)
+	assert.Equal(t, recordTestUser, got.Status.ApprovedBy)
 	assert.Equal(t, "2026-08-27T12:00:00Z", got.Status.ApprovedAt)
 
 	require.Len(t, got.Status.Conditions, 1)
@@ -242,7 +242,7 @@ func TestBuildHealRecordPatchPendingRecordsApproval(t *testing.T) {
 
 func TestBuildHealRecordPatchApprovedLeavesPhaseAlone(t *testing.T) {
 	for _, phase := range []string{"Approved", "Applying", "Verifying", "Completed", "Acknowledged"} {
-		patch, err := buildHealRecordPatch(recordState{Phase: phase}, healRecordFor(), "2026-08-27T12:00:00Z")
+		patch, err := buildHealRecordPatch(recordState{Phase: phase}, healRecordFor(), "2026-08-27T12:00:00Z", recordTestUser)
 		require.NoError(t, err, phase)
 		assert.NotContains(t, patch, `"phase"`, phase)
 		assert.NotContains(t, patch, `"approvedBy"`, phase)
@@ -253,7 +253,7 @@ func TestBuildHealRecordPatchApprovedLeavesPhaseAlone(t *testing.T) {
 // An empty phase is the same case as Pending: the operator has not started, and
 // nothing has recorded a decision.
 func TestBuildHealRecordPatchEmptyPhaseRecordsApproval(t *testing.T) {
-	patch, err := buildHealRecordPatch(recordState{}, healRecordFor(), "2026-08-27T12:00:00Z")
+	patch, err := buildHealRecordPatch(recordState{}, healRecordFor(), "2026-08-27T12:00:00Z", recordTestUser)
 	require.NoError(t, err)
 	assert.Contains(t, patch, `"phase":"Approved"`)
 	assert.NotContains(t, patch, `"resourceVersion"`,
@@ -271,7 +271,7 @@ func TestBuildHealRecordPatchPreservesForeignConditions(t *testing.T) {
 		},
 	}
 
-	patch, err := buildHealRecordPatch(st, healRecordFor(), "2026-08-27T12:00:00Z")
+	patch, err := buildHealRecordPatch(st, healRecordFor(), "2026-08-27T12:00:00Z", recordTestUser)
 	require.NoError(t, err)
 
 	assert.Contains(t, patch, `"futureField":1`)
@@ -291,7 +291,7 @@ func TestBuildHealRecordPatchReplacesOwnPriorMarker(t *testing.T) {
 		},
 	}
 
-	patch, err := buildHealRecordPatch(st, healRecordFor(), "2026-08-27T12:00:00Z")
+	patch, err := buildHealRecordPatch(st, healRecordFor(), "2026-08-27T12:00:00Z", recordTestUser)
 	require.NoError(t, err)
 
 	assert.NotContains(t, patch, "an earlier heal")
@@ -359,9 +359,10 @@ func TestRecordHealGivesUpAndSaysSo(t *testing.T) {
 		context:          "kind-dorgu-spike",
 		rem:              `{"metadata":{"name":"r","namespace":"production","resourceVersion":"1"},"status":{"phase":"Pending"}}`,
 		statusPatchError: "Error from server (Conflict): the object has been modified",
+		noTicket:         true,
 	})
 
-	err := recordHeal(t.Context(), "", "production", "r", healRecordFor())
+	err := recordHeal(t.Context(), "", "production", "r", healRecordFor(), recordTestUser)
 	require.Error(t, err)
 
 	var rec *recordError

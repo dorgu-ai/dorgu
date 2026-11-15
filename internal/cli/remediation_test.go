@@ -560,14 +560,9 @@ func TestRunRemediationApproveRejectsNonPending(t *testing.T) {
 }
 
 func TestRunRemediationRejectPending(t *testing.T) {
-	writeFakeKubectl(t, operatorRemediationFixture)
+	res := runReject(t, operatorRemediationFixture)
 
-	cmd := newRemediationRejectCmd()
-	cmd.SetArgs([]string{"fix-oom-api-server", "-n", "production"})
-	cmd.SetOut(io.Discard)
-	cmd.SetErr(io.Discard)
-
-	require.NoError(t, cmd.Execute())
+	require.NoError(t, res.err)
 }
 
 func TestRunRemediationRejectNonRejectablePhase(t *testing.T) {

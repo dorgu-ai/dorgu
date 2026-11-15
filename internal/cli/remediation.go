@@ -107,6 +107,10 @@ type remediationStepStatus struct {
 // action type is nested under spec.action.type, and the ordered Steps[] plan +
 // PlanSource/PlanSummary are the plan of record when present.
 type remediationFull struct {
+	// rawSpec is `.spec` exactly as the API server served it, kept for the ticket's
+	// specHash (ticket_v1.go). Set by UnmarshalJSON; never written back.
+	rawSpec json.RawMessage
+
 	Metadata struct {
 		Name              string `json:"name"`
 		Namespace         string `json:"namespace"`
@@ -764,11 +768,19 @@ func newRemediationApproveCmd() *cobra.Command {
 		Long: `Approve a RemediationAction, transitioning it from Pending to Approved.
 The operator then re-checks the plan against the cluster as it is now. If it
 clears, it writes an apply ticket (the one change that may be applied, bound to
-the live Deployment's UID and generation, valid for ten minutes), applies
+the live Deployment's UID and generation, the hash of the plan it cleared, and
+who approved it, valid until its expiry, 15 minutes by default), applies
 the persona update and monitors health. If it refuses, nothing is applied and
 this command shows the refusal and its reason.
 
 Use --next to approve the oldest pending remediation without naming it.
+
+The approver recorded is your authenticated username, asked of the cluster with a
+SelfSubjectReview (what 'kubectl auth whoami' prints) and shown as "Approving as
+<user>" before anything is written. If the cluster cannot say who you are, nothing
+is approved: Dorgu never writes a name it made up. The cluster's admission policy
+can refuse an approval (you proposed it yourself, your account lacks the approve
+permission, a service account); the refusal is shown as one plain sentence.
 
 With --no-heal the approval is recorded and the operator still updates the
 persona, but nothing is written to the workload. You can still run
@@ -782,12 +794,22 @@ strategic-merge patch on the Deployment the ticket names and applies it with you
 credentials, so the pod recovers. It uses only a ticket the operator issued
 after your approval was recorded (one already sitting on the action is ignored),
 re-reads the action, the Deployment and the cluster's self-healing mode right
-before it writes, and refuses without a ticket, with an expired one, if the
-Deployment is not the one the ticket was issued for or its spec has changed
-since, or if the cluster is in observe mode; it never falls back to patching from
-the plan. This needs an operator that
-issues tickets (v0.13.0 or newer). The operator stays advisory and never writes
-workloads. Use --no-heal to only patch the RemediationAction status.
+before it writes, and refuses without a ticket, with an expired one, with one
+that lacks specHash, approvedBy or expiresAt, with one whose specHash is not the
+hash of the plan as the cluster serves it now, with one approved by somebody
+other than you, if the Deployment is not the one the ticket was issued for or
+its spec has changed since, or if the cluster is in observe mode; it never falls
+back to patching from the plan. This needs an operator that issues ticket v1
+(v0.14.0 or newer); operator v0.14 also needs this CLI, v0.15 or newer, installed
+first. Against an operator older than v0.14 the command refuses before it records
+anything and says to upgrade the operator; --no-heal still records the decision
+alone. The operator stays advisory and never writes workloads. Use --no-heal to only
+patch the RemediationAction status.
+
+Exit code 4 means declined, which is a decision and not a breakage: the cluster's
+admission policy refused the approval (you proposed it, your account lacks the
+approve permission), or the workload is owned by something else. Nothing was
+approved. Other failures exit 1; a script should not treat 4 as an error.
 
 Dorgu only patches a Deployment that nothing else reconciles. If Helm, ArgoCD,
 Flux or kustomize owns it, or if Dorgu could not tell, this declines with exit
@@ -863,8 +885,9 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if rem.Status.Phase != "Pending" {
-		output.Error(fmt.Sprintf("Remediation is in %s phase, can only approve Pending remediations",
-			rem.Status.Phase))
+		output.Error(fmt.Sprintf("Remediation is in phase %s: only a Pending remediation can be approved.",
+			phaseOrUnset(rem.Status.Phase)))
+		output.Info("Nothing was approved and nothing was changed.")
 		return errSilent
 	}
 
@@ -887,11 +910,26 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		return errSilent
 	}
 
+	// Who is approving is whatever the cluster says the credentials are. With no
+	// answer there is no approval: nothing is written under a made-up name (2.7).
+	user, err := resolveIdentity(ctx, kubeconfig)
+	if err != nil {
+		output.Error(err.Error())
+		return errSilent
+	}
+
+	// Against an operator older than v0.14 this CLI can record a decision but never
+	// heal: refuse before the approval is written, not after (C5 review F-3).
+	if heal && refuseOperatorBeforeV014(ctx, kubeconfig, cmd.OutOrStdout()) {
+		return errSilent
+	}
+
 	opts := healOptions{
 		kubeconfig: kubeconfig,
 		workload:   workloadFlag,
 		container:  containerFlag,
 		assumeYes:  assumeYes,
+		user:       user,
 	}
 
 	// Preflight the workload change BEFORE approving anything. Approval is what
@@ -925,7 +963,8 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 	// Write the approval as an optimistic-lock patch, then confirm after a short
 	// settle that the operator still has it Approved (R2-3). "Approved" is printed
 	// only past this point.
-	byAnother, err := approveAndConfirm(ctx, kubeconfig, namespace, name, rem, cmd.OutOrStdout())
+	output.Info("Approving as " + displayUser(user))
+	byAnother, err := approveAndConfirm(ctx, kubeconfig, namespace, name, user, rem, cmd.OutOrStdout())
 	if err != nil {
 		return err
 	}
@@ -1055,7 +1094,10 @@ the heal is refused, because the operator's verdict would be about a workload
 nobody changed; apply the change yourself instead.
 It needs an approved remediation and applies the operator's apply ticket, not the
 plan: a Pending remediation is refused (approve it first), and so is one whose
-ticket is missing or expired, or was issued before the approval on record.
+ticket is missing, expired, incomplete (no specHash, approvedBy or expiresAt),
+for a plan that has changed since (the specHash no longer matches), approved by
+somebody other than you (your username comes from a SelfSubjectReview), or
+issued before the approval on record.
 The operator never writes workloads: this is the CLI (your tool) closing the
 loop. Non-resource steps (restart/scale/manual) are printed as advisory, not
 executed.
@@ -1132,11 +1174,20 @@ func runRemediationHeal(cmd *cobra.Command, args []string) error {
 		return errSilent
 	}
 
+	// The ticket was approved by somebody, and only that person may apply it, so the
+	// heal needs to know who is asking. With no answer nothing is patched.
+	user, err := resolveIdentity(ctx, kubeconfig)
+	if err != nil {
+		output.Error(err.Error())
+		return errSilent
+	}
+
 	opts := healOptions{
 		kubeconfig: kubeconfig,
 		workload:   workloadFlag,
 		container:  containerFlag,
 		assumeYes:  assumeYes,
+		user:       user,
 	}
 	if err := healWorkload(ctx, rem, opts, cmd.InOrStdin(), cmd.OutOrStdout()); err != nil {
 		// A refusal has already printed itself, and it is not a failure.
@@ -1147,4 +1198,12 @@ func runRemediationHeal(cmd *cobra.Command, args []string) error {
 		return errSilent
 	}
 	return nil
+}
+
+// phaseOrUnset names a phase for a message.
+func phaseOrUnset(phase string) string {
+	if phase == "" {
+		return "(unset)"
+	}
+	return phase
 }
