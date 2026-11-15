@@ -30,7 +30,7 @@ import (
 var openScenarios = map[string]string{}
 
 // cliScenarioIDs is the CLI catalogue; every ID has exactly one test below.
-var cliScenarioIDs = []string{"CLI-01", "CLI-02", "CLI-03", "CLI-04", "CLI-05", "CLI-06", "CLI-07", "CLI-08"}
+var cliScenarioIDs = []string{"CLI-01", "CLI-02", "CLI-03", "CLI-04", "CLI-05", "CLI-06", "CLI-07", "CLI-08", "CLI-09"}
 
 // expectBlocked records one scenario's result against openScenarios.
 func expectBlocked(t *testing.T, id string, blocked bool, detail string) {
@@ -363,4 +363,39 @@ func TestAdversarialCLI08ForgedTicketIsRefusedBeforeApply(t *testing.T) {
 		detail = "the Deployment was patched under: " + strings.Join(applied, ", ")
 	}
 	expectBlocked(t, "CLI-08", len(applied) == 0, detail)
+}
+
+// CLI-09: `dorgu remediation rollback` is made to write more than a request: a restore
+// value the CLI chose (here the hostile action's own spec.prePatchState, a 64Gi limit), a
+// requester that is not the authenticated user, or a request at all when the cluster cannot
+// say who the user is or the user is a service account. A rollback request carries the name
+// of the action, a reason and the SelfSubjectReview username, and nothing else: the operator
+// derives the restore from what it recorded.
+func TestAdversarialCLI09RollbackWritesOnlyTheRequest(t *testing.T) {
+	hostile := strings.Replace(rollbackTargetFixture(), `"action": {`,
+		`"action": {"prePatchState": {"spec":{"resources":{"limits":{"memory":"64Gi"}}}},`, 1)
+	hostile = strings.Replace(hostile, `"personaRef"`, `"requestedBy": "victim@example.com", "personaRef"`, 1)
+
+	ok := runRollback(t, rollbackWorld{target: hostile, whoami: whoamiJSON(fixtureUser)}, rollbackTargetRA, "-n", "production")
+	var body struct {
+		Spec map[string]json.RawMessage `json:"spec"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(ok.create), &body), ok.create)
+	keys := make([]string, 0, len(body.Spec))
+	for k := range body.Spec {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var proposer struct{ Username string }
+	_ = json.Unmarshal(body.Spec["proposer"], &proposer)
+
+	bot := runRollback(t, rollbackWorld{whoami: whoamiJSON("system:serviceaccount:ci:bot")}, rollbackTargetRA, "-n", "production")
+	nobody := runRollback(t, rollbackWorld{whoami: `{"status":{"userInfo":{}}}`}, rollbackTargetRA, "-n", "production")
+
+	blocked := strings.Join(keys, ",") == "idempotencyKey,proposer,rationale,rollbackOf,source,target" &&
+		proposer.Username == fixtureUser && !strings.Contains(ok.create, "64Gi") &&
+		!strings.Contains(ok.create, "victim@example.com") &&
+		bot.create == "" && nobody.create == ""
+	expectBlocked(t, "CLI-09", blocked, "spec keys "+strings.Join(keys, ",")+", proposer "+proposer.Username+
+		", service account wrote "+bot.create+", unknown user wrote "+nobody.create)
 }

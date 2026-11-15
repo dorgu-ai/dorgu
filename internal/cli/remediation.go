@@ -67,6 +67,7 @@ Examples:
 		newRemediationApproveCmd(),
 		newRemediationRejectCmd(),
 		newRemediationHealCmd(),
+		newRemediationRollbackCmd(),
 	)
 	return cmd
 }
@@ -112,14 +113,21 @@ type remediationFull struct {
 	rawSpec json.RawMessage
 
 	Metadata struct {
-		Name              string `json:"name"`
-		Namespace         string `json:"namespace"`
-		UID               string `json:"uid"`
-		ResourceVersion   string `json:"resourceVersion"`
-		Generation        int64  `json:"generation"`
-		CreationTimestamp string `json:"creationTimestamp"`
+		Name              string            `json:"name"`
+		Namespace         string            `json:"namespace"`
+		UID               string            `json:"uid"`
+		ResourceVersion   string            `json:"resourceVersion"`
+		Generation        int64             `json:"generation"`
+		CreationTimestamp string            `json:"creationTimestamp"`
+		Annotations       map[string]string `json:"annotations"`
 	} `json:"metadata"`
 	Spec struct {
+		// Provenance is who proposed the action, written by the operator. Only a
+		// ticketed rollback's source and requester are shown.
+		Provenance *struct {
+			Source      string `json:"source"`
+			RequestedBy string `json:"requestedBy"`
+		} `json:"provenance"`
 		Confidence  string `json:"confidence"`
 		Explanation string `json:"explanation"`
 		PlanSource  string `json:"planSource"`
@@ -460,6 +468,9 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 			fmt.Fprintf(w, "Owner:      %s\n", ownerDisplay(ref))
 		}
 	}
+	if origin := rollbackOrigin(r); origin != "" {
+		fmt.Fprintf(w, "Origin:     %s\n", origin)
+	}
 	fmt.Fprintf(w, "Type:       %s\n", r.Spec.Action.Type)
 	fmt.Fprintf(w, "Confidence: %s\n", r.Spec.Confidence)
 	if r.Spec.PlanSource != "" {
@@ -501,7 +512,8 @@ func printRemediationDiff(w io.Writer, r *remediationFull) {
 				fmt.Fprintf(w, "  Max retries: %d\n", rb.MaxRetries)
 			}
 		} else {
-			fmt.Fprintln(w, "  Manual rollback required")
+			fmt.Fprintln(w, "  Automatic rollback is off for this remediation. Once it is applied, you can ask for a rollback with:")
+			fmt.Fprintf(w, "    dorgu remediation rollback %s -n %s\n", r.Metadata.Name, r.Metadata.Namespace)
 		}
 		fmt.Fprintln(w)
 	}

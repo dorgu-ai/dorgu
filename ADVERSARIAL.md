@@ -23,8 +23,9 @@ checkpoint plan are in the harness plan, phase P0.
 | CLI-06 | The workload was unmanaged at proposal time and Argo CD adopted it before the heal | Actuator re-checks ownership live and refuses | P1 B5 (stopgap) | **Blocked** |
 | CLI-07 | The CLI is made to write an `approvedBy` that is not the authenticated user (the old `cli-user`, a name from the environment, or a made-up one when the cluster cannot say who the user is). Maps to ID-03 | `approve`, `reject` and the heal record write the SelfSubjectReview username; with none they write nothing | P2 C5 | **Blocked** |
 | CLI-08 | A forged apply ticket (wrong `specHash`, expired, missing `specHash`, `approvedBy` or `expiresAt`, or another approver) written by anyone with `remediationactions/status` | Refused before the Deployment is read or patched | P2 C5 | **Blocked** |
+| CLI-09 | `dorgu remediation rollback` is made to write more than a request: a restore value of its own (a hostile action's `prePatchState`), a requester that is not the authenticated user, or any request when the user is a service account or unknown | The proposal holds the action's name, a reason and the SelfSubjectReview username only (no steps, no values, no `requestedBy`); nothing is written for a service account or an unknown user. The operator derives the restore from what it recorded | P2 C6 | **Blocked** |
 
-Current: **8/8 blocked** (was 6/6 at CP1, 1/6 before P1).
+Current: **9/9 blocked** (was 8/8 after C5, 6/6 at CP1, 1/6 before P1).
 
 What closed them (P1 B5, task 1.4): `approve` sets Approved, waits up to 30 s for the operator's `status.applyTicket`,
 and patches exactly the ticket; `heal` needs an approved remediation and the same ticket, and refuses a Pending one
