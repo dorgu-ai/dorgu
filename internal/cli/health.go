@@ -38,7 +38,9 @@ are excluded and counted separately.
 
 Says whether CPU throttling detection is on, which source it reads
 (metrics.k8s.io or Prometheus), or why it is off, from the ClusterPersona
-status. An operator older than v0.14 reports nothing, which shows as unknown.
+status. An operator older than v0.14 reports nothing, which shows as unknown. A v0.14
+operator behind a ClusterPersona CRD that was not upgraded is read from its condition
+and the output says to apply the chart's CRDs.
 
 Also names the Deployments that no ApplicationPersona covers. Those are not
 watched as applications, so Dorgu plans nothing for them. If one of their pods

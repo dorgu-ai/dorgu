@@ -113,6 +113,8 @@ dorgu remediation approve <remediation-name> -n <namespace>
 
 Approval is recorded under your authenticated username, the one `kubectl auth whoami` prints (a SelfSubjectReview, Kubernetes 1.28 or newer). Dorgu shows "Approving as <user>" first, and approves nothing if the cluster cannot say who you are.
 
+If the cluster's admission policy refuses the approval (you proposed the action yourself, your account lacks the `approve` permission on remediations, a service account is acting), Dorgu says why in one sentence, approves nothing, and exits with **code 4** ("declined"). Exit 4 is a decision, not a breakage: a script should not treat it like exit 1. Only a `Pending` remediation can be approved. Healing needs **operator v0.14 or later**; against an older operator Dorgu refuses before it records anything (`--no-heal` still records the decision alone).
+
 Healing is **on by default**. Approving patches the Persona spec *and* applies the equivalent change to the running workload, then the operator verifies health and rolls back if the workload regresses. Use `--no-heal` to approve the proposal without touching the workload (you can still `heal` it within the verification window, see [Heal separately](#heal-separately)).
 
 ---
@@ -385,7 +387,7 @@ dorgu remediation reject ra-default-api-oom-b71c -n default --reason wrong-diagn
 dorgu remediation reject ra-default-api-oom-b71c -n default --reason too-risky --note "peak traffic until Friday"
 ```
 
-`--reason` is one of `wrong-diagnosis`, `too-risky`, `not-now`, `duplicate`, `not-needed`, `other`. It is recorded on the RemediationAction (a `RejectionReason` condition) so `dorgu report` can count rejections by reason; only `wrong-diagnosis` counts against proposal precision (KPI Q2), the others are a breakdown; `--reason other` needs a `--note`. Free text goes in `--note`; `--reason` no longer takes it. Leaving `--reason` out still rejects the proposal and is counted as "no reason given".
+`--reason` is one of `wrong-diagnosis`, `too-risky`, `not-now`, `duplicate`, `not-needed`, `other`. It is recorded on the RemediationAction (a `RejectionReason` condition) so `dorgu report` can count rejections by reason; only `wrong-diagnosis` counts against proposal precision (KPI Q2), the others are a breakdown; `--reason other` needs a `--note`. Free text goes in `--note`; `--reason` no longer takes it. Leaving `--reason` out still rejects the proposal and is counted as "no reason given". Only a `Pending` remediation can be rejected. If the admission policy refuses the rejection, nothing is rejected and the command exits with **code 4** ("declined"), the same as `approve`.
 
 ### Report
 
