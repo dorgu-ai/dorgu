@@ -163,7 +163,7 @@ func TestRejectNoteIsTruncated(t *testing.T) {
 }
 
 func TestRejectReplacesAPriorReasonInsteadOfAppendingASecond(t *testing.T) {
-	rem := strings.Replace(operatorRemediationFixture, `"phase": "Pending"`, `"phase": "Approved",
+	rem := strings.Replace(operatorRemediationFixture, `"phase": "Pending"`, `"phase": "Pending",
     "conditions": [{"type":"RejectionReason","status":"True","reason":"Duplicate","message":"","lastTransitionTime":"2026-06-24T10:00:00Z"}]`, 1)
 	res := runReject(t, rem, "--reason", "not-needed")
 
@@ -193,4 +193,37 @@ func TestParseRejectionReason(t *testing.T) {
 	assert.Equal(t, "", conditionReasonFor("nope"))
 	assert.Equal(t, "wrong-diagnosis", rejectionFlagFor("WrongDiagnosis"))
 	assert.Equal(t, "", rejectionFlagFor("Nope"))
+}
+
+// C5 review F-8: a decision is made once. reject past Pending would overwrite the
+// recorded approver, and admission (C2 InvalidTransition) denies it anyway.
+func TestRejectRefusesAnythingButPending(t *testing.T) {
+	for _, phase := range []string{"Approved", "Ticketed", "Applying", "Verifying", "Completed", "Rejected", "Expired", "Failed"} {
+		t.Run(phase, func(t *testing.T) {
+			rem := strings.Replace(operatorRemediationFixture, `"phase": "Pending"`, `"phase": "`+phase+`"`, 1)
+			require.NotEqual(t, operatorRemediationFixture, rem)
+
+			res := runReject(t, rem, "--reason", "duplicate")
+
+			require.Error(t, res.err)
+			assert.Empty(t, res.patchLog, "nothing is written")
+			assert.Contains(t, res.out, "only a Pending remediation can be rejected")
+			assert.Contains(t, res.out, phase)
+			assert.Contains(t, res.out, "Nothing was rejected")
+		})
+	}
+}
+
+func TestRejectOfAPendingActionStillWorks(t *testing.T) {
+	res := runReject(t, operatorRemediationFixture)
+
+	require.NoError(t, res.err)
+	assert.Contains(t, res.patchLog, `"phase":"Rejected"`)
+}
+
+func TestRejectHelpSaysOnlyPendingCanBeRejected(t *testing.T) {
+	long := newRemediationRejectCmd().Long
+
+	assert.Contains(t, long, "Pending")
+	assert.NotContains(t, long, "Pending or Approved")
 }

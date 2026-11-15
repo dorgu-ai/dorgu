@@ -97,7 +97,8 @@ func newRemediationRejectCmd() *cobra.Command {
 		Use:   "reject <name>",
 		Short: "Reject a remediation proposal",
 		Long: `Reject a RemediationAction, transitioning it to Rejected phase.
-Can reject remediations in Pending or Approved phase.
+Only a Pending remediation can be rejected: a decision is made once, and rejecting an
+Approved one would overwrite who approved it.
 
 The decision is recorded under your authenticated username, asked of the cluster
 with a SelfSubjectReview (what 'kubectl auth whoami' prints) and shown as
@@ -169,9 +170,10 @@ func runRemediationReject(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if rem.Status.Phase != "Pending" && rem.Status.Phase != "Approved" {
-		output.Error(fmt.Sprintf("Remediation is in %s phase, can only reject Pending or Approved remediations",
-			rem.Status.Phase))
+	if rem.Status.Phase != "Pending" {
+		output.Error(fmt.Sprintf("Remediation is in phase %s: only a Pending remediation can be rejected "+
+			"(a decision is made once, and rejecting an Approved one would overwrite who approved it).", phaseOrUnset(rem.Status.Phase)))
+		output.Info("Nothing was rejected and nothing was changed.")
 		return errSilent
 	}
 
@@ -231,6 +233,10 @@ func writeRejection(
 		st, err := readRecordState(ctx, kubeconfig, namespace, name)
 		if err != nil {
 			return err
+		}
+		if st.Phase != "" && st.Phase != "Pending" {
+			// Someone decided between the check and the write: this write would overwrite them.
+			return fmt.Errorf("the remediation is now %s, not Pending, so it was not rejected", st.Phase)
 		}
 		patch, err := buildRejectPatch(st, *reason, note, now, user)
 		if err != nil {

@@ -130,3 +130,21 @@ func TestHealOnAPreTicketOperatorSaysWhy(t *testing.T) {
 	assert.Contains(t, out.String()+stdout, "the operator on this cluster is v0.12.1")
 	assert.Contains(t, out.String()+stdout, "does not issue apply tickets")
 }
+
+// C5 review F-8: approve, like reject, acts on a Pending remediation only.
+func TestApproveRefusesAnythingButPending(t *testing.T) {
+	for _, phase := range []string{"Approved", "Ticketed", "Applying", "Completed", "Rejected", "Expired"} {
+		t.Run(phase, func(t *testing.T) {
+			r := baseResponses()
+			r.rem = replacePhase(operatorRemediationFixture, phase)
+
+			res := runApprove(t, r)
+
+			require.Error(t, res.err)
+			assert.NotContains(t, res.patchLog, "--subresource status", "no approval is written")
+			assert.Contains(t, res.out, "only a Pending remediation can be approved")
+			assert.Contains(t, res.out, phase)
+			assert.Contains(t, res.out, "Nothing was approved")
+		})
+	}
+}

@@ -877,8 +877,9 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if rem.Status.Phase != "Pending" {
-		output.Error(fmt.Sprintf("Remediation is in %s phase, can only approve Pending remediations",
-			rem.Status.Phase))
+		output.Error(fmt.Sprintf("Remediation is in phase %s: only a Pending remediation can be approved.",
+			phaseOrUnset(rem.Status.Phase)))
+		output.Info("Nothing was approved and nothing was changed.")
 		return errSilent
 	}
 
@@ -1183,4 +1184,12 @@ func runRemediationHeal(cmd *cobra.Command, args []string) error {
 		return errSilent
 	}
 	return nil
+}
+
+// phaseOrUnset names a phase for a message.
+func phaseOrUnset(phase string) string {
+	if phase == "" {
+		return "(unset)"
+	}
+	return phase
 }
