@@ -799,9 +799,17 @@ that lacks specHash, approvedBy or expiresAt, with one whose specHash is not the
 hash of the plan as the cluster serves it now, with one approved by somebody
 other than you, if the Deployment is not the one the ticket was issued for or
 its spec has changed since, or if the cluster is in observe mode; it never falls
-back to patching from the plan. This needs an operator that issues tickets
-(v0.13.0 or newer; operator v0.14 needs this CLI, v0.15 or newer, installed first). The operator stays advisory and never writes
-workloads. Use --no-heal to only patch the RemediationAction status.
+back to patching from the plan. This needs an operator that issues ticket v1
+(v0.14.0 or newer); operator v0.14 also needs this CLI, v0.15 or newer, installed
+first. Against an operator older than v0.14 the command refuses before it records
+anything and says to upgrade the operator; --no-heal still records the decision
+alone. The operator stays advisory and never writes workloads. Use --no-heal to only
+patch the RemediationAction status.
+
+Exit code 4 means declined, which is a decision and not a breakage: the cluster's
+admission policy refused the approval (you proposed it, your account lacks the
+approve permission), or the workload is owned by something else. Nothing was
+approved. Other failures exit 1; a script should not treat 4 as an error.
 
 Dorgu only patches a Deployment that nothing else reconciles. If Helm, ArgoCD,
 Flux or kustomize owns it, or if Dorgu could not tell, this declines with exit
@@ -907,6 +915,12 @@ func runRemediationApprove(cmd *cobra.Command, args []string) error {
 	user, err := resolveIdentity(ctx, kubeconfig)
 	if err != nil {
 		output.Error(err.Error())
+		return errSilent
+	}
+
+	// Against an operator older than v0.14 this CLI can record a decision but never
+	// heal: refuse before the approval is written, not after (C5 review F-3).
+	if heal && refuseOperatorBeforeV014(ctx, kubeconfig, cmd.OutOrStdout()) {
 		return errSilent
 	}
 

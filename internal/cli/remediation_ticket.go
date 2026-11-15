@@ -85,7 +85,7 @@ var (
 
 // upgradeHint is appended to every refusal that means "the operator is not
 // issuing tickets": the two sides have to be upgraded together.
-const upgradeHint = "This CLI needs an operator that issues apply tickets (dorgu-operator v0.13.0 or newer; " +
+const upgradeHint = "This CLI needs an operator that issues apply tickets (dorgu-operator v0.14.0 or newer; " +
 	"upgrade it with `helm upgrade` and apply the CRDs). It will not patch a workload without a ticket."
 
 // gateRefusedError is the operator's gate refusing an approval on live state.
@@ -183,6 +183,9 @@ const reasonPredatesGate = "PredatesGate"
 // approval is not an error (the operator may still answer): ready is false and the
 // caller keeps waiting. One that cannot have come from the operator is refused.
 func ticketAnswersApproval(rem *remediationFull, ticket *applyTicket, now time.Time) (bool, error) {
+	if ticketIsV0(ticket) {
+		return false, errV0Ticket()
+	}
 	if strings.TrimSpace(rem.Status.ApprovedAt) == "" {
 		return false, mismatch("the remediation records no approval (status.approvedAt), so no ticket on it was issued " +
 			"for one; nothing was applied to the workload")
@@ -333,7 +336,10 @@ func (s *spinner) stop() {
 func printTicketRefusal(w io.Writer, err error) {
 	var refused *gateRefusedError
 	var noTicket *noTicketError
+	var tooOld *operatorTooOldError
 	switch {
+	case errors.As(err, &tooOld):
+		printOperatorTooOld(tooOld)
 	case errors.As(err, &refused):
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "The operator's gate refused this approval on the cluster as it is now.")

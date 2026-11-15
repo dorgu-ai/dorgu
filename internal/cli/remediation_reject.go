@@ -104,7 +104,8 @@ The decision is recorded under your authenticated username, asked of the cluster
 with a SelfSubjectReview (what 'kubectl auth whoami' prints) and shown as
 "Rejecting as <user>" before anything is written. If the cluster cannot say who
 you are, nothing is written. If the cluster's admission policy refuses the
-rejection, the reason is shown as one plain sentence.
+rejection, the reason is shown as one plain sentence and nothing is rejected.
+Exit code 4 means declined: a decision, not a breakage. Other failures exit 1.
 
 --reason says why, from a fixed list, and is recorded on the RemediationAction as a
 RejectionReason condition. ` + "`dorgu report`" + ` counts rejections by it. Only

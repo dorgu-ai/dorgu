@@ -150,8 +150,10 @@ func TestN6_TheNoTicketWarningNeverStaysSilentOnAnUnknownVersion(t *testing.T) {
 	}{
 		"unreadable": {nil, "could not determine the operator version; an operator older than v0.13.0 issues no tickets", false},
 		"latest":     {strp("latest"), "could not determine the operator version", false},
-		"old":        {strp("v0.12.1"), "the operator on this cluster is v0.12.1", false},
-		"new":        {strp("v0.13.0"), "", true},
+		// An operator before v0.14 is refused before the approval is written (C5
+		// review F-3); the no-ticket warning is for a version this CLI cannot read.
+		"old": {strp("v0.12.1"), "the operator on this cluster is v0.12.1", false},
+		"new": {strp("v0.14.0"), "", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			operatorVersionReader = func(context.Context, string) *string { return tc.version }

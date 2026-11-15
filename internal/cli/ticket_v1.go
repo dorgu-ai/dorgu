@@ -49,6 +49,10 @@ func checkTicketV1(rem *remediationFull, user string, now time.Time) error {
 		return mismatch("there is no authenticated user to check the ticket's approver against; nothing was applied to the workload")
 	}
 
+	if ticketIsV0(ticket) {
+		return errV0Ticket()
+	}
+
 	var missing []string
 	for _, f := range []struct{ name, value string }{
 		{"specHash", ticket.SpecHash}, {"approvedBy", ticket.ApprovedBy}, {"expiresAt", ticket.ExpiresAt},

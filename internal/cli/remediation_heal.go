@@ -933,6 +933,11 @@ func healWithTicket(
 			warnIfOperatorPredatesTickets(ctx, opts.kubeconfig, w)
 			return errSilent
 		}
+		var tooOld *operatorTooOldError
+		if errors.As(err, &tooOld) {
+			printOperatorTooOld(tooOld)
+			return errSilent
+		}
 		output.Error(fmt.Sprintf("Refusing to apply the ticket: %v", err))
 		output.Info("Nothing was applied to the workload.")
 		return errSilent
