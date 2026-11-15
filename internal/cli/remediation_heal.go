@@ -757,12 +757,17 @@ func printUnmanagedCaveat(w io.Writer) {
 // forget it. `heal` used to patch the workload and write nothing back, leaving
 // the CRD saying `Pending` over a cluster that had already changed (CR-02).
 //
-// beforePatch, when set, runs after the confirmation and immediately before the
-// write; an error from it refuses the patch.
+// guard runs after the confirmation and immediately before each write attempt: it
+// re-reads and re-checks everything the ticket depends on and returns the
+// Deployment identity the patch is bound to. An error from it refuses the patch.
+// There is no unguarded write.
 func executeHeal(
 	ctx context.Context, r *remediationFull, exec *healExecution, opts healOptions, in io.Reader, w io.Writer,
-	beforePatch func(context.Context) error,
+	guard patchGuard,
 ) error {
+	if guard == nil {
+		return errors.New("internal error: refusing to patch a workload without a guard")
+	}
 	fmt.Fprintln(w, "\nWorkload heal plan:")
 	fmt.Fprintf(w, "  Namespace:  %s\n", exec.Namespace)
 	fmt.Fprintf(w, "  Deployment: %s\n", exec.Deployment)
@@ -783,16 +788,7 @@ func executeHeal(
 		}
 	}
 
-	if beforePatch != nil {
-		if err := beforePatch(ctx); err != nil {
-			recordDecline(ctx, opts.kubeconfig, r, err)
-			output.Error(fmt.Sprintf("Refusing to patch: %v", err))
-			output.Info("Nothing was applied to the workload.")
-			return errSilent
-		}
-	}
-
-	if err := applyDeploymentPatch(ctx, opts.kubeconfig, exec.Namespace, exec.Deployment, exec.Patch); err != nil {
+	if err := patchUnderGuard(ctx, w, r, exec, opts, guard); err != nil {
 		return err
 	}
 
@@ -821,6 +817,72 @@ func executeHeal(
 		return withExitCode(ExitError, errSilent)
 	}
 	return nil
+}
+
+// patchAttempts bounds how often a Deployment patch that lost its resourceVersion
+// race is retried. Each attempt re-reads and re-checks everything first.
+const patchAttempts = 3
+
+// patchPrecondition is the Deployment identity a patch is bound to: the API server
+// refuses the write if the object is not this one (uid) in this state (resourceVersion).
+type patchPrecondition struct{ UID, ResourceVersion string }
+
+// patchGuard is the CLI's last look before a write. It returns the precondition to
+// send with the patch, or an error that refuses the patch.
+type patchGuard func(ctx context.Context) (patchPrecondition, error)
+
+// withPrecondition adds metadata.uid and metadata.resourceVersion to a strategic
+// merge patch. It refuses to build a patch without both: an unbound write is the
+// thing this exists to prevent.
+func withPrecondition(patch string, pre patchPrecondition) (string, error) {
+	if pre.UID == "" || pre.ResourceVersion == "" {
+		return "", errors.New("the Deployment's UID or resourceVersion is unknown, so the patch cannot be bound to it")
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(patch), &doc); err != nil {
+		return "", fmt.Errorf("the patch is unreadable: %w", err)
+	}
+	doc["metadata"] = map[string]any{"uid": pre.UID, "resourceVersion": pre.ResourceVersion}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		return "", fmt.Errorf("marshal deployment patch: %w", err)
+	}
+	return string(b), nil
+}
+
+// patchUnderGuard writes the Deployment patch bound to the identity the guard just
+// verified. A Conflict means the Deployment (or its status) moved since the read:
+// the guard runs again, so nothing is ever written on a check that is not fresh, up
+// to patchAttempts times. Any other refusal ends it.
+func patchUnderGuard(
+	ctx context.Context, w io.Writer, r *remediationFull, exec *healExecution, opts healOptions, guard patchGuard,
+) error {
+	for attempt := 1; ; attempt++ {
+		pre, err := guard(ctx)
+		var patch string
+		if err == nil {
+			patch, err = withPrecondition(exec.Patch, pre)
+		}
+		if err != nil {
+			recordDecline(ctx, opts.kubeconfig, r, err)
+			output.Error(fmt.Sprintf("Refusing to patch: %v", err))
+			output.Info("Nothing was applied to the workload.")
+			return errSilent
+		}
+		err = applyDeploymentPatch(ctx, opts.kubeconfig, exec.Namespace, exec.Deployment, patch)
+		if err == nil {
+			return nil
+		}
+		if !isConflictError(err) {
+			return err
+		}
+		if attempt >= patchAttempts {
+			output.Error(fmt.Sprintf("%s/%s kept changing under the patch (%d attempts); nothing was applied to the workload.",
+				exec.Namespace, exec.Deployment, attempt))
+			return errSilent
+		}
+		_, _ = fmt.Fprintf(w, "%s/%s changed while the patch was being written; checking again.\n", exec.Namespace, exec.Deployment)
+	}
 }
 
 // healWithTicket applies the preflight plan under the operator's apply ticket:
@@ -879,7 +941,7 @@ func healWithTicket(
 	if narrowed := ticketNarrowed(exec.Change, bound.Change); narrowed {
 		output.Info("The operator's gate re-checked this on the live cluster and applied a different change than the preview; the ticket is what is applied.")
 	}
-	return executeHeal(ctx, ticketed, bound, opts, in, w, func(ctx context.Context) error {
+	return executeHeal(ctx, ticketed, bound, opts, in, w, func(ctx context.Context) (patchPrecondition, error) {
 		return reverifyBeforePatch(ctx, opts.kubeconfig, ticketed, bound, opts.user)
 	})
 }

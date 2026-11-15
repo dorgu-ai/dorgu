@@ -198,8 +198,9 @@ func TestApproveRefusesWhenTheSpecChangesBetweenTicketAndPatch(t *testing.T) {
 	r := baseResponses()
 	r.deployment = withIdentity(t, r.deployment)
 	r.rem = operatorRemediationFixture
-	// reads: 1 preflight, 2 first poll (good), 3 the re-read right before the patch (edited)
-	r.remSequence = []string{operatorRemediationFixture, good, edited}
+	// reads: 1 preflight, 2 settle after the approval, 3 ticket poll (both good),
+	// 4 the re-read right before the patch (edited)
+	r.remSequence = []string{operatorRemediationFixture, good, good, edited}
 
 	res := runApprove(t, r)
 

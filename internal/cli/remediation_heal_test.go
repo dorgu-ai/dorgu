@@ -230,6 +230,13 @@ type fakeKubectlResponses struct {
 	// way an RBAC denial or an admission webhook rejection would.
 	failDeploymentPatch bool
 
+	// deploymentPatchConflicts makes the first N `kubectl patch deployment` calls
+	// fail with a Conflict (the resourceVersion precondition lost a race), then
+	// succeed. deploymentPatchError, when set, is the stderr every such call
+	// fails with instead (a refusal that is not a Conflict).
+	deploymentPatchConflicts int
+	deploymentPatchError     string
+
 	// deploymentAfterPatch, when set, is served by `get deployment` once the
 	// resource patch has landed, and deploymentAfterStrip once the
 	// managedFields patch has. They exist so the footprint strip can be driven
@@ -340,6 +347,11 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		eventFails = "1"
 	}
 	statusErrFile := write("status-err.txt", r.statusPatchError)
+	depErrFile := write("deploy-patch-err.txt", r.deploymentPatchError)
+	depErrFails := "0"
+	if r.deploymentPatchError != "" {
+		depErrFails = "1"
+	}
 	whoamiDoc := r.whoami
 	if whoamiDoc == "" {
 		whoamiDoc = whoamiJSON(fixtureUser)
@@ -385,7 +397,16 @@ func writeFakeKubectlDispatch(t *testing.T, r fakeKubectlResponses) (patchLog st
 		"      if [ " + statusFails + " = 1 ]; then cat " + statusErrFile + " >&2; exit 1; fi\n" +
 		"      touch " + filepath.Join(dir, "approved") + "\n" +
 		"      echo patched; exit 0 ;;\n" +
-		"    *) touch " + filepath.Join(dir, "patched") + " ;;\n" +
+		"    *)\n" +
+		"      if [ \"$kind\" = deploy ] && [ " + depErrFails + " = 1 ]; then cat " + depErrFile + " >&2; exit 1; fi\n" +
+		"      if [ \"$kind\" = deploy ]; then\n" +
+		"        c=0; [ -f " + filepath.Join(dir, "conflicts.n") + " ] && c=$(cat " + filepath.Join(dir, "conflicts.n") + ")\n" +
+		"        if [ $c -lt " + fmt.Sprint(r.deploymentPatchConflicts) + " ]; then\n" +
+		"          echo $((c+1)) > " + filepath.Join(dir, "conflicts.n") + "\n" +
+		"          echo 'Error from server (Conflict): Operation cannot be fulfilled on deployments.apps \"api-server\": the object has been modified' >&2; exit 1\n" +
+		"        fi\n" +
+		"      fi\n" +
+		"      touch " + filepath.Join(dir, "patched") + " ;;\n" +
 		"  esac\n" +
 		"  if [ \"$kind\" = deploy ] && [ " + patchFails + " = 1 ]; then echo 'Error from server (Forbidden): deployments.apps is forbidden' >&2; exit 1; fi\n" +
 		"  echo patched; exit 0; fi\n" +

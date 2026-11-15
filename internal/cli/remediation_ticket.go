@@ -440,46 +440,67 @@ func sameWorkloadAsTicket(live deploymentSummary, ticket *applyTicket, exec *hea
 
 // reverifyBeforePatch is the last thing the CLI does before it writes. The
 // ticket was fetched and bound some time ago, and a confirmation prompt may have
-// sat open since: it re-reads the RemediationAction (still in a phase that
-// carries a fresh ticket, the same ticket, unexpired), the Deployment (same UID,
-// same generation) and the ClusterPersona (not in observe mode).
+// sat open since. It reads the Deployment (same UID, same generation as the
+// ticket) and the ClusterPersona (not in observe mode), and only then re-reads the
+// RemediationAction (still in a phase that carries a fresh ticket, the same ticket,
+// unexpired, hashing to its spec, approved by this user). The RemediationAction
+// check is last on purpose: it is the one read that cannot be bound to the write,
+// so it is the one that must sit closest to it (C5 review F-2).
+//
+// What it returns is the identity the patch is bound to: the ticket's workload UID
+// and the resourceVersion of the Deployment read the ticket was checked against.
+// The API server refuses the write if either has moved since.
 //
 // The ClusterPersona and RemediationAction reads are a CLI-side stopgap. The
 // operator's gate already refuses an approval and an apply under observe mode;
 // the CLI cannot yet rely on the operator being the only writer of the ticket
 // (admission policy for that is P2 task 2.5), so it checks the policy itself.
-func reverifyBeforePatch(ctx context.Context, kubeconfig string, ticketed *remediationFull, bound *healExecution, user string) error {
+func reverifyBeforePatch(
+	ctx context.Context, kubeconfig string, ticketed *remediationFull, bound *healExecution, user string,
+) (patchPrecondition, error) {
 	name, namespace := ticketed.Metadata.Name, ticketed.Metadata.Namespace
-	fresh, err := fetchRemediation(ctx, kubeconfig, name, namespace)
-	if err != nil {
-		return fmt.Errorf("could not re-read the remediation before patching: %w", err)
-	}
-	if fresh.Status.Phase != "Ticketed" && fresh.Status.Phase != "Applying" {
-		return mismatch("the remediation is now in phase %q, no longer Ticketed; nothing was applied to the workload", fresh.Status.Phase)
-	}
-	now := fresh.Status.ApplyTicket
 	was := ticketed.Status.ApplyTicket
-	if now == nil || !sameTicket(now, was) {
-		return mismatch("the apply ticket changed since it was read; nothing was applied to the workload")
-	}
-	expires, err := time.Parse(time.RFC3339, now.ExpiresAt)
-	if err != nil || !time.Now().Before(expires) {
-		return &ticketExpiredError{expiresAt: now.ExpiresAt, whileWaiting: true}
-	}
-	// The spec may have been edited since the ticket was read: hash what is served
-	// now, and check the approver again, on the object just read.
-	if err := checkTicketV1(fresh, user, time.Now()); err != nil {
-		return err
+	if was == nil {
+		return patchPrecondition{}, mismatch("the remediation holds no apply ticket; nothing was applied to the workload")
 	}
 
 	live, err := getDeployment(ctx, kubeconfig, bound.Namespace, bound.Deployment)
 	if err != nil {
-		return err
+		return patchPrecondition{}, err
 	}
-	if err := sameWorkloadAsTicket(live, now, bound); err != nil {
-		return err
+	if err := sameWorkloadAsTicket(live, was, bound); err != nil {
+		return patchPrecondition{}, err
 	}
-	return refuseObserveMode(ctx, kubeconfig)
+	if live.ResourceVersion == "" {
+		return patchPrecondition{}, mismatch("Deployment %s/%s reports no resourceVersion, so the patch cannot be bound to it; "+
+			"nothing was applied to the workload", bound.Namespace, live.Name)
+	}
+	if err := refuseObserveMode(ctx, kubeconfig); err != nil {
+		return patchPrecondition{}, err
+	}
+
+	// The last read: the ticket on the object as it is now.
+	fresh, err := fetchRemediation(ctx, kubeconfig, name, namespace)
+	if err != nil {
+		return patchPrecondition{}, fmt.Errorf("could not re-read the remediation before patching: %w", err)
+	}
+	if fresh.Status.Phase != "Ticketed" && fresh.Status.Phase != "Applying" {
+		return patchPrecondition{}, mismatch("the remediation is now in phase %q, no longer Ticketed; nothing was applied to the workload", fresh.Status.Phase)
+	}
+	now := fresh.Status.ApplyTicket
+	if now == nil || !sameTicket(now, was) {
+		return patchPrecondition{}, mismatch("the apply ticket changed since it was read; nothing was applied to the workload")
+	}
+	expires, err := time.Parse(time.RFC3339, now.ExpiresAt)
+	if err != nil || !time.Now().Before(expires) {
+		return patchPrecondition{}, &ticketExpiredError{expiresAt: now.ExpiresAt, whileWaiting: true}
+	}
+	// The spec may have been edited since the ticket was read: hash what is served
+	// now, and check the approver again, on the object just read.
+	if err := checkTicketV1(fresh, user, time.Now()); err != nil {
+		return patchPrecondition{}, err
+	}
+	return patchPrecondition{UID: was.WorkloadUID, ResourceVersion: live.ResourceVersion}, nil
 }
 
 // sameTicket reports whether two tickets are the same clearance: the same issue
