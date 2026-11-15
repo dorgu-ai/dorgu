@@ -227,3 +227,18 @@ func TestRejectHelpSaysOnlyPendingCanBeRejected(t *testing.T) {
 	assert.Contains(t, long, "Pending")
 	assert.NotContains(t, long, "Pending or Approved")
 }
+
+// A decision landed between the Pending check and the write: the write would
+// overwrite it, so it is not made.
+func TestRejectDoesNotOverwriteADecisionThatLandedMeanwhile(t *testing.T) {
+	approved := replacePhase(operatorRemediationFixture, "Approved")
+	res := runRejectWith(t, fakeKubectlResponses{
+		context: "kind-dorgu-spike", rem: operatorRemediationFixture, persona: personaFixture,
+		deployment: deploymentListFixture, noTicket: true,
+		remSequence: []string{operatorRemediationFixture, approved},
+	}, "--reason", "duplicate")
+
+	require.Error(t, res.err)
+	assert.Empty(t, res.patchLog, "nothing is written over the approval")
+	assert.Contains(t, res.err.Error(), "not Pending")
+}

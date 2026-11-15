@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -133,4 +134,59 @@ func TestPreconditionRefusesWithoutAUIDOrResourceVersion(t *testing.T) {
 	got, err := withPrecondition(base, patchPrecondition{UID: "u", ResourceVersion: "7"})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"metadata":{"uid":"u","resourceVersion":"7"},"spec":{"template":{"spec":{"containers":[{"name":"c"}]}}}}`, got)
+}
+
+// --- branches of the guard and the write ---
+
+func TestPreconditionRefusesAnUnreadablePatch(t *testing.T) {
+	_, err := withPrecondition("not json", patchPrecondition{UID: "u", ResourceVersion: "1"})
+
+	require.Error(t, err)
+}
+
+func TestExecuteHealRefusesToRunWithoutAGuard(t *testing.T) {
+	err := executeHeal(t.Context(), &remediationFull{}, &healExecution{}, healOptions{}, strings.NewReader(""), new(strings.Builder), nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "without a guard")
+}
+
+func TestTheGuardRefusesADeploymentWithNoResourceVersion(t *testing.T) {
+	// A Deployment the API server served without a resourceVersion cannot be bound
+	// to: the patch is refused rather than sent unbound.
+	noRV := `{"items":[{"metadata":{"name":"api-server","uid":"` + fixtureDeploymentUID + `","generation":3},` +
+		`"spec":{"template":{"spec":{"containers":[{"name":"api-server"}]}}}}]}`
+	r := baseResponses()
+	r.deployment = noRV
+	r.remAfterApprove = withTicket(t, operatorRemediationFixture, "Applying")
+
+	res := runApprove(t, r)
+
+	require.Error(t, res.err)
+	assert.Empty(t, deploymentPatchLines(res.patchLog))
+	assert.Contains(t, res.out, "no resourceVersion")
+}
+
+func TestTheGuardRefusesARemediationWithoutATicket(t *testing.T) {
+	_, err := reverifyBeforePatch(t.Context(), "", &remediationFull{}, &healExecution{}, fixtureUser)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no apply ticket")
+}
+
+func TestPhaseOrUnsetNamesAnEmptyPhase(t *testing.T) {
+	assert.Equal(t, "(unset)", phaseOrUnset(""))
+	assert.Equal(t, "Pending", phaseOrUnset("Pending"))
+}
+
+func TestCheckTicketV1RefusesAMissingTicketAndAMissingUser(t *testing.T) {
+	var none remediationFull
+	err := checkTicketV1(&none, fixtureUser, time.Now())
+	var noTicket *noTicketError
+	require.ErrorAs(t, err, &noTicket)
+
+	rem := ticketedFixture(t)
+	err = checkTicketV1(rem, "  ", time.Now())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no authenticated user")
 }
